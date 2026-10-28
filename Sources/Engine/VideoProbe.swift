@@ -76,6 +76,9 @@ struct ProbeResult: Hashable {
     var sourceSize: CGSize
     var nominalFPS: Float
     var codecSubType: String        // "avc1", "hev1", ...
+    var bitDepth: Int               // 8 or 10 (from format description)
+    var preferredTransform: CGAffineTransform
+    var isRotated: Bool
     var tags: ColorTags
     var hasAudio: Bool
     var videoDataRate: Double       // bits/second
@@ -105,10 +108,14 @@ struct ProbeResult: Hashable {
         }
 
         let naturalSize = try await track.load(.naturalSize)
+        let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
         let nominalFPS = try await track.load(.nominalFrameRate)
         let dataRate: Double = Double((try? await track.load(.estimatedDataRate)) ?? 0)
         let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
         let subType = fmts.first.map { codecName(CMFormatDescriptionGetMediaSubType($0)) } ?? "?"
+        let bitDepth = (fmts.first
+            .flatMap { CMFormatDescriptionGetExtension($0, extensionKey: kCMFormatDescriptionExtension_Depth) as? NSNumber }?
+            .intValue) ?? 8
 
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         var audioRate = 0.0
@@ -125,6 +132,9 @@ struct ProbeResult: Hashable {
             sourceSize: naturalSize,
             nominalFPS: nominalFPS > 0 ? nominalFPS : 30,
             codecSubType: subType,
+            bitDepth: bitDepth >= 10 ? 10 : 8,
+            preferredTransform: preferredTransform,
+            isRotated: !preferredTransform.isIdentity,
             tags: await ColorTags.from(track: track),
             hasAudio: !(audioTracks.isEmpty),
             videoDataRate: dataRate,

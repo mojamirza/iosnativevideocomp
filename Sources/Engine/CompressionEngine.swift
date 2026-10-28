@@ -37,26 +37,17 @@ enum CompressionError: LocalizedError {
 /// The pipeline: AVAssetReader → [Core Image] → VideoToolbox (through AVAssetWriter).
 ///
 /// Two paths, both strictly color-safe:
-///  * Pass-through  — HDR or "keep resolution": native-format buffers go straight
-///                    into the encoder with the source color tags intact. HDR is
-///                    never tonemapped and never decoded to a lossy intermediate.
+///  * Direct path   — "keep resolution": decoded pixel buffers (bit-depth aware:
+///                    10-bit buffers for 10-bit/HDR sources) go straight into the
+///                    encoder with the source color tags intact. HDR is never
+///                    tonemapped and never decoded to a lossy intermediate.
 ///  * Core Image    — SDR downscaling: buffers decoded to 4:2:0, scaled in a
 ///                    source-matched working color space, re-tagged with the
 ///                    source color metadata, and handed to the writer.
+///
+/// IMPORTANT: the reader always DECODES (explicit pixel format settings). Passing
+/// compressed samples into an input configured for re-encoding is invalid.
 enum CompressionEngine {
-
-    private final class StartBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func run(at pts: CMTime, on writer: AVAssetWriter) {
-            lock.lock()
-            defer { lock.unlock() }
-            if !done {
-                writer.startSession(atSourceTime: pts)
-                done = true
-            }
-        }
-    }
 
     private final class ResumeBox {
         private let lock = NSLock()
@@ -112,23 +103,41 @@ enum CompressionEngine {
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
         }
 
+        let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
+        let hint: CMFormatDescription? = fmts.first
+
+        // On the direct (non-scaling) path the writer's geometry must exactly
+        // match the decoded pixel buffers — use the ENCODED dimensions from the
+        // format description (naturalSize is the post-rotation display size).
+        var encodeW = Int(plan.outputSize.width)
+        var encodeH = Int(plan.outputSize.height)
+        if !plan.scaleNeeded, let f = hint {
+            let d = CMVideoFormatDescriptionGetDimensions(f)
+            if d.width > 0 && d.height > 0 {
+                encodeW = Int(d.width)
+                encodeH = Int(d.height)
+            }
+        }
+
         var settings: [String: Any] = [
             AVVideoCodecKey: preset.codec.avCodecType,
-            AVVideoWidthKey: Int(plan.outputSize.width),
-            AVVideoHeightKey: Int(plan.outputSize.height),
+            AVVideoWidthKey: encodeW,
+            AVVideoHeightKey: encodeH,
             AVVideoCompressionPropertiesKey: props,
         ]
         if let color = tags.writerColorProperties() {
             settings[AVVideoColorPropertiesKey] = color
         }
 
-        let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
-        let hint: CMFormatDescription? = fmts.first
-
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
                                             sourceFormatHint: hint)
         videoInput.expectsMediaDataInRealTime = false
+        // Preserve rotation (direct path writes pre-rotation decoded buffers).
+        let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
+        if !preferredTransform.isIdentity {
+            videoInput.transform = preferredTransform
+        }
         writer.add(videoInput)
 
         // ------------------------------------------------------------------
@@ -144,7 +153,8 @@ enum CompressionEngine {
             if let aFmt = aFmts.first {
                 if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(aFmt)?.pointee {
                     audioSampleRate = asbd.mSampleRate > 0 ? asbd.mSampleRate : 48_000
-                    audioChannels = max(1, min(2, Int(asbd.mChannelsPerFrame)))
+                    // Keep the source channel layout (mono/stereo/5.1); AAC supports it.
+                    audioChannels = max(1, Int(asbd.mChannelsPerFrame))
                 }
             }
         }
@@ -152,18 +162,27 @@ enum CompressionEngine {
         let reader = try AVAssetReader(asset: asset)
 
         // ------------------------------------------------------------------
-        // VIDEO reader output:
-        //   scaling path → sanitized SDR 4:2:0 for Core Image
-        //   pass-through → nil = native buffers (HDR-safe)
+        // VIDEO reader output — we ALWAYS decode to pixel buffers because the
+        // writer input is configured to re-encode via VideoToolbox. Feeding
+        // compressed samples (outputSettings: nil) into such an input is
+        // invalid. Bit depth is preserved: 10-bit/HDR sources decode to
+        // 10-bit YCbCr so HDR survives end-to-end (color-safe engine).
         // ------------------------------------------------------------------
+        let decodeFormat: OSType = (plan.isHDR || plan.sourceBitDepth >= 10)
+            ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+
         let videoOut: AVAssetReaderTrackOutput
         if plan.scaleNeeded {
+            // SDR-only path (the optimizer never scales 10-bit/HDR sources).
             videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
                 kCVPixelBufferPixelFormatTypeKey as String:
                     NSNumber(value: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
             ])
         } else {
-            videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
+            ])
         }
         reader.add(videoOut)
 
@@ -202,11 +221,16 @@ enum CompressionEngine {
                                                         sourcePixelBufferAttributes: poolAttrs)
         }() : nil
 
+        guard reader.startReading() else {
+            throw CompressionError.readerFailed(reader.error?.localizedDescription ?? "could not start reading")
+        }
         guard writer.startWriting() else {
             throw writer.error ?? CompressionError.writerFailed("startWriting returned false")
         }
+        // Single, race-free session start: 0 is <= every sample PTS of both
+        // tracks, so neither pipe can append "before the session".
+        writer.startSession(atSourceTime: .zero)
 
-        let starter = StartBox()
         let expected = plan.expectedFrames
         var framesAppended = 0
 
@@ -251,8 +275,6 @@ enum CompressionEngine {
                             }
                             lastKept.value = pts
                         }
-
-                        starter.run(at: pts, on: writer)
 
                         if plan.scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
                             guard let dst = nextScaledBuffer(from: adaptor,
@@ -327,7 +349,6 @@ enum CompressionEngine {
                             resume.resumeOnce()
                             return
                         }
-                        starter.run(at: CMSampleBufferGetPresentationTimeStamp(sb), on: writer)
                         if !aIn.append(sb) {
                             flags.setError(writer.error
                                 ?? CompressionError.writerFailed("audio append failed"))

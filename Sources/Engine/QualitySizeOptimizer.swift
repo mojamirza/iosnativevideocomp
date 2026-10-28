@@ -9,6 +9,7 @@ struct OptimizerPlan: Hashable {
     var fpsCap: Int?
     var scaleNeeded: Bool
     var isHDR: Bool
+    var sourceBitDepth: Int
     var complexity: ComplexityScore
     var rationale: String
     var duration: Double
@@ -88,17 +89,24 @@ enum QualitySizeOptimizer {
         let scaleNeeded = abs(outputSize.width - probe.sourceSize.width) > 1 ||
                           abs(outputSize.height - probe.sourceSize.height) > 1
         let isHDR = probe.tags.isHDR
+        let is10Bit = probe.bitDepth >= 10
 
-        // COLOR-SAFE ENGINE guarantee: HDR sources are never decoded to a lossy
-        // 8-bit intermediate. If a HDR file is targeted for a smaller resolution
-        // we keep the original resolution instead of tonemapping, and note it.
+        // COLOR-SAFE + CORRECTNESS guarantees: 10-bit/HDR sources keep color
+        // depth (no 8-bit intermediate), rotated sources keep their resolution
+        // so orientation metadata stays intact (v1: no rotation in CI scaling).
         var notes: [String] = []
         var effectiveSize = outputSize
         var effectiveScale = scaleNeeded
-        if isHDR && scaleNeeded {
+        if (isHDR || is10Bit || probe.isRotated) && scaleNeeded {
             effectiveSize = evenSize(probe.sourceSize)
             effectiveScale = false
-            notes.append("HDR detected — resolution kept to protect color (no tonemapping)")
+            if isHDR {
+                notes.append("HDR detected — resolution kept to protect color (no tonemapping)")
+            } else if is10Bit {
+                notes.append("10-bit source — resolution kept to protect color depth")
+            } else {
+                notes.append("Rotated source — resolution kept to preserve orientation")
+            }
         }
 
         var effectiveBps = videoBitrate
@@ -120,6 +128,7 @@ enum QualitySizeOptimizer {
             fpsCap: preset.fpsCap,
             scaleNeeded: effectiveScale,
             isHDR: isHDR,
+            sourceBitDepth: probe.bitDepth,
             complexity: complexity,
             rationale: rationale,
             duration: duration,
