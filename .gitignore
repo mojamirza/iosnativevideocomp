@@ -1,0 +1,10 @@
+# macOS / Xcode
+.DS_Store
+*.ipa
+Payload/
+build/
+DerivedData/
+project.xcworkspace
+xcuserdata/
+VidCompress.xcodeproj
+*.log

@@ -17,7 +17,9 @@ struct VidCompressApp: App {
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
         }
-        _coordinator = StateObject(wrappedValue: JobCoordinator(modelContext: container.mainContext))
+        // The SwiftData context is attached later from RootView (modelContext
+        // is MainActor-isolated and must not be captured in this autoclosure).
+        _coordinator = StateObject(wrappedValue: JobCoordinator())
     }
 
     var body: some Scene {

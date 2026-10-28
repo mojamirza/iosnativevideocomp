@@ -8,6 +8,7 @@ import AVFoundation
 
 struct RootView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
+    @Environment(\.modelContext) private var modelContext
 
     @State private var showingSetup = false
     @State private var importedURL: URL?
@@ -103,6 +104,7 @@ struct RootView: View {
                 }
             }
             .task {
+                coordinator.attach(context: modelContext)
                 coordinator.loadHistory()
             }
         }

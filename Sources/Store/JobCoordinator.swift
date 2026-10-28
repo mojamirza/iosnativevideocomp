@@ -29,10 +29,15 @@ final class JobCoordinator: ObservableObject {
 
     private var workerTask: Task<Void, Never>?
     private var cancelFlags: [UUID: EngineFlags] = [:]
-    private let modelContext: ModelContext?
+    private var modelContext: ModelContext?
 
     init(modelContext: ModelContext? = nil) {
         self.modelContext = modelContext
+    }
+
+    /// Attach the SwiftData context from the SwiftUI environment (attached from RootView).
+    func attach(context: ModelContext?) {
+        self.modelContext = context
     }
 
     // MARK: Import / enqueue
