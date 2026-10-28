@@ -125,24 +125,24 @@ jobs:
 
       - name: Export IPA
         run: |
-          cat > ExportOptions.plist <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key><string>ad-hoc</string>
-  <key>teamID</key><string>__TEAM_ID__</string>
-  <key>signingStyle</key><string>manual</string>
-  <key>signingCertificate</key><string>Apple Distribution</string>
-  <key>stripSwiftSymbols</key><true/>
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>com.example.vidcompress</key><string>__PROFILE_NAME__</string>
-  </dict>
-</dict>
-</plist>
-EOF
-          sed -i '' "s/__TEAM_ID__/$TEAM_ID/g; s/__PROFILE_NAME__/$PROFILE_NAME/g" ExportOptions.plist
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            '  <key>method</key><string>ad-hoc</string>' \
+            '  <key>teamID</key><string>__TEAM_ID__</string>' \
+            '  <key>signingStyle</key><string>manual</string>' \
+            '  <key>signingCertificate</key><string>Apple Distribution</string>' \
+            '  <key>stripSwiftSymbols</key><true/>' \
+            '  <key>provisioningProfiles</key>' \
+            '  <dict>' \
+            '    <key>com.example.vidcompress</key><string>__PROFILE_NAME__</string>' \
+            '  </dict>' \
+            '</dict>' \
+            '</plist>' > ExportOptions.plist
+          sed -i '' -e "s/__TEAM_ID__/$TEAM_ID/" -e "s/__PROFILE_NAME__/$PROFILE_NAME/" ExportOptions.plist
+          cat ExportOptions.plist
           xcodebuild -exportArchive \
             -archivePath build/VidCompress.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
