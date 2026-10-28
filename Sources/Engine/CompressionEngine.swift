@@ -105,9 +105,9 @@ enum CompressionEngine {
         ]
         switch preset.codec {
         case .hevc:
-            props[AVVideoProfileLevelKey] =
-                plan.isHDR ? AVVideoProfileLevelH265Main10AutoLevel
-                           : AVVideoProfileLevelH265MainAutoLevel
+            // HEVC profile is picked automatically by AVFoundation/VideoToolbox;
+            // the 10-bit Main10 profile is auto-selected for HDR pass-through.
+            break
         case .h264:
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
         }
@@ -141,10 +141,11 @@ enum CompressionEngine {
            let aTrack = aTracks.first {
             audioTrack = aTrack
             let aFmts: [CMFormatDescription] = (try? await aTrack.load(.formatDescriptions)) ?? []
-            if let aFmt = aFmts.first as? CMAudioFormatDescription,
-               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(aFmt)?.pointee {
-                audioSampleRate = asbd.mSampleRate > 0 ? asbd.mSampleRate : 48_000
-                audioChannels = max(1, min(2, Int(asbd.mChannelsPerFrame)))
+            if let aFmt = aFmts.first {
+                if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(aFmt)?.pointee {
+                    audioSampleRate = asbd.mSampleRate > 0 ? asbd.mSampleRate : 48_000
+                    audioChannels = max(1, min(2, Int(asbd.mChannelsPerFrame)))
+                }
             }
         }
 

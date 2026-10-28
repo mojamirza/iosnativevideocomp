@@ -81,7 +81,8 @@ final class JobCoordinator: ObservableObject {
         try? fm.removeItem(at: output)
 
         // analyzing
-        setJob(jobID) { $0.state = .analyzing }        let encodeStart = Date()
+        setJob(jobID) { $0.state = .analyzing }
+        let encodeStart = Date()
 
         do {
             let plan: OptimizerPlan
@@ -191,6 +192,7 @@ final class JobCoordinator: ObservableObject {
     func loadHistory() {
         guard let context = modelContext else { return }
         let fm = FileManager.default
+        var out: [Job] = []
         do {
             let descriptor = FetchDescriptor<JobRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
             let records = try context.fetch(descriptor)
@@ -293,15 +295,15 @@ final class JobCoordinator: ObservableObject {
         return words.replacingOccurrences(of: "[^a-z0-9-]", with: "", options: .regularExpression)
     }
 
-    static func documentsDirectory() -> URL {
+    static nonisolated func documentsDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    static func outputsDirectory() -> URL {
+    static nonisolated func outputsDirectory() -> URL {
         documentsDirectory().appendingPathComponent("Compressed", isDirectory: true)
     }
 
-    static func importsDirectory() -> URL {
+    static nonisolated func importsDirectory() -> URL {
         documentsDirectory().appendingPathComponent("Imports", isDirectory: true)
     }
 }

@@ -108,8 +108,8 @@ enum ComplexityAnalyzer {
             toBitmap: &bitmap,
             rowBytes: N * 4,
             bounds: CGRect(x: 0, y: 0, width: N, height: N),
-            colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-            format: .RGBA8
+            format: .RGBA8,
+            colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!
         )
         var luma = [Double](repeating: 0, count: N * N)
         for p in 0..<(N * N) {

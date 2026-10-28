@@ -136,7 +136,7 @@ enum IntegrityVerifier {
         let outBitrate = fileSize > 0 && outDuration > 0
             ? Double(fileSize) * 8 / outDuration : 0
         if outBitrate > 0 {
-            let videoPart = max(0, outBitrate - plan.audioBitrate)
+            let videoPart = max(0.0, outBitrate - Double(plan.audioBitrate))
             if videoPart > Double(plan.videoBitrate) * 1.6 + 2_000_000 {
                     items.append(ReportItem("bitrate", "Output bitrate higher than planned",
                         String(format: "Planned %.1f Mbps, obtained %.1f Mbps (video part).",

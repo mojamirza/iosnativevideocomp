@@ -14,7 +14,7 @@ struct VidCompressApp: App {
             // Fall back to an in-memory store if the document store is corrupt.
             container = try! ModelContainer(
                 for: JobRecord.self,
-                configurations: [.init(isStoredInMemoryOnly: true)]
+                configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
         }
         _coordinator = StateObject(wrappedValue: JobCoordinator(modelContext: container.mainContext))

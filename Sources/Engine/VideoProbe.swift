@@ -23,11 +23,11 @@ struct ColorTags: Hashable {
             let fmts: [CMFormatDescription] = try await track.load(.formatDescriptions)
             guard let fmt = fmts.first else { return t }
             t.primaries = CMFormatDescriptionGetExtension(
-                fmt, kCMFormatDescriptionExtension_ColorPrimaries) as? String
+                fmt, extensionKey: kCMFormatDescriptionExtension_ColorPrimaries) as? String
             t.transferFunction = CMFormatDescriptionGetExtension(
-                fmt, kCMFormatDescriptionExtension_TransferFunction) as? String
+                fmt, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String
             t.yCbCrMatrix = CMFormatDescriptionGetExtension(
-                fmt, kCMFormatDescriptionExtension_YCbCrMatrix) as? String
+                fmt, extensionKey: kCMFormatDescriptionExtension_YCbCrMatrix) as? String
         } catch {
             // Metadata unknown; engine falls back to sRGB-safe defaults.
         }
@@ -86,7 +86,11 @@ struct ProbeResult: Hashable {
         var name = ""
         for shift in [24, 16, 8, 0] {
             let byte = UInt8((fourCC >> shift) & 0xFF)
-            if let scalar = UnicodeScalar(byte) { name.append(Character(scalar)) }
+            if byte >= 32 && byte <= 126 {
+                name.append(Character(UnicodeScalar(byte)))
+            } else {
+                name.append("?".first!)
+            }
         }
         return name
     }
@@ -102,14 +106,14 @@ struct ProbeResult: Hashable {
 
         let naturalSize = try await track.load(.naturalSize)
         let nominalFPS = try await track.load(.nominalFrameRate)
-        let dataRate = (try? await track.load(.estimatedDataRate)) ?? 0.0
+        let dataRate: Double = Double((try? await track.load(.estimatedDataRate)) ?? 0)
         let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
         let subType = fmts.first.map { codecName(CMFormatDescriptionGetMediaSubType($0)) } ?? "?"
 
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         var audioRate = 0.0
         if let audio = audioTracks.first {
-            audioRate = (try? await audio.load(.estimatedDataRate)) ?? 0.0
+            audioRate = Double((try? await audio.load(.estimatedDataRate)) ?? 0)
         }
 
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64 ?? 0

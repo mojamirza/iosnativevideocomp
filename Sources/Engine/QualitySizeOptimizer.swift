@@ -21,7 +21,7 @@ struct OptimizerPlan: Hashable {
     var totalBitrate: Int { videoBitrate + audioBitrate }
 
     func estimatedSizeMB() -> Double {
-        totalBitrate / 8.0 * duration / 1_000_000.0
+        Double(totalBitrate) / 8.0 * duration / 1_000_000.0
     }
 }
 
@@ -52,8 +52,10 @@ enum QualitySizeOptimizer {
         if let sizeTargetMB = preset.sizeTargetMB, sizeTargetMB > 0 {
             // Size-target mode: (target bytes -> total bits) minus audio budget.
             let totalBits = sizeTargetMB * 8_000_000.0
-            let videoBits = max(0, totalBits - audioBitrate * 1000 * duration)
-            videoBitrate = clamp(Int(videoBits / duration), floor_, sourceMax)
+            let audioBits = Double(audioBitrate) * 1000.0 * duration
+            let videoBits = max(0.0, totalBits - audioBits)
+            let planned = Int(videoBits / duration)
+            videoBitrate = clamp(planned, floor_, sourceMax)
             rationale = String(
                 format: "Size target ≈ %.0f MB → %.1f Mbps video · %.0f kbps audio",
                 sizeTargetMB, Double(videoBitrate) / 1_000_000, Double(audioBitrate) / 1000)
