@@ -20,16 +20,13 @@ struct RootView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    HeaderCard()
-                        .padding(.horizontal)
-
                     if coordinator.jobs.isEmpty {
                         EmptyState()
                             .padding(.top, 40)
                     }
 
                     let active = coordinator.jobs.filter {
-                        [.queued, .analyzing, .compressing].contains($0.state)
+                        [.queued, .analyzing, .compressing, .verifying].contains($0.state)
                     }
                     let finished = coordinator.jobs.filter {
                         [.done, .failed, .cancelled].contains($0.state)
@@ -130,34 +127,7 @@ struct RootView: View {
     }
 }
 
-// MARK: - Header / pillar card
-
-private struct HeaderCard: View {
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(LinearGradient(colors: [.blue, .teal],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            in: RoundedRectangle(cornerRadius: 14))
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Native iPad compression")
-                    .font(.headline)
-                Label("Color-safe engine", systemImage: "paintpalette.fill")
-                Label("Quality–size optimizer", systemImage: "scalemass")
-                Label("Output integrity report", systemImage: "checkmark.seal.fill")
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            Spacer()
-        }
-        .padding(16)
-        .background(Color(.secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 18))
-    }
-}
+// MARK: - Empty state
 
 private struct EmptyState: View {
     var body: some View {
@@ -221,6 +191,8 @@ enum Thumbnails {
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: maxDimension, height: maxDimension)
+        gen.requestedTimeToleranceBefore = .positiveInfinity
+        gen.requestedTimeToleranceAfter = .positiveInfinity
         let dur = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 1
         let at = CMTime(seconds: dur > 2 ? dur * 0.15 : 0.1, preferredTimescale: 600)
         guard let (img, _) = try? await gen.image(at: at) else { return nil }

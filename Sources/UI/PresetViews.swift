@@ -26,26 +26,51 @@ enum PresetStore {
 
 /// Editor for a detailed custom preset: codec, resolution class, bitrate mode
 /// (adaptive tier / fixed Mbps / exact size target), fps cap, audio bitrate.
+/// Pass `existing:` to edit (or duplicate) a preset instead of creating one.
 struct PresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    let existing: Preset?
     let onSaved: (Preset) -> Void
 
-    @State private var name: String = "Custom"
-    @State private var codec: VideoCodec = .hevc
-    @State private var resolution: ResolutionClass = .keep
-    @State private var mode: Mode = .adaptive
-    @State private var tier: QualityTier = .balanced
-    @State private var fixedMbps: Double = 4
-    @State private var sizeTargetMB: Double = 100
-    @State private var fpsCapEnabled = false
-    @State private var fpsCap: Double = 30
-    @State private var audioKbps: Double = 128
+    @State private var name: String
+    @State private var codec: VideoCodec
+    @State private var resolution: ResolutionClass
+    @State private var mode: Mode
+    @State private var tier: QualityTier
+    @State private var fixedMbps: Double
+    @State private var sizeTargetMB: Double
+    @State private var fpsCapEnabled: Bool
+    @State private var fpsCap: Double
+    @State private var audioKbps: Double
 
     enum Mode: String, CaseIterable, Identifiable {
         case adaptive = "Adaptive (optimizer)"
         case fixed = "Fixed bitrate"
         case size = "Target file size"
         var id: String { rawValue }
+    }
+
+    init(existing: Preset? = nil, onSaved: @escaping (Preset) -> Void) {
+        self.existing = existing
+        self.onSaved = onSaved
+        let m: Mode
+        if existing?.sizeTargetMB != nil {
+            m = .size
+        } else if existing?.fixedBitrateMbps != nil {
+            m = .fixed
+        } else {
+            m = .adaptive
+        }
+        _name = State(initialValue: existing?.name ?? "Custom")
+        _codec = State(initialValue: existing?.codec ?? .hevc)
+        _resolution = State(initialValue: existing?.resolution ?? .keep)
+        _mode = State(initialValue: m)
+        _tier = State(initialValue: existing?.autoQuality ?? .balanced)
+        _fixedMbps = State(initialValue: existing?.fixedBitrateMbps ?? 4)
+        _sizeTargetMB = State(initialValue: existing?.sizeTargetMB ?? 100)
+        _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
+        _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
+        _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
     }
 
     var body: some View {
@@ -128,13 +153,13 @@ struct PresetEditorView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Custom preset")
+            .navigationTitle(existing == nil ? "Custom preset" : "Edit preset")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Save") {
-                        let preset = Preset(
+                        var preset = Preset(
                             name: name.isEmpty ? "Custom" : name,
                             codec: codec,
                             resolution: resolution,
@@ -145,6 +170,9 @@ struct PresetEditorView: View {
                             audioBitrateKbps: Int(audioKbps),
                             isUserDefined: true
                         )
+                        // Editing preserves the preset's identity so the stored
+                        // copy is replaced in place.
+                        preset.id = existing?.id ?? preset.id
                         onSaved(preset)
                         dismiss()
                     }

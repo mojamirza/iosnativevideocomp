@@ -7,7 +7,7 @@ import AVFoundation
 final class JobCoordinator: ObservableObject {
 
     enum JobState: String, Codable {
-        case queued, analyzing, compressing, done, failed, cancelled
+        case queued, analyzing, compressing, verifying, done, failed, cancelled
     }
 
     struct Job: Identifiable {
@@ -117,7 +117,10 @@ final class JobCoordinator: ObservableObject {
                 }
             }
 
-            setJob(jobID) { $0.progress = 1.0 }
+            setJob(jobID) {
+                $0.state = .verifying
+                $0.progress = 1.0
+            }
 
             // Integrity verification (third pillar).
             let report = await IntegrityVerifier.verify(

@@ -233,6 +233,7 @@ enum CompressionEngine {
 
         let expected = plan.expectedFrames
         var framesAppended = 0
+        var lastReported = 0.0
 
         // ------------------------------------------------------------------
         // VIDEO PIPE
@@ -314,7 +315,13 @@ enum CompressionEngine {
                         }
 
                         framesAppended += 1
-                        onProgress(min(0.99, Double(framesAppended) / Double(expected)))
+                        // Throttle progress: report only on ≥0.5% deltas so the
+                        // per-frame MainActor task churn doesn't flood the UI.
+                        let p = min(0.99, Double(framesAppended) / Double(expected))
+                        if p - lastReported >= 0.005 || framesAppended == expected {
+                            lastReported = p
+                            onProgress(p)
+                        }
                     }
                 }
             }

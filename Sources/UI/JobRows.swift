@@ -53,6 +53,13 @@ struct JobRowView: View {
                     }
                 }
                 .tint(.green)
+            } else if job.state == .verifying {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Verifying output integrity…")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.tertiary)
             } else if job.state == .queued {
                 HStack(spacing: 6) {
                     Image(systemName: "timer")
@@ -114,6 +121,7 @@ struct JobRowView: View {
         case .queued: return "Queued"
         case .analyzing: return "Analysing…"
         case .compressing: return "Compressing"
+        case .verifying: return "Verifying…"
         case .done: return "Done"
         case .failed: return "Failed"
         case .cancelled: return "Cancelled"
@@ -133,7 +141,7 @@ struct JobRowView: View {
     private var actionButtons: some View {
         HStack(spacing: 6) {
             switch job.state {
-            case .queued, .analyzing, .compressing:
+            case .queued, .analyzing, .compressing, .verifying:
                 Button {
                     coordinator.cancel(jobID: job.id)
                 } label: {

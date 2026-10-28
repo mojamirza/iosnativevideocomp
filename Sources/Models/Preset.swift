@@ -110,18 +110,14 @@ struct Preset: Identifiable, Codable, Hashable {
         .auto,
         Preset(name: "Auto · Smallest File", codec: .hevc, resolution: .keep,
                autoQuality: .smallest, audioBitrateKbps: 96),
-        Preset(name: "Auto · Best Quality", codec: .hevc, resolution: .keep,
-               autoQuality: .best, audioBitrateKbps: 192),
         Preset(name: "1080p HEVC · 5 Mbps", codec: .hevc, resolution: .fhd,
                fixedBitrateMbps: 5, audioBitrateKbps: 128),
-        Preset(name: "1080p H.264 · 8 Mbps (max compatibility)", codec: .h264, resolution: .fhd,
-               fixedBitrateMbps: 8, audioBitrateKbps: 160),
         Preset(name: "720p HEVC · 2.5 Mbps", codec: .hevc, resolution: .hd,
                fixedBitrateMbps: 2.5, audioBitrateKbps: 96),
+        Preset(name: "1080p H.264 · 8 Mbps (max compatibility)", codec: .h264, resolution: .fhd,
+               fixedBitrateMbps: 8, audioBitrateKbps: 160),
         Preset(name: "4K HEVC · 12 Mbps", codec: .hevc, resolution: .fourK,
                fixedBitrateMbps: 12, audioBitrateKbps: 160),
-        Preset(name: "Half Size · 1.2 Mbps", codec: .hevc, resolution: .half,
-               fixedBitrateMbps: 1.2, audioBitrateKbps: 64),
     ]
 
     private enum CodingKeys: String, CodingKey {

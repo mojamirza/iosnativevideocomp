@@ -66,6 +66,10 @@ enum IntegrityVerifier {
             let gen = AVAssetImageGenerator(asset: outAsset)
             gen.appliesPreferredTrackTransform = true
             gen.maximumSize = CGSize(width: 128, height: 128)
+            // Fast keyframe seeks — exact-frame matching would decode from the
+            // previous keyframe and can take minutes on long 4K files.
+            gen.requestedTimeToleranceBefore = .positiveInfinity
+            gen.requestedTimeToleranceAfter = .positiveInfinity
             do {
                 _ = try await gen.image(at: CMTime(seconds: min(0.1, outDuration * 0.1), preferredTimescale: 600))
                 decodable += 1

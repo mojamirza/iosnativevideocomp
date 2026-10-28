@@ -17,6 +17,7 @@ struct SetupFlowView: View {
     @State private var errorText: String?
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var showEditor = false
+    @State private var editingPreset: Preset?
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -78,9 +79,12 @@ struct SetupFlowView: View {
             }
             .sheet(isPresented: $showEditor) {
                 PresetEditorView { newPreset in
-                    customPresets.append(newPreset)
-                    PresetStore.saveCustom(customPresets)
-                    selectedPreset = newPreset
+                    savePreset(newPreset)
+                }
+            }
+            .sheet(item: $editingPreset) { preset in
+                PresetEditorView(existing: preset) { updated in
+                    savePreset(updated)
                 }
             }
             .task {
@@ -171,13 +175,39 @@ struct SetupFlowView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            ForEach(Array(availablePresets.enumerated()), id: \.element.id) { index, preset in
+            ForEach(availablePresets, id: \.id) { preset in
                 PresetRow(preset: preset,
                           isSelected: selectedPreset?.id == preset.id,
                           probe: probe,
                           complexity: complexity,
-                          accent: index == 0 && !preset.isUserDefined) {
+                          accent: preset.id == Preset.auto.id) {
                     selectedPreset = preset
+                }
+                .contextMenu {
+                    if preset.isUserDefined {
+                        Button {
+                            editingPreset = preset
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        Button {
+                            duplicatePreset(preset)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            deletePreset(preset)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } else {
+                        Button {
+                            duplicatePreset(preset)
+                        } label: {
+                            Label("Duplicate as custom", systemImage: "plus.square.on.square")
+                        }
+                    }
                 }
             }
         }
@@ -248,6 +278,38 @@ struct SetupFlowView: View {
         coordinator.enqueue(source: sourceURL, probe: probe, plan: plan,
                             preset: preset, thumbnail: thumbnail)
         onDone()
+    }
+
+    // MARK: preset management
+
+    /// Insert-or-replace by id: edits update in place, new presets append.
+    private func savePreset(_ preset: Preset) {
+        if let idx = customPresets.firstIndex(where: { $0.id == preset.id }) {
+            customPresets[idx] = preset
+        } else {
+            customPresets.append(preset)
+        }
+        PresetStore.saveCustom(customPresets)
+        selectedPreset = preset
+        PresetStore.setLastUsedPreset(preset.id)
+    }
+
+    /// Copy a preset (built-in or custom) as a new user-defined one.
+    private func duplicatePreset(_ preset: Preset) {
+        var copy = preset
+        copy.id = UUID()
+        copy.isUserDefined = true
+        copy.name = preset.name + " (custom)"
+        savePreset(copy)
+    }
+
+    private func deletePreset(_ preset: Preset) {
+        customPresets.removeAll { $0.id == preset.id }
+        PresetStore.saveCustom(customPresets)
+        if selectedPreset?.id == preset.id {
+            selectedPreset = Preset.builtIn[0]
+            PresetStore.setLastUsedPreset(selectedPreset!.id)
+        }
     }
 
     // MARK: analysis
