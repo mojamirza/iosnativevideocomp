@@ -17,7 +17,7 @@ A simple but professional, **100% native** (no external frameworks) iPad video c
 - Reads the source track's **color primaries / transfer function / YCbCr matrix** from its format description.
 - Every decoded pixel buffer is **re-tagged** with the exact source metadata (Core Video attachments) before it reaches the encoder.
 - The output mux carries **the same tags** (`AVVideoColorPropertiesKey`), so Rec.709, Rec.2020 and P3 files stay exactly as they were.
-- **HDR (HLG/PQ) is never tonemapped and never decoded to an 8-bit intermediate**: the engine uses a native pass-through path and HEVC **Main10** — the verifier even fails the report if color metadata drifts.
+- **Bit-depth aware**: 10-bit and HDR (HLG/PQ) sources decode to **10-bit YCbCr** (HEVC picks Main10 automatically) — they are never tonemapped and never squeezed through an 8-bit intermediate. 10-bit/HDR/rotated sources keep their resolution rather than risk color or orientation damage (noted in the optimizer rationale). The verifier even fails the report if color metadata drifts.
 
 ### 2. Quality–size optimizer
 `Sources/Engine/ComplexityAnalyzer.swift`, `QualitySizeOptimizer.swift`
