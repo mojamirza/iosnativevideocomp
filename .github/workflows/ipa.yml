@@ -1,0 +1,155 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # -------------------------------------------------------------------------
+  # UNSIGNED IPA — works with zero secrets. Re-sign later with Sideloadly,
+  # AltStore, Apple Configurator or Xcode to install on a device.
+  # -------------------------------------------------------------------------
+  unsigned-ipa:
+    name: Unsigned IPA (for Sideloadly / AltStore)
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          brew list xcodegen &>/dev/null || brew install xcodegen
+
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep -i xcode || true
+          sudo xcode-select -s "/Applications/Xcode_16.4.app" 2>/dev/null || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, iPhone device SDK)
+        run: |
+          xcodebuild \
+            -project VidCompress.xcodeproj \
+            -scheme VidCompress \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Package unsigned .app into Payload .ipa
+        run: |
+          APP=$(find build/DerivedData/Build -type d -name "*.app" | head -n 1)
+          echo "Found app: $APP"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload "VidCompress-unsigned.ipa"
+          rm -rf Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: VidCompress-unsigned-ipa
+          path: VidCompress-unsigned.ipa
+
+  # -------------------------------------------------------------------------
+  # SIGNED IPA — requires repository secrets. See README "Signing secrets".
+  # -------------------------------------------------------------------------
+  signed-ipa:
+    name: Signed IPA (App Store-ready, ad hoc profile)
+    runs-on: macos-15
+    needs: unsigned-ipa
+    if: |
+      github.repository_owner != '' &&
+      (vars.ENABLE_SIGNED_IPA == 'true') &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew list xcodegen &>/dev/null || brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Decode signing certificate
+        env:
+          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
+          KEYCHAIN_FILE=build.keychain
+          KEYCHAIN_PASS="${KEYCHAIN_PASSWORD:-build-ci-pass}"
+          security create-keychain -p "$KEYCHAIN_PASS" $KEYCHAIN_FILE
+          security default-keychain -s $KEYCHAIN_FILE
+          security unlock-keychain -p "$KEYCHAIN_PASS" $KEYCHAIN_FILE
+          security set-keychain-settings -t 3600 $KEYCHAIN_FILE
+          security import signing.p12 -k $KEYCHAIN_FILE -P "$IOS_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple-signing: -s -k "$KEYCHAIN_PASS" $KEYCHAIN_FILE
+          security list-keychains -d user -s $KEYCHAIN_FILE $(security list-keychains -d user | grep -v build.keychain | tr -d '"')
+          security find-identity -v -p codesigning $KEYCHAIN_FILE
+
+      - name: Decode provisioning profile
+        env:
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > VidCompress.mobileprovision
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< \
+            $(security cms -D -i VidCompress.mobileprovision 2>/dev/null))
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$IOS_TEAM_ID" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          xcodebuild \
+            -project VidCompress.xcodeproj \
+            -scheme VidCompress \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/VidCompress.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive
+
+      - name: Export IPA
+        run: |
+          cat > ExportOptions.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key><string>ad-hoc</string>
+  <key>teamID</key><string>__TEAM_ID__</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>signingCertificate</key><string>Apple Distribution</string>
+  <key>stripSwiftSymbols</key><true/>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.example.vidcompress</key><string>__PROFILE_NAME__</string>
+  </dict>
+</dict>
+</plist>
+EOF
+          sed -i '' "s/__TEAM_ID__/$TEAM_ID/g; s/__PROFILE_NAME__/$PROFILE_NAME/g" ExportOptions.plist
+          xcodebuild -exportArchive \
+            -archivePath build/VidCompress.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/ipa -allowProvisioningUpdates
+
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: VidCompress-signed-ipa
+          path: build/ipa/*.ipa
