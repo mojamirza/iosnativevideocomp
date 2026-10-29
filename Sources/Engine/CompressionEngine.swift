@@ -126,7 +126,8 @@ enum CompressionEngine {
             var s: VTPixelTransferSession?
             // VTCreatePixelTransferSession is macOS-only; iOS uses the classic
             // create call (default scaling mode is aspect-preserving).
-            guard VTPixelTransferSessionCreate(kCFAllocatorDefault, &s) == noErr, let s else {
+            guard VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault,
+                                               pixelTransferSessionOut: &s) == noErr, let s else {
                 return nil
             }
             return s
