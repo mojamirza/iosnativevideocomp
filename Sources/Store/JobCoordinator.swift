@@ -79,7 +79,6 @@ final class JobCoordinator: ObservableObject {
         // that reached a terminal state).
         guard let job = jobs.first(where: { $0.id == jobID }),
               ![JobState.done, .failed, .cancelled].contains(job.state) else { return }
-        let job = jobs.first { $0.id == jobID }!
         let flags = EngineFlags()
         cancelFlags[jobID] = flags
 
