@@ -180,12 +180,7 @@ private struct ImportedVideo: Transferable {
             let ext = received.file.pathExtension
             let ext2 = ext.isEmpty ? "mov" : ext
             let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext2)")
-            guard received.fileAvailable else {
-                throw CocoaError(.fileReadUnknown, userInfo: [
-                    NSLocalizedDescriptionKey: "The library could not export this video."
-                ])
-            }
-            // Normal path: the system exported the video to a temp file.
+            // FileRepresentation always delivers a real file on disk.
             try FileManager.default.removeItem(at: dest)
             try FileManager.default.copyItem(at: received.file, to: dest)
             return ImportedVideo(url: dest)
