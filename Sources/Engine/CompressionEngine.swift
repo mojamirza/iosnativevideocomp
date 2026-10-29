@@ -458,7 +458,15 @@ enum CompressionEngine {
             throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
 
-        await writer.finishWriting()
+        // Finalize, capped: a wedged finishWriting (e.g. an input that never
+        // finished) must not hold the job forever.
+        let finalizeOK = await AsyncTimeout.run(seconds: 120) {
+            await writer.finishWriting()
+        }
+        if finalizeOK == nil {
+            try? FileManager.default.removeItem(at: output)
+            throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")
+        }
 
         if flags.cancelled {
             try? FileManager.default.removeItem(at: output)

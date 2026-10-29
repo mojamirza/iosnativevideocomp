@@ -121,6 +121,18 @@ final class JobCoordinator: ObservableObject {
                 $0.progress = 1.0
             }
 
+            // HARD GUARANTEE: verification is internally capped at 60 s, but
+            // if anything wedges beyond that (worker task never resuming,
+            // SwiftData stall, …), this independent watchdog forces the row
+            // terminal. The job list can never show "Verifying…" forever.
+            let verifyDeadline = Date()
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 75_000_000_000)
+                self?.forceVerifyTerminal(jobID: jobID, output: output,
+                                          encodeSeconds: Date().timeIntervalSince(encodeStart),
+                                          startedAt: verifyDeadline)
+            }
+
             // Integrity verification (third pillar).
             let report = await IntegrityVerifier.verify(
                 source: job.sourceURL,
@@ -160,6 +172,29 @@ final class JobCoordinator: ObservableObject {
         cancelFlags.removeValue(forKey: jobID)
         // Give the UI a frame to settle before the next job starts.
         try? await Task.sleep(nanoseconds: 200_000_000)
+    }
+
+    /// Watchdog backstop: only acts if the job is STILL in .verifying (the
+    /// normal path finishes in ≤60 s and has already moved the row on).
+    private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: Date) {
+        guard Date().timeIntervalSince(startedAt) >= 74 else { return }
+        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[idx].state == .verifying else { return }
+        let fileSize = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
+        let report = IntegrityReport(
+            items: [ReportItem("verify", "Verification timed out",
+                "The integrity checks took too long and were stopped. The output file was finalized by the encoder — if it plays in Files, it is good.", .warn)],
+            inBytes: jobs[idx].plan?.source.fileSize ?? 0,
+            outBytes: fileSize,
+            outputBitrateMbps: 0,
+            encodeSeconds: encodeSeconds,
+            outputDuration: 0)
+        jobs[idx].state = .done
+        jobs[idx].report = report
+        jobs[idx].outputURL = output
+        saveRecord(jobID: jobID, outputName: output.lastPathComponent,
+                   report: try? JSONEncoder().encode(report), state: "done")
+        cancelFlags.removeValue(forKey: jobID)
     }
 
     // MARK: Actions

@@ -3,14 +3,20 @@ import AVFoundation
 
 /// Persists user-defined presets in UserDefaults.
 enum PresetStore {
+    /// v2 storage key: the preset system changed to fixed-bitrate-only, and
+    /// presets saved by older versions (adaptive/size-target modes) cannot be
+    /// represented faithfully — they decoded to misleading default bitrates.
+    /// Reading a fresh key drops those stale entries once, cleanly.
+    private static let customsKey = "customPresets.v2"
+
     static func loadCustom() -> [Preset] {
-        guard let data = UserDefaults.standard.data(forKey: "customPresets") else { return [] }
+        guard let data = UserDefaults.standard.data(forKey: customsKey) else { return [] }
         return (try? JSONDecoder().decode([Preset].self, from: data)) ?? []
     }
 
     static func saveCustom(_ presets: [Preset]) {
         if let data = try? JSONEncoder().encode(presets) {
-            UserDefaults.standard.set(data, forKey: "customPresets")
+            UserDefaults.standard.set(data, forKey: customsKey)
         }
     }
 

@@ -71,14 +71,39 @@ struct Preset: Identifiable, Codable, Hashable {
     var audioBitrateKbps: Int = 128
     var isUserDefined: Bool = false
 
-    static let builtIn: [Preset] = [
-        Preset(name: "High quality", codec: .hevc, resolution: .keep,
-               fixedBitrateMbps: 8, fpsCap: nil, audioBitrateKbps: 128),
-        Preset(name: "Medium (720p)", codec: .hevc, resolution: .hd,
-               fixedBitrateMbps: 4, fpsCap: nil, audioBitrateKbps: 128),
-        Preset(name: "Low (480p)", codec: .hevc, resolution: .sd,
-               fixedBitrateMbps: 1.5, fpsCap: nil, audioBitrateKbps: 96),
-    ]
+    /// Deterministic UUID derived from the preset name, so built-in IDs are
+    /// stable across launches (last-used selection keeps working).
+    private static func stableID(_ name: String) -> UUID {
+        var h1: UInt64 = 0xcbf29ce484222325
+        var h2: UInt64 = 0x6c62272e07bb0142
+        for b in name.utf8 {
+            h1 = (h1 ^ UInt64(b)) &* 0x100000001b3
+            h2 = (h2 &+ UInt64(b)) &* 0x9E3779B97F4A7C15
+        }
+        var bytes = [UInt8]()
+        var x = h1
+        for _ in 0..<8 { bytes.append(UInt8(truncatingIfNeeded: x)); x >>= 8 }
+        x = h2
+        for _ in 0..<8 { bytes.append(UInt8(truncatingIfNeeded: x)); x >>= 8 }
+        bytes[6] = (bytes[6] & 0x0F) | 0x40
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+                           bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+                           bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
+    static let builtIn: [Preset] = {
+        var list = [
+            Preset(name: "High quality", codec: .hevc, resolution: .keep,
+                   fixedBitrateMbps: 8, fpsCap: nil, audioBitrateKbps: 128),
+            Preset(name: "Medium (720p)", codec: .hevc, resolution: .hd,
+                   fixedBitrateMbps: 4, fpsCap: nil, audioBitrateKbps: 128),
+            Preset(name: "Low (480p)", codec: .hevc, resolution: .sd,
+                   fixedBitrateMbps: 1.5, fpsCap: nil, audioBitrateKbps: 96),
+        ]
+        for i in list.indices { list[i].id = stableID(list[i].name) }
+        return list
+    }()
 
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,
