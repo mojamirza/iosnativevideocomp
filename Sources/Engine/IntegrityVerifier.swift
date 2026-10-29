@@ -49,10 +49,15 @@ enum IntegrityVerifier {
             let t = try? await outAsset.load(.duration)
             outDuration = t.map { CMTimeGetSeconds($0) } ?? 0
             let fps: Float = (try? await outTrack.load(.nominalFrameRate)) ?? 0
-            // Report the ACTUAL output track geometry (display size), not the plan.
-            let actual = (try? await outTrack.load(.naturalSize)) ?? .zero
-            let showW = actual.width > 0 ? Int(actual.width) : Int(plan.outputSize.width)
-            let showH = actual.height > 0 ? Int(actual.height) : Int(plan.outputSize.height)
+            // Report the ACTUAL output DISPLAY geometry: naturalSize is
+            // pre-rotation (stored); apply the output track's transform —
+            // same convention as the source card.
+            let actualNatural = (try? await outTrack.load(.naturalSize)) ?? .zero
+            let outTransform = (try? await outTrack.load(.preferredTransform)) ?? .identity
+            let actualDisplay = actualNatural.applying(outTransform)
+            let aw = abs(actualDisplay.width), ah = abs(actualDisplay.height)
+            let showW = aw > 0 ? Int(aw) : Int(plan.outputSize.width)
+            let showH = ah > 0 ? Int(ah) : Int(plan.outputSize.height)
             do {
                 if fps > 0 {
                     items.append(ReportItem("track", "Video track verified",

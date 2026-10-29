@@ -37,11 +37,25 @@ enum QualitySizeOptimizer {
         let audioBitrate = max(32, min(preset.audioBitrateKbps, 320)) * 1000
 
         // Exact bitrate from the preset, with a tiny floor for degenerate input.
-        let videoBitrate = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
-        let rationale = String(
-            format: "%.1f Mbps video · %.0f kbps audio at %d×%d",
-            preset.fixedBitrateMbps, Double(audioBitrate) / 1000,
-            Int(outputSize.width), Int(outputSize.height))
+        let requested = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
+        // Cap at the source's own rate: re-encoding above it only grows the
+        // file without adding detail. (Applied to the encode too, so the
+        // estimate and the actual output always agree.)
+        let sourceMax = probe.videoDataRate > 0 ? probe.videoDataRate * 0.95 : Double.infinity
+        let videoBitrate = min(requested, max(200_000, Int(sourceMax)))
+        let rationale: String
+        if Double(requested) > sourceMax {
+            rationale = String(
+                format: "%.1f Mbps requested — source is %.1f Mbps, capped so the output never grows · %.0f kbps audio at %d×%d",
+                Double(requested) / 1e6, probe.videoDataRate / 1e6,
+                Double(audioBitrate) / 1000,
+                Int(outputSize.width), Int(outputSize.height))
+        } else {
+            rationale = String(
+                format: "%.1f Mbps video · %.0f kbps audio at %d×%d",
+                preset.fixedBitrateMbps, Double(audioBitrate) / 1000,
+                Int(outputSize.width), Int(outputSize.height))
+        }
 
         let scaleNeeded = abs(outputSize.width - probe.sourceSize.width) > 1 ||
                           abs(outputSize.height - probe.sourceSize.height) > 1

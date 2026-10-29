@@ -16,35 +16,38 @@ enum VideoCodec: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// Target resolution class. "keep" and "half" preserve the aspect ratio.
+/// Target resolution class (the standard tiers). "keep" preserves the source.
 enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
     case keep = "Keep original"
-    case half = "Half size"
-    case fourK = "4K (2160p)"
+    case uhd = "2160p (4K)"
+    case qhd = "1440p (2K)"
     case fhd = "1080p"
     case hd = "720p"
     case sd = "480p"
 
     var id: String { rawValue }
 
-    /// Returns a scaled output size (even numbers) for a given source size.
-    /// Never upscales.
+    /// Long-side limit for the class (never upscales, keeps aspect ratio).
+    var longSideLimit: CGFloat? {
+        switch self {
+        case .keep: return nil
+        case .uhd: return 3840
+        case .qhd: return 2560
+        case .fhd: return 1920
+        case .hd: return 1280
+        case .sd: return 854
+        }
+    }
+
+    /// Returns a scaled output DISPLAY size (even numbers) for a given source
+    /// display size. Never upscales.
     func outputSize(for source: CGSize) -> CGSize {
         let w = max(2, source.width), h = max(2, source.height)
         let target: CGSize
-        switch self {
-        case .keep:
+        if let limit = longSideLimit {
+            target = cappedSize(source: source, limit: limit)
+        } else {
             target = CGSize(width: w, height: h)
-        case .half:
-            target = CGSize(width: w / 2, height: h / 2)
-        case .fourK:
-            target = cappedSize(source: source, limit: 3840)
-        case .fhd:
-            target = cappedSize(source: source, limit: 1920)
-        case .hd:
-            target = cappedSize(source: source, limit: 1280)
-        case .sd:
-            target = cappedSize(source: source, limit: 854)
         }
         // Encoders want even dimensions.
         return CGSize(width: max(2, Int(target.width) - Int(target.width) % 2),

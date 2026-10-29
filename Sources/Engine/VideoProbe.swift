@@ -109,6 +109,13 @@ struct ProbeResult: Hashable {
 
         let naturalSize = try await track.load(.naturalSize)
         let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
+        // naturalSize is the PRE-ROTATION (stored) size. What players actually
+        // show — and what every resolution preset must be measured against —
+        // is the DISPLAY size: naturalSize with the preferred transform applied.
+        // (Portrait iPhone video: stored 1920×1080, displayed 1080×1920.)
+        let displaySize = naturalSize.applying(preferredTransform)
+        let sourceSize = CGSize(width: abs(displaySize.width),
+                                height: abs(displaySize.height))
         let nominalFPS = try await track.load(.nominalFrameRate)
         let dataRate: Double = Double((try? await track.load(.estimatedDataRate)) ?? 0)
         let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
@@ -129,7 +136,7 @@ struct ProbeResult: Hashable {
         // the decoder's appliesPreferredTrackTransform handles the rest.
         return ProbeResult(
             duration: CMTimeGetSeconds(durationTime),
-            sourceSize: naturalSize,
+            sourceSize: sourceSize,   // display (post-rotation) size
             nominalFPS: nominalFPS > 0 ? nominalFPS : 30,
             codecSubType: subType,
             bitDepth: bitDepth >= 10 ? 10 : 8,
