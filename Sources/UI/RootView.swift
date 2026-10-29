@@ -155,16 +155,43 @@ enum ImportHelpers {
         if let url = try? await item.loadTransferable(type: URL.self) {
             return SecurityScoped(url: url).importCopy() ?? url
         }
-        // Fallback: raw bytes.
-        if let data = try? await item.loadTransferable(type: Data.self) {
-            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
-            let dir = JobCoordinator.importsDirectory()
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString.prefix(8)).\(ext)")
-            try? data.write(to: dest)
+        // Fallback: stream the file representation to disk. Loading the item
+        // as `Data` would hold the ENTIRE video in RAM and OOM-crash on large
+        // library files — loadFileRepresentation hands us a temp file instead.
+        let dir = JobCoordinator.importsDirectory()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
+        let suggested = item.itemIdentifier.map { "IMG-\($0.uuidString).\(ext)" }
+            ?? "IMG-\(UUID().uuidString.prefix(8)).\(ext)"
+        let dest = dir.appendingPathComponent(suggested)
+        if await copyViaItemProvider(item, to: dest) {
             return dest
         }
         return nil
+    }
+
+    /// Streams a PhotosPickerItem to a destination file using the provider's
+    /// file representation (never holds the whole video in memory).
+    private static func copyViaItemProvider(_ item: PhotosPickerItem,
+                                            to dest: URL) async -> Bool {
+        guard let provider = item.itemProvider else { return false }
+        // Type identifiers that actually hold video data, most preferred first.
+        let candidates = ["com.apple.quicktime-movie", AVFileType.mov.rawValue,
+                          AVFileType.mp4.rawValue, "public.movie"]
+        let typeID = candidates.first { provider.hasItemConformingToTypeIdentifier($0) }
+            ?? "public.movie"
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: typeID) { tempURL, err in
+                guard let tempURL, err == nil else {
+                    cont.resume(returning: false)
+                    return
+                }
+                // The temp URL is only valid inside this handler — copy it NOW.
+                try? FileManager.default.removeItem(at: dest)
+                let ok = (try? FileManager.default.copyItem(at: tempURL, to: dest)) != nil
+                cont.resume(returning: ok)
+            }
+        }
     }
 }
 
@@ -177,9 +204,17 @@ struct SecurityScoped {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let ext = url.pathExtension.isEmpty ? "mp4" : url.pathExtension
+        // Keep the original filename so history rows and exports are
+        // recognizable; add -1, -2, … suffixes on collisions.
+        let base = url.deletingPathExtension().lastPathComponent
         let dir = JobCoordinator.importsDirectory()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dest = dir.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        var dest = dir.appendingPathComponent("\(base).\(ext)")
+        var n = 1
+        while FileManager.default.fileExists(atPath: dest.path) {
+            dest = dir.appendingPathComponent("\(base)-\(n).\(ext)")
+            n += 1
+        }
         guard (try? FileManager.default.copyItem(at: url, to: dest)) != nil else { return nil }
         return dest
     }

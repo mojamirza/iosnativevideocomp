@@ -14,7 +14,7 @@ enum IntegrityVerifier {
                        probe: ProbeResult,
                        plan: OptimizerPlan,
                        encodeSeconds: Double) async -> IntegrityReport {
-        if let report = await withTimeout(seconds: 60, {
+        if let report = await AsyncTimeout.run(seconds: 60, {
             await Self.verifyImpl(source: source, output: output, probe: probe,
                                   plan: plan, encodeSeconds: encodeSeconds)
         }) {
@@ -49,11 +49,14 @@ enum IntegrityVerifier {
             let t = try? await outAsset.load(.duration)
             outDuration = t.map { CMTimeGetSeconds($0) } ?? 0
             let fps: Float = (try? await outTrack.load(.nominalFrameRate)) ?? 0
+            // Report the ACTUAL output track geometry (display size), not the plan.
+            let actual = (try? await outTrack.load(.naturalSize)) ?? .zero
+            let showW = actual.width > 0 ? Int(actual.width) : Int(plan.outputSize.width)
+            let showH = actual.height > 0 ? Int(actual.height) : Int(plan.outputSize.height)
             do {
                 if fps > 0 {
                     items.append(ReportItem("track", "Video track verified",
-                        String(format: "%.0f fps, %d×%d", fps,
-                               Int(plan.outputSize.width), Int(plan.outputSize.height)), .pass))
+                        String(format: "%.0f fps, %d×%d", fps, showW, showH), .pass))
                 } else {
                     items.append(ReportItem("track", "Video track present, fps unreadable",
                         "Track exists but nominalFrameRate is 0 — playability not guaranteed.", .warn))
@@ -90,11 +93,11 @@ enum IntegrityVerifier {
         //    each, ≤2 frames) and a per-check timeout — the verifier must
         //    never wedge the job row.
         do {
-            let firstResult = await withTimeout(seconds: 15) {
+            let firstResult = await AsyncTimeout.run(seconds: 15) {
                 await Self.decodesPixelData(asset: outAsset, at: min(0.1, outDuration * 0.1))
             }
             let lateResult: Bool? = outDuration > 1
-                ? await withTimeout(seconds: 15) {
+                ? await AsyncTimeout.run(seconds: 15) {
                     await Self.decodesPixelData(asset: outAsset, at: outDuration - 0.3)
                 }
                 : true
@@ -197,36 +200,6 @@ enum IntegrityVerifier {
     }
 
     // MARK: hang-proofing helpers
-
-    /// Thread-safe one-shot claim used by `withTimeout`.
-    private final class OnceClaim: @unchecked Sendable {
-        private let lock = NSLock()
-        private var fired = false
-        func claim() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            if fired { return false }
-            fired = true
-            return true
-        }
-    }
-
-    /// Races an async operation against a wall-clock limit. Returns nil if the
-    /// limit fires first. The losing task is unstructured and deliberately
-    /// never awaited, so a stuck operation cannot wedge the caller.
-    private static func withTimeout<T: Sendable>(
-        seconds: Double, _ op: @escaping @Sendable () async -> T) async -> T? {
-        await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
-            let once = OnceClaim()
-            Task.detached {
-                let v = await op()
-                if once.claim() { cont.resume(returning: v) }
-            }
-            Task.detached {
-                try? await Task.sleep(nanoseconds: UInt64(max(0.1, seconds) * 1_000_000_000))
-                if once.claim() { cont.resume(returning: nil) }
-            }
-        }
-    }
 
     /// Bounded decode spot-check: open a ≤1 s reader window at the given time
     /// and confirm at least one frame decodes to real pixels. Unlike

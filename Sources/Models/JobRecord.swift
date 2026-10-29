@@ -14,13 +14,14 @@ final class JobRecord {
     var stateRaw: String = "done"
     var errorMessage: String?
     var reportJSON: Data?
+    var presetJSON: Data?
     var codecLabel: String = ""
     var resolutionLabel: String = ""
 
     init(jobID: UUID, createdAt: Date, sourceName: String, presetName: String,
          outputFileName: String?, inBytes: Int64, outBytes: Int64, duration: Double,
          stateRaw: String, errorMessage: String?, reportJSON: Data?,
-         codecLabel: String, resolutionLabel: String) {
+         presetJSON: Data? = nil, codecLabel: String, resolutionLabel: String) {
         self.jobID = jobID
         self.createdAt = createdAt
         self.sourceName = sourceName
@@ -32,6 +33,7 @@ final class JobRecord {
         self.stateRaw = stateRaw
         self.errorMessage = errorMessage
         self.reportJSON = reportJSON
+        self.presetJSON = presetJSON
         self.codecLabel = codecLabel
         self.resolutionLabel = resolutionLabel
     }

@@ -221,11 +221,19 @@ final class JobCoordinator: ObservableObject {
                         }
                     }
                 }
+                // Decode the REAL preset used for the job (needed for a
+                // faithful Retry). Fall back to name-only for old records.
+                let realPreset: Preset
+                if let data = r.presetJSON, let p = try? JSONDecoder().decode(Preset.self, from: data) {
+                    realPreset = p
+                } else {
+                    realPreset = Preset(name: r.presetName, codec: .hevc, resolution: .keep)
+                }
                 out.append(Job(
                     id: r.jobID,
                     sourceURL: srcURL,
                     sourceName: r.sourceName,
-                    preset: Preset(name: r.presetName, codec: .hevc, resolution: .keep),
+                    preset: realPreset,
                     state: state,
                     report: report,
                     errorMessage: r.errorMessage,
@@ -273,6 +281,7 @@ final class JobCoordinator: ObservableObject {
             stateRaw: state,
             errorMessage: errorText,
             reportJSON: report,
+            presetJSON: try? JSONEncoder().encode(job.preset),
             codecLabel: job.preset.codec.rawValue,
             resolutionLabel: job.preset.resolution.rawValue
         )

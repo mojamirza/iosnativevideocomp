@@ -136,8 +136,22 @@ enum CompressionEngine {
         // created, keep the source resolution rather than risk tonemapping.
         let scaleNeeded = plan.scaleNeeded && (!scaleIs10Bit || transferSession != nil)
 
-        var encodeW = Int(plan.outputSize.width)
-        var encodeH = Int(plan.outputSize.height)
+        // ------------------------------------------------------------------
+        // ROTATE-AWARE GEOMETRY. plan.outputSize is the *display* size (post-
+        // rotation, e.g. 480×854 for a portrait video). The encoder writes
+        // pre-rotation frames and carries the preferredTransform in the output,
+        // so under a 90°/270° rotation the ENCODED frame must be the transposed
+        // size (854×480) — this is what makes portrait videos scaleable at all.
+        // ------------------------------------------------------------------
+        let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
+        let rotationDegrees = Int(abs(atan2(preferredTransform.b, preferredTransform.a)
+                                      * 180 / .pi).rounded())
+        let swapsDims = rotationDegrees % 180 == 90
+
+        let targetW = Int(plan.outputSize.width)
+        let targetH = Int(plan.outputSize.height)
+        var encodeW = swapsDims ? targetH : targetW
+        var encodeH = swapsDims ? targetW : targetH
         if !scaleNeeded, let f = hint {
             let d = CMVideoFormatDescriptionGetDimensions(f)
             if d.width > 0 && d.height > 0 {
@@ -160,8 +174,8 @@ enum CompressionEngine {
                                             outputSettings: settings,
                                             sourceFormatHint: hint)
         videoInput.expectsMediaDataInRealTime = false
-        // Preserve rotation (direct path writes pre-rotation decoded buffers).
-        let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
+        // Preserve rotation on every path (the scale path encodes transposed
+        // pre-rotation frames; the transform restores the display orientation).
         if !preferredTransform.isIdentity {
             videoInput.transform = preferredTransform
         }
@@ -208,8 +222,8 @@ enum CompressionEngine {
         if scaleIs10Bit && transferSession != nil {
             let poolAttrs: [String: Any] = [
                 String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
-                String(kCVPixelBufferWidthKey): Int(plan.outputSize.width),
-                String(kCVPixelBufferHeightKey): Int(plan.outputSize.height),
+                String(kCVPixelBufferWidthKey): encodeW,
+                String(kCVPixelBufferHeightKey): encodeH,
             ]
             CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttrs as CFDictionary, nil, &scalePool)
         }
@@ -241,8 +255,8 @@ enum CompressionEngine {
         let adaptor: AVAssetWriterInputPixelBufferAdaptor? = scaleNeeded ? {
             let poolAttrs: [String: Any] = [
                 String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
-                String(kCVPixelBufferWidthKey): Int(plan.outputSize.width),
-                String(kCVPixelBufferHeightKey): Int(plan.outputSize.height),
+                String(kCVPixelBufferWidthKey): encodeW,
+                String(kCVPixelBufferHeightKey): encodeH,
             ]
             return AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput,
                                                         sourcePixelBufferAttributes: poolAttrs)
@@ -274,7 +288,11 @@ enum CompressionEngine {
                 videoInput.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
                     while videoInput.isReadyForMoreMediaData {
-                        if flags.cancelled {
+                        // Bail out when cancelled, when the OTHER pipe already
+                        // failed (writer cancelled), or when the writer died —
+                        // otherwise this continuation may never resume and the
+                        // job would hang forever.
+                        if flags.cancelled || flags.error != nil || writer.status == .failed {
                             reader.cancelReading()
                             writer.cancelWriting()
                             resume.resumeOnce()
@@ -309,9 +327,7 @@ enum CompressionEngine {
                                 // 10-bit/HDR scale: VideoToolbox pixel transfer
                                 // (geometric rescale only — color-safe).
                                 guard let dst = Self.nextPoolBuffer(
-                                        scalePool,
-                                        width: Int(plan.outputSize.width),
-                                        height: Int(plan.outputSize.height),
+                                        scalePool, width: encodeW, height: encodeH,
                                         format: decodeFormat) else { continue }
                                 if VTPixelTransferSessionTransferImage(transfer, from: src, to: dst) != noErr {
                                     continue
@@ -328,18 +344,16 @@ enum CompressionEngine {
                             } else {
                                 // 8-bit SDR scale: Core Image.
                                 guard let dst = nextScaledBuffer(from: adaptor,
-                                                                 width: Int(plan.outputSize.width),
-                                                                 height: Int(plan.outputSize.height)) else {
+                                                                 width: encodeW,
+                                                                 height: encodeH) else {
                                     continue
                                 }
-                                let sx = CGFloat(plan.outputSize.width) / CGFloat(CVPixelBufferGetWidth(src))
-                                let sy = CGFloat(plan.outputSize.height) / CGFloat(CVPixelBufferGetHeight(src))
+                                let sx = CGFloat(encodeW) / CGFloat(CVPixelBufferGetWidth(src))
+                                let sy = CGFloat(encodeH) / CGFloat(CVPixelBufferGetHeight(src))
                                 let scaled = CIImage(cvPixelBuffer: src)
                                     .transformed(by: CGAffineTransform(
                                         scaleX: max(0.001, sx), y: max(0.001, sy)))
-                                    .cropped(to: CGRect(x: 0, y: 0,
-                                                        width: Int(plan.outputSize.width),
-                                                        height: Int(plan.outputSize.height)))
+                                    .cropped(to: CGRect(x: 0, y: 0, width: encodeW, height: encodeH))
                                 AnalysisCIContext.render(scaled, to: dst)
                                 // COLOR-SAFE: re-apply the source color metadata.
                                 ColorTags.attach(to: dst, tags: tags)
@@ -388,7 +402,9 @@ enum CompressionEngine {
                 aIn.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
                     while aIn.isReadyForMoreMediaData {
-                        if flags.cancelled {
+                        // Bail out when cancelled, when the OTHER pipe already
+                        // failed (writer cancelled), or when the writer died.
+                        if flags.cancelled || flags.error != nil || writer.status == .failed {
                             reader.cancelReading()
                             writer.cancelWriting()
                             resume.resumeOnce()
@@ -418,11 +434,24 @@ enum CompressionEngine {
             }
         }
 
-        // Run both pipes concurrently, then finalize the file.
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await pipeVideo() }
-            group.addTask { await pipeAudio() }
-            await group.waitForAll()
+        // Run both pipes concurrently, guarded by a hard wall-clock watchdog:
+        // if either pipe ever stops making progress (its continuation never
+        // resuming, a wedged queue block, a wedged reader), the encode fails
+        // cleanly instead of hanging the job row forever.
+        let watchdogLimit = max(120, plan.duration * 6)
+        let pipesDone = await AsyncTimeout.run(seconds: watchdogLimit) {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await pipeVideo() }
+                group.addTask { await pipeAudio() }
+                await group.waitForAll()
+            }
+        }
+        if pipesDone == nil {
+            // Abort everything the stalled pipes left behind.
+            reader.cancelReading()
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: output)
+            throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
 
         await writer.finishWriting()

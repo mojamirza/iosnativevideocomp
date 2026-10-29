@@ -90,40 +90,18 @@ enum QualitySizeOptimizer {
                           abs(outputSize.height - probe.sourceSize.height) > 1
         let isHDR = probe.tags.isHDR
 
-        // CORRECTNESS guarantee: rotated sources keep their resolution so the
-        // orientation matrix stays consistent (scaling uses pre-rotation buffer
-        // geometry, which would distort rotated video).
-        //
-        // 10-bit / HDR sources ARE scaled — via VideoToolbox's pixel transfer,
-        // which is a pure geometric rescale: no tonemapping, no 8-bit
-        // intermediate, color tags preserved end-to-end (color-safe).
-        var notes: [String] = []
-        var effectiveSize = outputSize
-        var effectiveScale = scaleNeeded
-        if probe.isRotated && scaleNeeded {
-            effectiveSize = evenSize(probe.sourceSize)
-            effectiveScale = false
-            notes.append("Rotated source — resolution kept to preserve orientation")
-        }
-
-        var effectiveBps = videoBitrate
-        if effectiveSize != outputSize {
-            // Re-scale bitrate to the kept geometry.
-            let ratio = Double(effectiveSize.width * effectiveSize.height) /
-                Double(outputSize.width * outputSize.height)
-            effectiveBps = clamp(Int(Double(videoBitrate) * ratio), floor_, sourceMax)
-            if !notes.isEmpty {
-                rationale += " · " + notes.joined(separator: "; ")
-            }
-        }
-
+        // Scaled paths are bit-depth & rotation aware (see CompressionEngine):
+        // 10-bit/HDR sources scale through VideoToolbox's pixel transfer — a
+        // pure geometric rescale, no tonemapping, tags preserved. Rotated
+        // sources scale with transposed encode dimensions so the preferred-
+        // transform stays consistent. Nothing needs to be given up here.
         return OptimizerPlan(
-            outputSize: effectiveSize,
-            videoBitrate: effectiveBps,
+            outputSize: outputSize,
+            videoBitrate: videoBitrate,
             audioBitrate: audioBitrate,
             fps: fps,
             fpsCap: preset.fpsCap,
-            scaleNeeded: effectiveScale,
+            scaleNeeded: scaleNeeded,
             isHDR: isHDR,
             sourceBitDepth: probe.bitDepth,
             complexity: complexity,
