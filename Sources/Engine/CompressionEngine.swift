@@ -124,11 +124,11 @@ enum CompressionEngine {
         // (color-safe). 8-bit SDR scales through Core Image.
         let transferSession: VTPixelTransferSession? = scaleIs10Bit ? {
             var s: VTPixelTransferSession?
-            guard VTCreatePixelTransferSession(kCFAllocatorDefault, nil, &s) == noErr, let s else {
+            // VTCreatePixelTransferSession is macOS-only; iOS uses the classic
+            // create call (default scaling mode is aspect-preserving).
+            guard VTPixelTransferSessionCreate(kCFAllocatorDefault, nil, &s) == noErr, let s else {
                 return nil
             }
-            VTSessionSetProperty(s, key: kVTPixelTransferPropertyKey_ScalingMode,
-                                 value: kVTScalingMode_Lanczos)
             return s
         }() : nil
         // Extremely unlikely fallback: if the transfer session could not be
@@ -312,7 +312,7 @@ enum CompressionEngine {
                                         width: Int(plan.outputSize.width),
                                         height: Int(plan.outputSize.height),
                                         format: decodeFormat) else { continue }
-                                if VTPixelTransferSessionTransferImage(transfer, src, dst) != noErr {
+                                if VTPixelTransferSessionTransferImage(transfer, from: src, to: dst) != noErr {
                                     continue
                                 }
                                 // COLOR-SAFE: re-apply the source color metadata.

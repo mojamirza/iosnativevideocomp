@@ -20,8 +20,7 @@ enum IntegrityVerifier {
         }) {
             return report
         }
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: output.path))?
-            [.size] as? Int64 ?? 0
+        let fileSize = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
         return IntegrityReport(
             items: [ReportItem("verify", "Verification timed out",
                 "Integrity checks did not finish in time. The output was written and finalized by the encoder — inspect it in Files; if it plays, it is good.", .warn)],
