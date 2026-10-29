@@ -151,46 +151,44 @@ private struct EmptyState: View {
 enum ImportHelpers {
     /// PhotosPicker → local copy inside the app's Imports folder.
     static func copyFromLibrary(_ item: PhotosPickerItem) async -> URL? {
-        // Preferred: native URL transferable (iCloud-aware).
+        // Preferred: native URL transferable (iCloud-aware, memory-safe — the
+        // system exports the movie to a temp file).
         if let url = try? await item.loadTransferable(type: URL.self) {
             return SecurityScoped(url: url).importCopy() ?? url
         }
-        // Fallback: stream the file representation to disk. Loading the item
-        // as `Data` would hold the ENTIRE video in RAM and OOM-crash on large
-        // library files — loadFileRepresentation hands us a temp file instead.
-        let dir = JobCoordinator.importsDirectory()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
-        let suggested = item.itemIdentifier.map { "IMG-\($0.uuidString).\(ext)" }
-            ?? "IMG-\(UUID().uuidString.prefix(8)).\(ext)"
-        let dest = dir.appendingPathComponent(suggested)
-        if await copyViaItemProvider(item, to: dest) {
-            return dest
+        // Fallback: FileRepresentation streaming — the system hands us a temp
+        // file that we copy to disk. Never holds the whole video in RAM
+        // (loading `Data` would OOM-crash on large library files).
+        if let video = try? await item.loadTransferable(type: ImportedVideo.self) {
+            return video.url
         }
         return nil
     }
+}
 
-    /// Streams a PhotosPickerItem to a destination file using the provider's
-    /// file representation (never holds the whole video in memory).
-    private static func copyViaItemProvider(_ item: PhotosPickerItem,
-                                            to dest: URL) async -> Bool {
-        guard let provider = item.itemProvider else { return false }
-        // Type identifiers that actually hold video data, most preferred first.
-        let candidates = ["com.apple.quicktime-movie", AVFileType.mov.rawValue,
-                          AVFileType.mp4.rawValue, "public.movie"]
-        let typeID = candidates.first { provider.hasItemConformingToTypeIdentifier($0) }
-            ?? "public.movie"
-        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            _ = provider.loadFileRepresentation(forTypeIdentifier: typeID) { tempURL, err in
-                guard let tempURL, err == nil else {
-                    cont.resume(returning: false)
-                    return
-                }
-                // The temp URL is only valid inside this handler — copy it NOW.
-                try? FileManager.default.removeItem(at: dest)
-                let ok = (try? FileManager.default.copyItem(at: tempURL, to: dest)) != nil
-                cont.resume(returning: ok)
+/// Memory-safe Transferable for library videos: imports via a file
+/// representation instead of an in-memory `Data` blob.
+private struct ImportedVideo: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { video in
+            SentTransferredFile(video.url, allowAccessToOriginalFile: true)
+        } importing: { received in
+            let dir = JobCoordinator.importsDirectory()
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let ext = received.file?.pathExtension ?? ""
+            let ext2 = ext.isEmpty ? "mov" : ext
+            let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext2)")
+            if let src = received.file {
+                try FileManager.default.removeItem(at: dest)
+                try FileManager.default.copyItem(at: src, to: dest)
+            } else {
+                // Rare: provider could only supply bytes (still bounded by
+                // the system's file-export path, not a manual Data load).
+                try received.memory.write(to: dest)
             }
+            return ImportedVideo(url: dest)
         }
     }
 }
