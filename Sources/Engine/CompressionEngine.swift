@@ -50,6 +50,10 @@ enum CompressionError: LocalizedError {
 ///
 /// IMPORTANT: the reader always DECODES (explicit pixel format settings). Passing
 /// compressed samples into an input configured for re-encoding is invalid.
+
+/// Copy-free shared CI context for the 8-bit SDR scaling renders.
+let AnalysisCIContext = CIContext(options: [.cacheIntermediates: false])
+
 enum CompressionEngine {
 
     private final class ResumeBox {
