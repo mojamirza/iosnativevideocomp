@@ -34,16 +34,19 @@ enum CompressionError: LocalizedError {
     }
 }
 
-/// The pipeline: AVAssetReader → [Core Image] → VideoToolbox (through AVAssetWriter).
+/// The pipeline: AVAssetReader → [Core Image / VTPixelTransfer] → VideoToolbox
+/// (through AVAssetWriter).
 ///
-/// Two paths, both strictly color-safe:
-///  * Direct path   — "keep resolution": decoded pixel buffers (bit-depth aware:
-///                    10-bit buffers for 10-bit/HDR sources) go straight into the
-///                    encoder with the source color tags intact. HDR is never
-///                    tonemapped and never decoded to a lossy intermediate.
-///  * Core Image    — SDR downscaling: buffers decoded to 4:2:0, scaled in a
-///                    source-matched working color space, re-tagged with the
-///                    source color metadata, and handed to the writer.
+/// Paths, all strictly color-safe:
+///  * Direct path            — "keep resolution": decoded pixel buffers
+///                             (bit-depth aware: 10-bit buffers for 10-bit/HDR
+///                             sources) go straight into the encoder with the
+///                             source color tags intact.
+///  * VTPixelTransfer scale  — 10-bit/HDR downscaling: a pure geometric rescale
+///                             (Lanczos) of 10-bit buffers — no tonemapping, no
+///                             bit-depth loss, tags re-applied on the output.
+///  * Core Image scale       — 8-bit SDR downscaling, re-tagged with the source
+///                             color metadata.
 ///
 /// IMPORTANT: the reader always DECODES (explicit pixel format settings). Passing
 /// compressed samples into an input configured for re-encoding is invalid.
@@ -106,12 +109,35 @@ enum CompressionEngine {
         let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
         let hint: CMFormatDescription? = fmts.first
 
-        // On the direct (non-scaling) path the writer's geometry must exactly
-        // match the decoded pixel buffers — use the ENCODED dimensions from the
-        // format description (naturalSize is the post-rotation display size).
+        // ------------------------------------------------------------------
+        // SCALING DECISION + writer geometry.
+        // The writer's geometry must exactly match the buffers appended to it:
+        //  * scale path            → plan.outputSize
+        //  * direct (keep-res) path → the source's ENCODED dimensions from the
+        //    format description (naturalSize is the post-rotation display size)
+        // ------------------------------------------------------------------
+        let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
+        let scaleIs10Bit = plan.scaleNeeded && wants10Bit
+        // 10-bit/HDR sources scale through VideoToolbox's pixel transfer
+        // session — a pure geometric rescale: no tonemapping, no bit-depth
+        // loss, color tags carried onto the destination buffer unchanged
+        // (color-safe). 8-bit SDR scales through Core Image.
+        let transferSession: VTPixelTransferSession? = scaleIs10Bit ? {
+            var s: VTPixelTransferSession?
+            guard VTCreatePixelTransferSession(kCFAllocatorDefault, nil, &s) == noErr, let s else {
+                return nil
+            }
+            VTSessionSetProperty(s, key: kVTPixelTransferPropertyKey_ScalingMode,
+                                 value: kVTScalingMode_Lanczos)
+            return s
+        }() : nil
+        // Extremely unlikely fallback: if the transfer session could not be
+        // created, keep the source resolution rather than risk tonemapping.
+        let scaleNeeded = plan.scaleNeeded && (!scaleIs10Bit || transferSession != nil)
+
         var encodeW = Int(plan.outputSize.width)
         var encodeH = Int(plan.outputSize.height)
-        if !plan.scaleNeeded, let f = hint {
+        if !scaleNeeded, let f = hint {
             let d = CMVideoFormatDescriptionGetDimensions(f)
             if d.width > 0 && d.height > 0 {
                 encodeW = Int(d.width)
@@ -165,26 +191,27 @@ enum CompressionEngine {
         // VIDEO reader output — we ALWAYS decode to pixel buffers because the
         // writer input is configured to re-encode via VideoToolbox. Feeding
         // compressed samples (outputSettings: nil) into such an input is
-        // invalid. Bit depth is preserved: 10-bit/HDR sources decode to
-        // 10-bit YCbCr so HDR survives end-to-end (color-safe engine).
+        // invalid. Bit depth is preserved on every path: 10-bit/HDR sources
+        // decode to 10-bit YCbCr (color-safe engine).
         // ------------------------------------------------------------------
-        let decodeFormat: OSType = (plan.isHDR || plan.sourceBitDepth >= 10)
+        let decodeFormat: OSType = wants10Bit
             ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
 
-        let videoOut: AVAssetReaderTrackOutput
-        if plan.scaleNeeded {
-            // SDR-only path (the optimizer never scales 10-bit/HDR sources).
-            videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
-                kCVPixelBufferPixelFormatTypeKey as String:
-                    NSNumber(value: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-            ])
-        } else {
-            videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
-                kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
-            ])
-        }
+        let videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
+        ])
         reader.add(videoOut)
+
+        var scalePool: CVPixelBufferPool?
+        if scaleIs10Bit && transferSession != nil {
+            let poolAttrs: [String: Any] = [
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
+                String(kCVPixelBufferWidthKey): Int(plan.outputSize.width),
+                String(kCVPixelBufferHeightKey): Int(plan.outputSize.height),
+            ]
+            CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttrs as CFDictionary, nil, &scalePool)
+        }
 
         var audioInput: AVAssetWriterInput?
         var audioOutput: AVAssetReaderTrackOutput?
@@ -209,11 +236,10 @@ enum CompressionEngine {
         }
 
         // Pixel-buffer adaptor used only on the scaling path: its pool produces
-        // buffers in exactly the geometry the writer expects.
-        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = plan.scaleNeeded ? {
+        // buffers in exactly the geometry and bit depth the writer expects.
+        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = scaleNeeded ? {
             let poolAttrs: [String: Any] = [
-                String(kCVPixelBufferPixelFormatTypeKey):
-                    NSNumber(value: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): Int(plan.outputSize.width),
                 String(kCVPixelBufferHeightKey): Int(plan.outputSize.height),
             ]
@@ -277,29 +303,52 @@ enum CompressionEngine {
                             lastKept.value = pts
                         }
 
-                        if plan.scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
-                            guard let dst = nextScaledBuffer(from: adaptor,
-                                                             width: Int(plan.outputSize.width),
-                                                             height: Int(plan.outputSize.height)) else {
-                                continue
-                            }
-                            let sx = CGFloat(plan.outputSize.width) / CGFloat(CVPixelBufferGetWidth(src))
-                            let sy = CGFloat(plan.outputSize.height) / CGFloat(CVPixelBufferGetHeight(src))
-                            let scaled = CIImage(cvPixelBuffer: src)
-                                .transformed(by: CGAffineTransform(
-                                    scaleX: max(0.001, sx), y: max(0.001, sy)))
-                                .cropped(to: CGRect(x: 0, y: 0,
-                                                    width: Int(plan.outputSize.width),
-                                                    height: Int(plan.outputSize.height)))
-                            AnalysisCIContext.render(scaled, to: dst)
-                            // COLOR-SAFE: re-apply the source color metadata.
-                            ColorTags.attach(to: dst, tags: tags)
-                            if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
-                                flags.setError(writer.error
-                                    ?? CompressionError.writerFailed("pixel buffer append failed"))
-                                writer.cancelWriting()
-                                resume.resumeOnce()
-                                return
+                        if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
+                            if let transfer = transferSession {
+                                // 10-bit/HDR scale: VideoToolbox pixel transfer
+                                // (geometric rescale only — color-safe).
+                                guard let dst = Self.nextPoolBuffer(
+                                        scalePool,
+                                        width: Int(plan.outputSize.width),
+                                        height: Int(plan.outputSize.height),
+                                        format: decodeFormat) else { continue }
+                                if VTPixelTransferSessionTransferImage(transfer, src, dst) != noErr {
+                                    continue
+                                }
+                                // COLOR-SAFE: re-apply the source color metadata.
+                                ColorTags.attach(to: dst, tags: tags)
+                                if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+                                    flags.setError(writer.error
+                                        ?? CompressionError.writerFailed("pixel buffer append failed"))
+                                    writer.cancelWriting()
+                                    resume.resumeOnce()
+                                    return
+                                }
+                            } else {
+                                // 8-bit SDR scale: Core Image.
+                                guard let dst = nextScaledBuffer(from: adaptor,
+                                                                 width: Int(plan.outputSize.width),
+                                                                 height: Int(plan.outputSize.height)) else {
+                                    continue
+                                }
+                                let sx = CGFloat(plan.outputSize.width) / CGFloat(CVPixelBufferGetWidth(src))
+                                let sy = CGFloat(plan.outputSize.height) / CGFloat(CVPixelBufferGetHeight(src))
+                                let scaled = CIImage(cvPixelBuffer: src)
+                                    .transformed(by: CGAffineTransform(
+                                        scaleX: max(0.001, sx), y: max(0.001, sy)))
+                                    .cropped(to: CGRect(x: 0, y: 0,
+                                                        width: Int(plan.outputSize.width),
+                                                        height: Int(plan.outputSize.height)))
+                                AnalysisCIContext.render(scaled, to: dst)
+                                // COLOR-SAFE: re-apply the source color metadata.
+                                ColorTags.attach(to: dst, tags: tags)
+                                if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+                                    flags.setError(writer.error
+                                        ?? CompressionError.writerFailed("pixel buffer append failed"))
+                                    writer.cancelWriting()
+                                    resume.resumeOnce()
+                                    return
+                                }
                             }
                         } else {
                             // Pass-through: the decoded buffer already carries the
@@ -397,23 +446,26 @@ enum CompressionEngine {
     private static func nextScaledBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor?,
                                          width: Int, height: Int) -> CVPixelBuffer? {
         guard let adaptor else { return nil }
-        if let pool = adaptor.pixelBufferPool {
+        return nextPoolBuffer(adaptor.pixelBufferPool, width: width, height: height,
+                              format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+
+    /// Fetch a destination pixel buffer from a pool (falling back to a plain
+    /// allocation with the same attributes).
+    private static func nextPoolBuffer(_ pool: CVPixelBufferPool?,
+                                       width: Int, height: Int, format: OSType) -> CVPixelBuffer? {
+        if let pool {
             var poolBuf: CVImageBuffer?
             CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &poolBuf)
             if let b = poolBuf {
                 return b as? CVPixelBuffer
             }
         }
-        // Fallback: allocate manually with the same attributes.
         var newBuf: CVPixelBuffer?
         let attrs: [String: Any] = [
-            String(kCVPixelBufferPixelFormatTypeKey):
-                NSNumber(value: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
-            String(kCVPixelBufferWidthKey): width,
-            String(kCVPixelBufferHeightKey): height,
+            String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: format)
         ]
-        CVPixelBufferCreate(kCFAllocatorDefault, width, height,
-                            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, format,
                             attrs as CFDictionary, &newBuf)
         return newBuf
     }

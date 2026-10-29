@@ -89,24 +89,21 @@ enum QualitySizeOptimizer {
         let scaleNeeded = abs(outputSize.width - probe.sourceSize.width) > 1 ||
                           abs(outputSize.height - probe.sourceSize.height) > 1
         let isHDR = probe.tags.isHDR
-        let is10Bit = probe.bitDepth >= 10
 
-        // COLOR-SAFE + CORRECTNESS guarantees: 10-bit/HDR sources keep color
-        // depth (no 8-bit intermediate), rotated sources keep their resolution
-        // so orientation metadata stays intact (v1: no rotation in CI scaling).
+        // CORRECTNESS guarantee: rotated sources keep their resolution so the
+        // orientation matrix stays consistent (scaling uses pre-rotation buffer
+        // geometry, which would distort rotated video).
+        //
+        // 10-bit / HDR sources ARE scaled — via VideoToolbox's pixel transfer,
+        // which is a pure geometric rescale: no tonemapping, no 8-bit
+        // intermediate, color tags preserved end-to-end (color-safe).
         var notes: [String] = []
         var effectiveSize = outputSize
         var effectiveScale = scaleNeeded
-        if (isHDR || is10Bit || probe.isRotated) && scaleNeeded {
+        if probe.isRotated && scaleNeeded {
             effectiveSize = evenSize(probe.sourceSize)
             effectiveScale = false
-            if isHDR {
-                notes.append("HDR detected — resolution kept to protect color (no tonemapping)")
-            } else if is10Bit {
-                notes.append("10-bit source — resolution kept to protect color depth")
-            } else {
-                notes.append("Rotated source — resolution kept to preserve orientation")
-            }
+            notes.append("Rotated source — resolution kept to preserve orientation")
         }
 
         var effectiveBps = videoBitrate

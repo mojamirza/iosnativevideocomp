@@ -8,3 +8,6 @@ project.xcworkspace
 xcuserdata/
 VidCompress.xcodeproj
 *.log
+
+# Unrelated reference sources that live in this folder but are not part of the app
+HandBrake-master/

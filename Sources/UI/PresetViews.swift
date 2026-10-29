@@ -38,7 +38,6 @@ struct PresetEditorView: View {
     @State private var mode: Mode
     @State private var tier: QualityTier
     @State private var fixedMbps: Double
-    @State private var sizeTargetMB: Double
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
@@ -46,28 +45,18 @@ struct PresetEditorView: View {
     enum Mode: String, CaseIterable, Identifiable {
         case adaptive = "Adaptive (optimizer)"
         case fixed = "Fixed bitrate"
-        case size = "Target file size"
         var id: String { rawValue }
     }
 
     init(existing: Preset? = nil, onSaved: @escaping (Preset) -> Void) {
         self.existing = existing
         self.onSaved = onSaved
-        let m: Mode
-        if existing?.sizeTargetMB != nil {
-            m = .size
-        } else if existing?.fixedBitrateMbps != nil {
-            m = .fixed
-        } else {
-            m = .adaptive
-        }
         _name = State(initialValue: existing?.name ?? "Custom")
         _codec = State(initialValue: existing?.codec ?? .hevc)
         _resolution = State(initialValue: existing?.resolution ?? .keep)
-        _mode = State(initialValue: m)
+        _mode = State(initialValue: existing?.fixedBitrateMbps != nil ? .fixed : .adaptive)
         _tier = State(initialValue: existing?.autoQuality ?? .balanced)
         _fixedMbps = State(initialValue: existing?.fixedBitrateMbps ?? 4)
-        _sizeTargetMB = State(initialValue: existing?.sizeTargetMB ?? 100)
         _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
         _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
         _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
@@ -112,20 +101,6 @@ struct PresetEditorView: View {
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
-                    case .size:
-                        HStack {
-                            Text("Target output size")
-                            Spacer()
-                            TextField("MB", value: $sizeTargetMB, format: .number)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                                .font(.callout.monospacedDigit())
-                                .frame(width: 90)
-                            Text("MB").foregroundStyle(.secondary)
-                        }
-                        Text("The optimizer reserves the audio budget first, then derives the video bitrate from the remaining bytes.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -165,7 +140,7 @@ struct PresetEditorView: View {
                             resolution: resolution,
                             autoQuality: mode == .adaptive ? tier : nil,
                             fixedBitrateMbps: mode == .fixed ? fixedMbps : nil,
-                            sizeTargetMB: mode == .size ? sizeTargetMB : nil,
+                            sizeTargetMB: nil,
                             fpsCap: fpsCapEnabled ? Int(fpsCap) : nil,
                             audioBitrateKbps: Int(audioKbps),
                             isUserDefined: true

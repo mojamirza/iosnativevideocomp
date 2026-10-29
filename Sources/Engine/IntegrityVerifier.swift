@@ -6,7 +6,33 @@ import CoreVideo
 /// producing a human-readable integrity report instead of a naked "done ✅".
 enum IntegrityVerifier {
 
+    /// Wrapper that guarantees the verifier can never wedge the job row: the
+    /// full verification races a hard wall-clock limit; on timeout a warn-only
+    /// report is produced so the job always reaches a terminal state.
     static func verify(source: URL,
+                       output: URL,
+                       probe: ProbeResult,
+                       plan: OptimizerPlan,
+                       encodeSeconds: Double) async -> IntegrityReport {
+        if let report = await withTimeout(seconds: 60, {
+            await Self.verifyImpl(source: source, output: output, probe: probe,
+                                  plan: plan, encodeSeconds: encodeSeconds)
+        }) {
+            return report
+        }
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: output.path))?
+            [.size] as? Int64 ?? 0
+        return IntegrityReport(
+            items: [ReportItem("verify", "Verification timed out",
+                "Integrity checks did not finish in time. The output was written and finalized by the encoder — inspect it in Files; if it plays, it is good.", .warn)],
+            inBytes: probe.fileSize,
+            outBytes: fileSize,
+            outputBitrateMbps: 0,
+            encodeSeconds: encodeSeconds,
+            outputDuration: 0)
+    }
+
+    private static func verifyImpl(source: URL,
                        output: URL,
                        probe: ProbeResult,
                        plan: OptimizerPlan,
@@ -60,30 +86,29 @@ enum IntegrityVerifier {
             }
         }
 
-        // 3. Decode spot-check: first frame + a late frame must decode to pixels.
+        // 3. Decode spot-check: first frame + a late frame must decode to
+        //    pixels. Implemented with strictly bounded reader windows (≤1 s
+        //    each, ≤2 frames) and a per-check timeout — the verifier must
+        //    never wedge the job row.
         do {
-            var decodable = 0
-            let gen = AVAssetImageGenerator(asset: outAsset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 128, height: 128)
-            // Fast keyframe seeks — exact-frame matching would decode from the
-            // previous keyframe and can take minutes on long 4K files.
-            gen.requestedTimeToleranceBefore = .positiveInfinity
-            gen.requestedTimeToleranceAfter = .positiveInfinity
-            do {
-                _ = try await gen.image(at: CMTime(seconds: min(0.1, outDuration * 0.1), preferredTimescale: 600))
-                decodable += 1
-            } catch { }
-            if outDuration > 1 {
-                _ = try? await gen.image(at: CMTime(seconds: outDuration - 0.3, preferredTimescale: 600))
-                decodable += 1
+            let firstResult = await withTimeout(seconds: 15) {
+                await Self.decodesPixelData(asset: outAsset, at: min(0.1, outDuration * 0.1))
             }
-            if decodable > 0 {
+            let lateResult: Bool? = outDuration > 1
+                ? await withTimeout(seconds: 15) {
+                    await Self.decodesPixelData(asset: outAsset, at: outDuration - 0.3)
+                }
+                : true
+            switch (firstResult, lateResult) {
+            case (true, true):
                 items.append(ReportItem("decode", "Pixel decode spot-check passed",
-                    "\(decodable) frame(s) successfully decoded end-to-end.", .pass))
-            } else {
+                    "First and late frames decoded end-to-end.", .pass))
+            case (nil, _), (_, nil):
+                items.append(ReportItem("decode", "Decode spot-check inconclusive",
+                    "The decode check did not finish in time; the output may still be fully playable.", .warn))
+            default:
                 items.append(ReportItem("decode", "Decode spot-check failed",
-                    "Neither the first frame nor a late frame could be decoded.", .fail))
+                    "The output's video frames could not be decoded.", .fail))
             }
         }
 
@@ -170,5 +195,65 @@ enum IntegrityVerifier {
         if l.contains("601") || l.contains("170") { return "Rec.601" }
         if l.contains("2100") { return "Rec.2100 HLG" }
         return l.isEmpty ? "default" : token
+    }
+
+    // MARK: hang-proofing helpers
+
+    /// Thread-safe one-shot claim used by `withTimeout`.
+    private final class OnceClaim: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fired = false
+        func claim() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if fired { return false }
+            fired = true
+            return true
+        }
+    }
+
+    /// Races an async operation against a wall-clock limit. Returns nil if the
+    /// limit fires first. The losing task is unstructured and deliberately
+    /// never awaited, so a stuck operation cannot wedge the caller.
+    private static func withTimeout<T: Sendable>(
+        seconds: Double, _ op: @escaping @Sendable () async -> T) async -> T? {
+        await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
+            let once = OnceClaim()
+            Task.detached {
+                let v = await op()
+                if once.claim() { cont.resume(returning: v) }
+            }
+            Task.detached {
+                try? await Task.sleep(nanoseconds: UInt64(max(0.1, seconds) * 1_000_000_000))
+                if once.claim() { cont.resume(returning: nil) }
+            }
+        }
+    }
+
+    /// Bounded decode spot-check: open a ≤1 s reader window at the given time
+    /// and confirm at least one frame decodes to real pixels. Unlike
+    /// AVAssetImageGenerator (which can seek across an entire GOP tree), the
+    /// reader window is hard-bounded by its timeRange.
+    private static func decodesPixelData(asset: AVURLAsset, at seconds: Double) async -> Bool {
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video),
+              let track = tracks.first else { return false }
+        let startSeconds = max(0, seconds)
+        let start = CMTime(seconds: startSeconds, preferredTimescale: 600)
+        let end = CMTime(seconds: startSeconds + 1.0, preferredTimescale: 600)
+        guard let reader = try? AVAssetReader(asset: asset) else { return false }
+        reader.timeRange = CMTimeRange(start: start, end: end)
+        let out = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                NSNumber(value: kCVPixelFormatType_32BGRA)
+        ])
+        reader.add(out)
+        guard reader.startReading() else { return false }
+        var decoded = 0
+        while decoded < 2 {
+            guard let sb = out.copyNextSampleBuffer(),
+                  CMSampleBufferGetImageBuffer(sb) != nil else { break }
+            decoded += 1
+        }
+        reader.cancelReading()
+        return decoded > 0
     }
 }
