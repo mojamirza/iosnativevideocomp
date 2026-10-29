@@ -173,19 +173,19 @@ private struct ImportedVideo: Transferable {
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { video in
-            SentTransferredFile(video.url, allowAccessToOriginalFile: true)
+            SentTransferredFile(video.url, allowAccessingOriginalFile: true)
         } importing: { received in
             let dir = JobCoordinator.importsDirectory()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let ext = received.file?.pathExtension ?? ""
+            let ext = received.file.pathExtension
             let ext2 = ext.isEmpty ? "mov" : ext
             let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext2)")
-            if let src = received.file {
+            if received.memory.isEmpty {
+                // Normal path: the system exported the video to a temp file.
                 try FileManager.default.removeItem(at: dest)
-                try FileManager.default.copyItem(at: src, to: dest)
+                try FileManager.default.copyItem(at: received.file, to: dest)
             } else {
-                // Rare: provider could only supply bytes (still bounded by
-                // the system's file-export path, not a manual Data load).
+                // Rare: provider could only supply bytes.
                 try received.memory.write(to: dest)
             }
             return ImportedVideo(url: dest)
