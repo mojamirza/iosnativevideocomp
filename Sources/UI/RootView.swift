@@ -37,6 +37,7 @@ struct RootView: View {
                         sectionHeader("In progress", icon: "hourglass", count: active.count)
                         ForEach(active) { job in
                             JobRowView(job: job)
+                                .id("\(job.id)-\(job.state.rawValue)")   // re-create on state change
                                 .padding(.horizontal)
                         }
                     }
@@ -45,6 +46,7 @@ struct RootView: View {
                         sectionHeader("History", icon: "clock", count: finished.count)
                         ForEach(finished) { job in
                             JobRowView(job: job)
+                                .id("\(job.id)-\(job.state.rawValue)")
                                 .padding(.horizontal)
                         }
                     }

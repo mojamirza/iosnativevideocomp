@@ -59,18 +59,26 @@ final class JobCoordinator: ObservableObject {
 
     private func runQueueIfNeeded() {
         guard workerTask == nil else { return }
-        workerTask = Task {
-            defer { self.workerTask = nil }
+        workerTask = Task { [weak self] in
+            defer { self?.workerTask = nil }
             while !Task.isCancelled {
-                guard let idx = jobs.firstIndex(where: { $0.state == .queued }) else { break }
-                let id = jobs[idx].id
-                await run(jobID: id)
+                guard let self,
+                      let idx = self.jobs.firstIndex(where: { $0.state == .queued }) else { break }
+                // Claim the job atomically (MainActor) BEFORE running it, so a
+                // revived second worker can never double-process the same job.
+                self.jobs[idx].state = .analyzing
+                let id = self.jobs[idx].id
+                await self.run(jobID: id)
             }
         }
     }
 
     private func run(jobID: UUID) async {
-        guard jobs.contains(where: { $0.id == jobID }) else { return }
+        // The queue claim already moved this job out of .queued; if a watchdog
+        // force-finished it in the meantime, do nothing (never re-run a job
+        // that reached a terminal state).
+        guard let job = jobs.first(where: { $0.id == jobID }),
+              ![JobState.done, .failed, .cancelled].contains(job.state) else { return }
         let job = jobs.first { $0.id == jobID }!
         let flags = EngineFlags()
         cancelFlags[jobID] = flags
@@ -195,6 +203,13 @@ final class JobCoordinator: ObservableObject {
         saveRecord(jobID: jobID, outputName: output.lastPathComponent,
                    report: try? JSONEncoder().encode(report), state: "done")
         cancelFlags.removeValue(forKey: jobID)
+        // The worker task is wedged (that's why we're here) — retire it and
+        // start a fresh one so the queue keeps working. A late-waking old
+        // worker can't double-process: jobs are claimed out of .queued and
+        // run() refuses already-terminal jobs.
+        workerTask?.cancel()
+        workerTask = nil
+        runQueueIfNeeded()
     }
 
     // MARK: Actions
