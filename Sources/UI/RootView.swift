@@ -15,6 +15,7 @@ struct RootView: View {
     @State private var importedThumb: UIImage?
     @State private var photoItem: PhotosPickerItem?
     @State private var showFiles = false
+    @State private var importError: String?
 
     var body: some View {
         NavigationStack {
@@ -68,11 +69,14 @@ struct RootView: View {
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 Task {
-                    if let url = await ImportHelpers.copyFromLibrary(item) {
+                    do {
+                        let url = try await ImportHelpers.copyFromLibrary(item)
                         let thumb = await Thumbnails.make(url: url)
                         importedURL = url
                         importedThumb = thumb
                         showingSetup = true
+                    } catch {
+                        importError = error.localizedDescription
                     }
                     photoItem = nil
                 }
@@ -88,9 +92,18 @@ struct RootView: View {
                             importedURL = copy
                             importedThumb = thumb
                             showingSetup = true
+                        } else {
+                            importError = "The selected file could not be copied into the app's storage."
                         }
                     }
                 }
+            }
+            .alert("Import failed", isPresented: Binding(
+                get: { importError != nil },
+                set: { if !$0 { importError = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(importError ?? "")
             }
             .sheet(isPresented: $showingSetup) {
                 if let url = importedURL {
@@ -149,12 +162,23 @@ private struct EmptyState: View {
 // MARK: - Import helpers
 
 enum ImportHelpers {
-    /// PhotosPicker → local copy inside the app's Imports folder.
-    static func copyFromLibrary(_ item: PhotosPickerItem) async -> URL? {
+    enum ImportError: LocalizedError {
+        case notImportable
+        var errorDescription: String? {
+            "The selected video could not be imported. Try sharing it to the Files app and picking it from there."
+        }
+    }
+
+    /// PhotosPicker → local copy inside the app's Imports folder. Throws on
+    /// total failure so the UI can surface the problem instead of silently
+    /// doing nothing.
+    static func copyFromLibrary(_ item: PhotosPickerItem) async throws -> URL {
         // Preferred: native URL transferable (iCloud-aware, memory-safe — the
-        // system exports the movie to a temp file).
+        // system exports the movie to a temp file). Often unavailable for
+        // library assets, so failure here just falls through.
         if let url = try? await item.loadTransferable(type: URL.self) {
-            return SecurityScoped(url: url).importCopy() ?? url
+            if let copy = SecurityScoped(url: url).importCopy() { return copy }
+            return url
         }
         // Fallback: FileRepresentation streaming — the system hands us a temp
         // file that we copy to disk. Never holds the whole video in RAM
@@ -162,7 +186,17 @@ enum ImportHelpers {
         if let video = try? await item.loadTransferable(type: ImportedVideo.self) {
             return video.url
         }
-        return nil
+        // Last resort (exotic providers only): in-memory load. Memory-heavy
+        // for very large videos, but guarantees imports keep working.
+        if let data = try? await item.loadTransferable(type: Data.self) {
+            let dir = JobCoordinator.importsDirectory()
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
+            let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext)")
+            try data.write(to: dest)
+            return dest
+        }
+        throw ImportError.notImportable
     }
 }
 
@@ -179,9 +213,16 @@ private struct ImportedVideo: Transferable {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let ext = received.file.pathExtension
             let ext2 = ext.isEmpty ? "mov" : ext
-            let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext2)")
-            // FileRepresentation always delivers a real file on disk.
-            try FileManager.default.removeItem(at: dest)
+            let base = "IMG-\(UUID().uuidString)"
+            var dest = dir.appendingPathComponent("\(base).\(ext2)")
+            var n = 1
+            while FileManager.default.fileExists(atPath: dest.path) {
+                dest = dir.appendingPathComponent("\(base)-\(n).\(ext2)")
+                n += 1
+            }
+            // FileRepresentation always delivers a real file on disk — copy it
+            // directly (NO removeItem first: dest never exists on a fresh
+            // import and removing would throw, killing the whole transfer).
             try FileManager.default.copyItem(at: received.file, to: dest)
             return ImportedVideo(url: dest)
         }
