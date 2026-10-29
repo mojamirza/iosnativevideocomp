@@ -95,8 +95,7 @@ final class JobCoordinator: ObservableObject {
                 plan = p
             } else {
                 let probe = try await ProbeResult.probe(url: job.sourceURL)
-                let cx = try await ComplexityAnalyzer.analyze(url: job.sourceURL, probe: probe)
-                plan = QualitySizeOptimizer.plan(preset: job.preset, probe: probe, complexity: cx)
+                plan = QualitySizeOptimizer.plan(preset: job.preset, probe: probe)
                 setJob(jobID) { $0.plan = plan }
             }
 

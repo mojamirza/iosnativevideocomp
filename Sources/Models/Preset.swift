@@ -16,29 +16,6 @@ enum VideoCodec: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// What the Quality-Size Optimizer should optimise for when the bitrate is "auto".
-enum QualityTier: String, Codable, CaseIterable, Identifiable, Hashable {
-    case smallest, balanced, best
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .smallest: return "Smallest file"
-        case .balanced: return "Balanced"
-        case .best: return "Best quality"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .smallest: return "Aggressive bitrate, visually acceptable"
-        case .balanced: return "Recommended mix of size and quality"
-        case .best: return "Transparent-ish quality, larger file"
-        }
-    }
-}
-
 /// Target resolution class. "keep" and "half" preserve the aspect ratio.
 enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
     case keep = "Keep original"
@@ -82,60 +59,40 @@ enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// A reusable compression configuration, "detailed presets with output size and bitrate".
-///
-/// Bitrate resolution order:
-/// 1. `sizeTargetMB`  – derive video bitrate from a desired output file size
-/// 2. `fixedBitrateMbps` – explicit bitrate set by the user / preset
-/// 3. `autoQuality != nil` – Quality-Size Optimizer picks the bitrate
+/// A reusable compression configuration: codec, resolution and an exact
+/// video bitrate (kept simple on purpose — no adaptive heuristics).
 struct Preset: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
     var codec: VideoCodec
     var resolution: ResolutionClass
-    var autoQuality: QualityTier?
-    var fixedBitrateMbps: Double?
-    var sizeTargetMB: Double?
+    var fixedBitrateMbps: Double = 4.0
     var fpsCap: Int?                 // nil = keep native frame rate
     var audioBitrateKbps: Int = 128
     var isUserDefined: Bool = false
 
-    static let auto: Preset = Preset(
-        name: "Auto · Balanced (Adaptive)", codec: .hevc, resolution: .keep,
-        autoQuality: .balanced, fixedBitrateMbps: nil, sizeTargetMB: nil, fpsCap: nil,
-        audioBitrateKbps: 128
-    )
-
     static let builtIn: [Preset] = [
-        .auto,
-        Preset(name: "Auto · Smallest File", codec: .hevc, resolution: .keep,
-               autoQuality: .smallest, audioBitrateKbps: 96),
-        Preset(name: "1080p HEVC · 5 Mbps", codec: .hevc, resolution: .fhd,
-               fixedBitrateMbps: 5, audioBitrateKbps: 128),
-        Preset(name: "720p HEVC · 2.5 Mbps", codec: .hevc, resolution: .hd,
-               fixedBitrateMbps: 2.5, audioBitrateKbps: 96),
-        Preset(name: "1080p H.264 · 8 Mbps (max compatibility)", codec: .h264, resolution: .fhd,
-               fixedBitrateMbps: 8, audioBitrateKbps: 160),
-        Preset(name: "4K HEVC · 12 Mbps", codec: .hevc, resolution: .fourK,
-               fixedBitrateMbps: 12, audioBitrateKbps: 160),
+        Preset(name: "High quality", codec: .hevc, resolution: .keep,
+               fixedBitrateMbps: 8, fpsCap: nil, audioBitrateKbps: 128),
+        Preset(name: "Medium (720p)", codec: .hevc, resolution: .hd,
+               fixedBitrateMbps: 4, fpsCap: nil, audioBitrateKbps: 128),
+        Preset(name: "Low (480p)", codec: .hevc, resolution: .sd,
+               fixedBitrateMbps: 1.5, fpsCap: nil, audioBitrateKbps: 96),
     ]
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, codec, resolution, autoQuality, fixedBitrateMbps,
-             sizeTargetMB, fpsCap, audioBitrateKbps, isUserDefined
+        case id, name, codec, resolution, fixedBitrateMbps,
+             fpsCap, audioBitrateKbps, isUserDefined
     }
 
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
-         autoQuality: QualityTier? = nil, fixedBitrateMbps: Double? = nil,
-         sizeTargetMB: Double? = nil, fpsCap: Int? = nil,
+         fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
          audioBitrateKbps: Int = 128, isUserDefined: Bool = false) {
         self.id = UUID()
         self.name = name
         self.codec = codec
         self.resolution = resolution
-        self.autoQuality = autoQuality
         self.fixedBitrateMbps = fixedBitrateMbps
-        self.sizeTargetMB = sizeTargetMB
         self.fpsCap = fpsCap
         self.audioBitrateKbps = audioBitrateKbps
         self.isUserDefined = isUserDefined
@@ -147,18 +104,14 @@ struct Preset: Identifiable, Codable, Hashable {
         name = try c.decode(String.self, forKey: .name)
         codec = try c.decode(VideoCodec.self, forKey: .codec)
         resolution = try c.decode(ResolutionClass.self, forKey: .resolution)
-        autoQuality = try c.decodeIfPresent(QualityTier.self, forKey: .autoQuality)
-        fixedBitrateMbps = try c.decodeIfPresent(Double.self, forKey: .fixedBitrateMbps)
-        sizeTargetMB = try c.decodeIfPresent(Double.self, forKey: .sizeTargetMB)
+        // Older presets (adaptive/size-target modes) decode to a sane default.
+        fixedBitrateMbps = try c.decodeIfPresent(Double.self, forKey: .fixedBitrateMbps) ?? 4.0
         fpsCap = try c.decodeIfPresent(Int.self, forKey: .fpsCap)
         audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
         isUserDefined = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
     }
 
     var modeSummary: String {
-        if let t = sizeTargetMB { return String(format: "≈ %.0f MB target", t) }
-        if let b = fixedBitrateMbps { return String(format: "%.1f Mbps", b) }
-        if let q = autoQuality { return "Adaptive · \(q.label)" }
-        return "Adaptive"
+        String(format: "%.1f Mbps", fixedBitrateMbps)
     }
 }

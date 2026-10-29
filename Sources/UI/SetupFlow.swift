@@ -11,8 +11,6 @@ struct SetupFlowView: View {
     let onDone: () -> Void
 
     @State private var probe: ProbeResult?
-    @State private var complexity: ComplexityScore?
-    @State private var analysisFailed = false
     @State private var selectedPreset: Preset?
     @State private var errorText: String?
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
@@ -39,22 +37,6 @@ struct SetupFlowView: View {
                     }
 
                     presetSection
-
-                    if selectedPreset?.fixedBitrateMbps == nil,
-                       selectedPreset?.sizeTargetMB == nil,
-                       let complexity {
-                        Label {
-                            Text(complexity.value >= 0.66
-                                 ? "Highly detailed footage — the optimizer will allocate more bitrate."
-                                 : complexity.value <= 0.28
-                                 ? "Static, low-detail footage — expect excellent compression."
-                                 : "Moderate detail — optimizer chose a balanced bitrate.")
-                        } icon: {
-                            Image(systemName: "wand.and.stars")
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                    }
 
                     if let errorText {
                         Label(errorText, systemImage: "exclamationmark.triangle.fill")
@@ -178,9 +160,7 @@ struct SetupFlowView: View {
             ForEach(availablePresets, id: \.id) { preset in
                 PresetRow(preset: preset,
                           isSelected: selectedPreset?.id == preset.id,
-                          probe: probe,
-                          complexity: complexity,
-                          accent: preset.id == Preset.auto.id) {
+                          probe: probe) {
                     selectedPreset = preset
                 }
                 .contextMenu {
@@ -215,8 +195,8 @@ struct SetupFlowView: View {
 
     // Estimate card (live) + start button
     private var estimate: OptimizerPlan? {
-        guard let probe, let complexity, let preset = selectedPreset else { return nil }
-        return QualitySizeOptimizer.plan(preset: preset, probe: probe, complexity: complexity)
+        guard let probe, let preset = selectedPreset else { return nil }
+        return QualitySizeOptimizer.plan(preset: preset, probe: probe)
     }
 
     private var startButton: some View {
@@ -272,9 +252,8 @@ struct SetupFlowView: View {
 
     private func start() {
         guard let preset = selectedPreset,
-              let probe = probe,
-              let complexity = complexity else { return }
-        let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe, complexity: complexity)
+              let probe = probe else { return }
+        let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
         coordinator.enqueue(source: sourceURL, probe: probe, plan: plan,
                             preset: preset, thumbnail: thumbnail)
         onDone()
@@ -326,17 +305,8 @@ struct SetupFlowView: View {
                 return
             }
             probe = p
-            do {
-                complexity = try await ComplexityAnalyzer.analyze(url: sourceURL, probe: p)
-            } catch {
-                analysisFailed = true
-            }
         } catch {
             errorText = error.localizedDescription
-        }
-        if analysisFailed {
-            // Optimizer still works: complexity defaults to "balanced".
-            complexity = ComplexityScore(value: 0.5, spatialDetail: 0, motion: 0, sampledFrames: 0)
         }
         if let id = selectedPreset?.id {
             PresetStore.setLastUsedPreset(id)
@@ -344,14 +314,12 @@ struct SetupFlowView: View {
     }
 }
 
-/// A selectable detailed preset row: name, codec, resolution, bitrate mode and
+/// A selectable detailed preset row: name, codec, resolution, bitrate and
 /// a live estimated file size for the current source.
 private struct PresetRow: View {
     let preset: Preset
     let isSelected: Bool
     let probe: ProbeResult?
-    let complexity: ComplexityScore?
-    let accent: Bool
     let action: () -> Void
 
     var body: some View {
@@ -371,8 +339,8 @@ private struct PresetRow: View {
                     }
                 }
                 Spacer()
-                if let probe, let complexity {
-                    let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe, complexity: complexity)
+                if let probe {
+                    let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(String(format: "≈ %.0f MB", plan.estimatedSizeMB()))
                             .font(.callout.weight(.bold).monospacedDigit())
@@ -381,11 +349,6 @@ private struct PresetRow: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                }
-                if accent {
-                    Text("ADAPTIVE")
-                        .font(.caption2.bold())
-                        .foregroundStyle(.teal)
                 }
             }
             .padding(12)

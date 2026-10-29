@@ -24,8 +24,8 @@ enum PresetStore {
     }
 }
 
-/// Editor for a detailed custom preset: codec, resolution class, bitrate mode
-/// (adaptive tier / fixed Mbps / exact size target), fps cap, audio bitrate.
+/// Editor for a custom preset: codec, resolution class, exact bitrate
+/// (slider + typeable field), fps cap, audio bitrate.
 /// Pass `existing:` to edit (or duplicate) a preset instead of creating one.
 struct PresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
@@ -35,18 +35,11 @@ struct PresetEditorView: View {
     @State private var name: String
     @State private var codec: VideoCodec
     @State private var resolution: ResolutionClass
-    @State private var mode: Mode
-    @State private var tier: QualityTier
     @State private var fixedMbps: Double
+    @State private var bitrateText: String
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
-
-    enum Mode: String, CaseIterable, Identifiable {
-        case adaptive = "Adaptive (optimizer)"
-        case fixed = "Fixed bitrate"
-        var id: String { rawValue }
-    }
 
     init(existing: Preset? = nil, onSaved: @escaping (Preset) -> Void) {
         self.existing = existing
@@ -54,9 +47,9 @@ struct PresetEditorView: View {
         _name = State(initialValue: existing?.name ?? "Custom")
         _codec = State(initialValue: existing?.codec ?? .hevc)
         _resolution = State(initialValue: existing?.resolution ?? .keep)
-        _mode = State(initialValue: existing?.fixedBitrateMbps != nil ? .fixed : .adaptive)
-        _tier = State(initialValue: existing?.autoQuality ?? .balanced)
-        _fixedMbps = State(initialValue: existing?.fixedBitrateMbps ?? 4)
+        let mbps = existing?.fixedBitrateMbps ?? 4
+        _fixedMbps = State(initialValue: mbps)
+        _bitrateText = State(initialValue: String(format: "%.1f", mbps))
         _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
         _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
         _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
@@ -75,32 +68,36 @@ struct PresetEditorView: View {
                     }
                 }
 
-                Section("Bitrate mode") {
-                    Picker("Mode", selection: $mode) {
-                        ForEach(Mode.allCases) { m in Text(m.rawValue).tag(m) }
-                    }
-                    .pickerStyle(.segmented)
-
-                    switch mode {
-                    case .adaptive:
-                        Picker("Quality goal", selection: $tier) {
-                            ForEach(QualityTier.allCases) { t in Text(t.label).tag(t) }
-                        }
-                        Text(tier.description)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    case .fixed:
-                        VStack(alignment: .leading) {
-                            HStack {
-                                Slider(value: $fixedMbps, in: 0.3...40, step: 0.1)
-                                Text(String(format: "%.1f Mbps", fixedMbps))
-                                    .font(.callout.monospacedDigit())
-                                    .frame(width: 90, alignment: .trailing)
-                            }
-                            Text("Lower = smaller file")
-                                .font(.footnote)
+                Section("Video bitrate") {
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Slider(value: $fixedMbps, in: 0.3...40, step: 0.1)
+                                .onChange(of: fixedMbps) { _, v in
+                                    // Only rewrite the text field when the
+                                    // change came from the slider — never
+                                    // clobber what the user is typing.
+                                    if abs((Double(bitrateText.replacingOccurrences(of: ",", with: ".")) ?? -1) - v) > 0.05 {
+                                        bitrateText = String(format: "%.1f", v)
+                                    }
+                                }
+                            TextField("Mbps", text: $bitrateText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .font(.callout.monospacedDigit())
+                                .frame(width: 70)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: bitrateText) { _, t in
+                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
+                                       v >= 0.3, v <= 40 {
+                                        fixedMbps = v
+                                    }
+                                }
+                            Text("Mbps")
                                 .foregroundStyle(.secondary)
                         }
+                        Text("Type an exact value above, or drag the bar. Lower = smaller file.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -138,9 +135,7 @@ struct PresetEditorView: View {
                             name: name.isEmpty ? "Custom" : name,
                             codec: codec,
                             resolution: resolution,
-                            autoQuality: mode == .adaptive ? tier : nil,
-                            fixedBitrateMbps: mode == .fixed ? fixedMbps : nil,
-                            sizeTargetMB: nil,
+                            fixedBitrateMbps: fixedMbps,
                             fpsCap: fpsCapEnabled ? Int(fpsCap) : nil,
                             audioBitrateKbps: Int(audioKbps),
                             isUserDefined: true
