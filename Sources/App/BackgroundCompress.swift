@@ -13,23 +13,22 @@ final class BGExpiryFlag: @unchecked Sendable {
     }
 }
 
-/// Background compression (iOS 26+): the job queue is driven by a
-/// BGContinuedProcessingTask, so encodes KEEP RUNNING after the user leaves
-/// the app, with progress surfaced on the system's Lock Screen indicator.
+/// Background compression (iOS 26+): keeps encodes ALIVE after the user
+/// leaves the app, with progress surfaced on the system's Lock Screen
+/// indicator.
 ///
-/// Design:
-/// - The scheduler handler is registered once at launch (App.init) — required
-///   before any submission. The JobCoordinator is attached when the UI is
-///   ready (RootView.task).
-/// - The BG task is the PRIMARY driver of the queue. If it can't be used
-///   (older iOS, refused submission) the coordinator falls back to its in-app
-///   foreground worker. The two drivers never run at the same time: the BG
-///   driver defers to a live foreground worker and completes immediately.
-/// - Submission happens from enqueue/retry — user actions, as the API
-///   requires ("submission needs to occur as a result of a person's action").
-/// - If the system expires the task mid-encode, active engine work is
-///   cancelled quickly (cancelled jobs leave no trace) and the task
-///   completes cleanly — the app is never suspended mid-write.
+/// Design (the in-app worker is always the foreground executor):
+/// - A compression starts INSTANTLY in the in-app worker — no wait for the
+///   system to spin up the BG task.
+/// - The BG task is submitted at job start as a background LIFELINE: its
+///   handler waits while the in-app worker owns the work, then sweeps any
+///   still-queued jobs and completes. Because the task stays ongoing for the
+///   whole queue, the system does not suspend the app mid-encode.
+/// - If the system revokes the task, active work is stopped and the jobs are
+///   marked FAILED with Retry available (never silently lost).
+/// - If the task can't be used at all (submission refused — e.g. sideloaded
+///   profiles, background refresh disabled), everything still works in the
+///   foreground exactly like before.
 @available(iOS 26.0, *)
 @MainActor
 enum BackgroundCompress {
@@ -70,8 +69,9 @@ enum BackgroundCompress {
     }
 
     /// Submits a user-initiated continued-processing task. Returns false when
-    /// the system refuses (unsupported, too many ongoing tasks, …) so the
-    /// caller can fall back to the in-app worker.
+    /// the system refuses (unsupported, profile without the capability,
+    /// background refresh off, …) — purely informational: the in-app worker
+    /// is always already running when this is called.
     static func submit(subtitle: String) -> Bool {
         let request = BGContinuedProcessingTaskRequest(
             identifier: taskID,
@@ -90,13 +90,18 @@ enum BackgroundCompress {
     private static func drive(_ task: BGContinuedProcessingTask, expiry: BGExpiryFlag) {
         currentTask = task
         task.progress.totalUnitCount = 100
-        updateSubtitle("Preparing…")
+        updateSubtitle("Working…")
         Task { @MainActor in
             while !expiry.isExpired {
                 guard let coordinator else { break }
-                // Never compete with the in-app foreground worker (fallback
-                // path) — it owns the queue while alive.
-                if coordinator.foregroundWorkerActive { break }
+                // The in-app worker is the foreground executor (instant
+                // start). While it's alive it owns the work — wait for it to
+                // finish, then sweep anything still queued. The task staying
+                // ongoing is what keeps the app unsuspended mid-encode.
+                if coordinator.foregroundWorkerActive {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
                 guard let idx = coordinator.jobs.firstIndex(where: { $0.state == .queued }) else { break }
                 coordinator.jobs[idx].state = .analyzing
                 let id = coordinator.jobs[idx].id
@@ -110,11 +115,11 @@ enum BackgroundCompress {
     }
 
     /// The system is taking the task away (runtime limit / pressure): stop
-    /// active engine work fast so the task can complete. Cancelled jobs
-    /// leave no trace, consistent with in-app cancel semantics.
+    /// active engine work quickly so the task can complete. Interrupted jobs
+    /// become FAILED rows with Retry available — never silently lost.
     private static func systemIsRevokingTask() {
         coordinator?.cancelActiveForBackgroundExpiry()
-        updateSubtitle("Stopped — reopen VidCompress to compress again")
+        updateSubtitle("Interrupted — reopen VidCompress to continue")
     }
 
     static func reportProgress(fraction: Double, subtitle: String) {

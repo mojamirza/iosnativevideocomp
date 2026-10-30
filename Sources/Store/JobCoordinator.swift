@@ -32,6 +32,10 @@ final class JobCoordinator: ObservableObject {
     /// worker's `defer` can't nil out a NEW worker's task reference.
     private var workerGeneration = 0
     private var cancelFlags: [UUID: EngineFlags] = [:]
+    /// Jobs whose engine was stopped because iOS revoked the background task.
+    /// They become FAILED rows (source kept, Retry available) instead of
+    /// silently vanishing.
+    private var systemInterrupted = Set<UUID>()
     private var modelContext: ModelContext?
 
     init(modelContext: ModelContext? = nil) {
@@ -64,33 +68,38 @@ final class JobCoordinator: ObservableObject {
     /// driver defers to it to avoid double processing.
     var foregroundWorkerActive: Bool { workerTask != nil }
 
-    /// Starts driving the queue. On iOS 26+ a BGContinuedProcessingTask keeps
-    /// the app alive in the background while jobs run (with progress on the
-    /// system's Lock Screen indicator); on older systems the plain in-app
-    /// worker task runs the queue while the app is open.
+    /// Starts driving the queue. The in-app worker starts INSTANTLY (no wait
+    /// for the system), and on iOS 26+ a BGContinuedProcessingTask is
+    /// submitted alongside as a background lifeline: its handler waits for
+    /// the in-app worker, sweeps the rest of the queue, and keeps the app
+    /// unsuspended mid-encode. If the submission is refused, everything
+    /// still works in the foreground exactly like before.
     private func runQueueIfNeeded() {
-        guard workerTask == nil else { return }
+        startForegroundWorker()
         if #available(iOS 26.0, *) {
-            if BackgroundCompress.isRegistered {
-                // A live BG driver picks up newly queued jobs by itself.
-                if BackgroundCompress.isRunning { return }
-                let queued = jobs.filter { $0.state == .queued }
-                guard !queued.isEmpty else { return }
-                let subtitle = queued.count == 1
-                    ? queued[0].sourceName
-                    : "\(queued.count) videos"
-                if BackgroundCompress.submit(subtitle: subtitle) {
-                    scheduleBackgroundLivenessCheck()
-                    return
+            if BackgroundCompress.isRegistered, !BackgroundCompress.isRunning {
+                let hasWork = jobs.contains {
+                    [.queued, .analyzing, .compressing, .verifying].contains($0.state)
                 }
-                // Submission refused → fall through to the in-app worker.
+                guard hasWork else { return }
+                let current = jobs.first {
+                    [.compressing, .analyzing, .verifying].contains($0.state)
+                }
+                let subtitle = current?.sourceName
+                    ?? jobs.first(where: { $0.state == .queued })?.sourceName
+                    ?? "videos"
+                _ = BackgroundCompress.submit(subtitle: subtitle)
             }
         }
-        startForegroundWorker()
     }
 
-    /// The in-app fallback worker (used when BG tasks are unavailable).
+    /// The in-app worker — always the foreground executor (instant start).
     private func startForegroundWorker() {
+        if #available(iOS 26.0, *) {
+            // The BG driver owns the queue while its task is running — it
+            // picks up new jobs itself. (Prevents two concurrent encodes.)
+            if BackgroundCompress.isRunning { return }
+        }
         guard workerTask == nil else { return }
         workerGeneration += 1
         let generation = workerGeneration
@@ -112,25 +121,9 @@ final class JobCoordinator: ObservableObject {
         }
     }
 
-    /// Safety net: if the system accepted the submission but never starts the
-    /// task, fall back to the in-app worker so queued jobs don't strand. The
-    /// BG driver defers to a live foreground worker, so even a late handler
-    /// start can't cause double processing.
-    private func scheduleBackgroundLivenessCheck() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard let self,
-                  self.workerTask == nil,
-                  self.jobs.contains(where: { $0.state == .queued }) else { return }
-            if #available(iOS 26.0, *) {
-                // A BG task did start after all — let it drive.
-                if BackgroundCompress.isRunning { return }
-            }
-            self.startForegroundWorker()
-        }
-    }
-
     func run(jobID: UUID) async {
+        // Fresh run: any earlier system-interruption mark is stale.
+        systemInterrupted.remove(jobID)
         // The queue claim already moved this job out of .queued; if a watchdog
         // force-finished it in the meantime, do nothing (never re-run a job
         // that reached a terminal state).
@@ -229,9 +222,14 @@ final class JobCoordinator: ObservableObject {
                 }
             }
             // A cancel that landed during verification: honour it — remove
-            // the row entirely instead of reporting a finished file.
+            // the row entirely, unless iOS interrupted us (then keep a
+            // retryable failed row).
             if flags.cancelled {
-                removeRow(jobID: jobID)
+                if systemInterrupted.contains(jobID) {
+                    markInterrupted(jobID: jobID, output: output)
+                } else {
+                    removeRow(jobID: jobID)
+                }
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 return
             }
@@ -244,10 +242,9 @@ final class JobCoordinator: ObservableObject {
             }
 
         } catch is CancellationError {
-            // Cancelled jobs leave no trace: no row, no record, no partial file.
-            removeRow(jobID: jobID)
+            handleCancelled(jobID: jobID, output: output)
         } catch CompressionError.cancelled {
-            removeRow(jobID: jobID)
+            handleCancelled(jobID: jobID, output: output)
         } catch {
             setJob(jobID) {
                 $0.state = .failed
@@ -262,6 +259,32 @@ final class JobCoordinator: ObservableObject {
         try? await Task.sleep(nanoseconds: 200_000_000)
     }
 
+    /// A user cancel removes everything; a system interruption (background
+    /// task revoked) keeps a retryable failed row instead.
+    private func handleCancelled(jobID: UUID, output: URL) {
+        if systemInterrupted.contains(jobID) {
+            markInterrupted(jobID: jobID, output: output)
+        } else {
+            // Cancelled jobs leave no trace: no row, no record, no partial file.
+            removeRow(jobID: jobID)
+        }
+    }
+
+    /// The system revoked the background task mid-job: keep the row as FAILED
+    /// (source kept, Retry available) and drop the partial output.
+    private func markInterrupted(jobID: UUID, output: URL) {
+        systemInterrupted.remove(jobID)
+        cancelFlags.removeValue(forKey: jobID)
+        setJob(jobID) {
+            $0.state = .failed
+            $0.progress = 0
+            $0.errorMessage = "Interrupted by iOS in the background — tap Retry."
+        }
+        try? FileManager.default.removeItem(at: output)
+        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
+                   errorText: "Interrupted by iOS in the background.")
+    }
+
     /// Watchdog backstop for the ENCODE phase: only acts if the job is still
     /// in .compressing (the engine's own watchdog fires earlier). Fails the
     /// row and revives the queue.
@@ -270,10 +293,10 @@ final class JobCoordinator: ObservableObject {
               jobs[idx].state == .compressing else { return }
         setJob(jobID) {
             $0.state = .failed
-            $0.errorMessage = "Encoding stalled and was aborted."
+            $0.errorMessage = "Encoding was interrupted (app closed or suspended) — tap Retry."
         }
         saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
-                   errorText: "Encoding stalled and was aborted.")
+                   errorText: "Encoding was interrupted (app closed or suspended).")
         cancelFlags.removeValue(forKey: jobID)
         reviveWorker()
     }
@@ -385,10 +408,11 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// The system is revoking the background task: stop all active engine
-    /// work quickly so the task can complete cleanly. Cancelled jobs leave
-    /// no trace, consistent with in-app cancel semantics.
+    /// work quickly so the task can complete cleanly. Interrupted jobs
+    /// become FAILED rows with Retry available (never silently lost).
     func cancelActiveForBackgroundExpiry() {
         for job in jobs where [.analyzing, .compressing, .verifying].contains(job.state) {
+            systemInterrupted.insert(job.id)
             cancelFlags[job.id]?.cancel()
         }
     }
