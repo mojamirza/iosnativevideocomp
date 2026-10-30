@@ -88,7 +88,9 @@ struct PresetEditorView: View {
                                 }
                             TextField("Mbps", text: $bitrateText)
                                 .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
+                                // Centered so the digits sit right on the
+                                // underline regardless of value length.
+                                .multilineTextAlignment(.center)
                                 .font(.callout.monospacedDigit())
                                 .frame(width: 62)
                                 // Plain field with a short underline — the
