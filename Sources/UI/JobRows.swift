@@ -7,13 +7,15 @@ struct JobRowView: View {
 
     let job: JobCoordinator.Job
     @State private var showingReport = false
+    @State private var confirmingCancel = false
+    @State private var confirmingDelete = false
 
     var body: some View {
         // Finished rows can be swiped sideways to reveal Delete; active
         // (queued/encoding) rows can't.
         if [.done, .failed, .cancelled].contains(job.state) {
             rowBody
-                .modifier(SwipeToDeleteModifier { coordinator.delete(jobID: job.id) })
+                .modifier(SwipeToDeleteModifier { confirmingDelete = true })
         } else {
             rowBody
         }
@@ -120,6 +122,32 @@ struct JobRowView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        // Fat-finger protection for destructive actions.
+        .confirmationDialog(
+            job.state == .queued ? "Remove from queue?" : "Stop this compression?",
+            isPresented: $confirmingCancel,
+            titleVisibility: .visible) {
+            Button(job.state == .queued ? "Remove from queue" : "Stop & discard",
+                   role: .destructive) {
+                coordinator.cancel(jobID: job.id)
+            }
+            Button("Keep going", role: .cancel) {}
+        } message: {
+            Text(job.state == .queued
+                 ? "The queued job will be removed from the list."
+                 : "Encoding progress will be lost and the partial file deleted.")
+        }
+        .confirmationDialog(
+            "Delete this item?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                coordinator.delete(jobID: job.id)
+            }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text("The compressed video and its history entry will be removed. This cannot be undone.")
+        }
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
@@ -155,7 +183,7 @@ struct JobRowView: View {
             case .queued, .analyzing, .compressing, .verifying:
                 // Active jobs: just the cancel button — nothing else.
                 Button {
-                    coordinator.cancel(jobID: job.id)
+                    confirmingCancel = true
                 } label: {
                     Label("Cancel", systemImage: "xmark.circle.fill")
                         .font(.caption.weight(.semibold))
@@ -221,7 +249,7 @@ struct JobRowView: View {
                 Button("Retry") { coordinator.retry(jobID: job.id) }
             }
             Divider()
-            Button("Remove from list", role: .destructive) { coordinator.delete(jobID: job.id) }
+            Button("Remove from list…", role: .destructive) { confirmingDelete = true }
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.body)
@@ -303,6 +331,7 @@ struct ReportSheet: View {
     let report: IntegrityReport
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmingDelete = false
 
     var body: some View {
         NavigationStack {
@@ -350,14 +379,7 @@ struct ReportSheet: View {
                         ShareLink(item: out) { Label("Share", systemImage: "square.and.arrow.up") }
                     }
                     Button(role: .destructive) {
-                        dismiss()
-                        // Delete after the sheet has started dismissing —
-                        // removing the presenting row mid-sheet-animation
-                        // can upset SwiftUI.
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 350_000_000)
-                            coordinator.delete(jobID: job.id)
-                        }
+                        confirmingDelete = true
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -365,6 +387,25 @@ struct ReportSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            // Fat-finger protection for the destructive delete.
+            .confirmationDialog(
+                "Delete this output?",
+                isPresented: $confirmingDelete,
+                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    dismiss()
+                    // Delete after the sheet has started dismissing —
+                    // removing the presenting row mid-sheet-animation
+                    // can upset SwiftUI.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        coordinator.delete(jobID: job.id)
+                    }
+                }
+                Button("Keep", role: .cancel) {}
+            } message: {
+                Text("The compressed video and its history entry will be removed. This cannot be undone.")
             }
         }
     }

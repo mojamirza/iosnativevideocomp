@@ -1,31 +1,63 @@
 import SwiftUI
 import AVFoundation
 
-/// Shown right after picking a video: probe summary, preset selection with a
+/// One imported video on its way into the setup flow (batch-capable).
+struct PickedVideo: Identifiable {
+    let id = UUID()
+    let url: URL
+    var thumbnail: UIImage?
+}
+
+/// Shown right after picking video(s): probe summary, preset selection with a
 /// live *estimated output size / bitrate*, and the Compress button.
+/// A batch (N > 1) applies ONE preset to all videos; per-file estimates and
+/// totals are shown live. A single video looks exactly like the old flow.
 struct SetupFlowView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
 
-    let sourceURL: URL
-    let thumbnail: UIImage?
+    let videos: [PickedVideo]
     let onDone: () -> Void
 
-    @State private var probe: ProbeResult?
-    @State private var selectedPreset: Preset?
+    @State private var probes: [ProbeResult?]
+    @State private var analysisDone = false
     @State private var errorText: String?
+    @State private var selectedPreset: Preset?
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var showEditor = false
     @State private var editingPreset: Preset?
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
+    var isBatch: Bool { videos.count > 1 }
+
+    init(videos: [PickedVideo], onDone: @escaping () -> Void) {
+        self.videos = videos
+        self.onDone = onDone
+        _probes = State(initialValue: Array(repeating: nil, count: videos.count))
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    sourceCard
+                    if isBatch {
+                        batchCard
+                    } else {
+                        sourceCard
+                    }
 
-                    if let probe {
+                    if isBatch {
+                        if analysisDone {
+                            batchList
+                        } else {
+                            HStack {
+                                ProgressView()
+                                Text("Analysing \(videos.count) videos…")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 8)
+                        }
+                    } else if let probe = singleProbe {
                         probeGrid(probe)
                     } else {
                         HStack {
@@ -49,7 +81,7 @@ struct SetupFlowView: View {
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("New compression")
+            .navigationTitle(isBatch ? "Batch · \(videos.count) videos" : "New compression")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -77,9 +109,86 @@ struct SetupFlowView: View {
 
     // MARK: subviews
 
+    /// Batch header: count + total input size.
+    private var batchCard: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 44, height: 44)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(videos.count) videos selected")
+                    .font(.callout.weight(.semibold))
+                Text("Total input: \(ByteCountFormatter.string(fromByteCount: totalInBytes, countStyle: .file))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var totalInBytes: Int64 {
+        probes.reduce(Int64(0)) { $0 + ($1?.fileSize ?? 0) }
+    }
+
+    /// The single source's probe (nil for batches or while analysing).
+    private var singleProbe: ProbeResult? { probes.first ?? nil }
+
+    /// Per-video rows for a batch: thumbnail, name, size, duration.
+    private var batchList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Videos").font(.caption.bold()).foregroundStyle(.secondary)
+            ForEach(videos.indices, id: \.self) { i in
+                HStack(spacing: 10) {
+                    if let thumb = videos[i].thumbnail {
+                        Image(uiImage: thumb)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 64, height: 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    } else {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(.quaternary)
+                            .frame(width: 64, height: 40)
+                            .overlay { Image(systemName: "film").font(.caption).foregroundStyle(.secondary) }
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(videos[i].url.lastPathComponent)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 4) {
+                            Text(ByteCountFormatter.string(fromByteCount: probes[i]?.fileSize ?? 0, countStyle: .file))
+                            if let p = probes[i] {
+                                Text("·")
+                                Text(String(format: "%d:%02d", Int(p.duration) / 60, Int(p.duration) % 60))
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if probes[i] != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else if analysisDone {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
     private var sourceCard: some View {
         HStack(spacing: 12) {
-            if let thumbnail {
+            if let thumbnail = videos.first?.thumbnail {
                 Image(uiImage: thumbnail)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -95,13 +204,13 @@ struct SetupFlowView: View {
                     }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(sourceURL.lastPathComponent)
+                Text(videos.first?.url.lastPathComponent ?? "")
                     .font(.callout.weight(.semibold))
                     .lineLimit(2)
-                Text(ByteCountFormatter.string(fromByteCount: probe?.fileSize ?? 0, countStyle: .file))
+                Text(ByteCountFormatter.string(fromByteCount: singleProbe?.fileSize ?? 0, countStyle: .file))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let probe, probe.tags.isHDR {
+                if let probe = singleProbe, probe.tags.isHDR {
                     Label("HDR source — color-safe pass", systemImage: "sparkles")
                         .font(.caption2.bold())
                         .padding(.horizontal, 8)
@@ -160,7 +269,8 @@ struct SetupFlowView: View {
             ForEach(availablePresets, id: \.id) { preset in
                 PresetRow(preset: preset,
                           isSelected: selectedPreset?.id == preset.id,
-                          probe: probe) {
+                          probe: singleProbe,
+                          batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil) {
                     selectedPreset = preset
                 }
                 .contextMenu {
@@ -194,14 +304,57 @@ struct SetupFlowView: View {
     }
 
     // Estimate card (live) + start button
+
+    /// Total ESTIMATED OUTPUT for the whole batch with a given preset.
+    private func totalBatchOutBytes(for preset: Preset) -> Int64? {
+        guard analysisDone else { return nil }
+        var valid = 0
+        var total: Int64 = 0
+        for p in probes where p != nil {
+            total += Int64(QualitySizeOptimizer.plan(preset: preset, probe: p!).estimatedSizeMB() * 1_048_576)
+            valid += 1
+        }
+        return valid > 0 ? total : nil
+    }
+
     private var estimate: OptimizerPlan? {
-        guard let probe, let preset = selectedPreset else { return nil }
+        guard let probe = singleProbe, let preset = selectedPreset else { return nil }
         return QualitySizeOptimizer.plan(preset: preset, probe: probe)
     }
 
     private var startButton: some View {
         VStack(spacing: 8) {
-            if let est = estimate {
+            if isBatch {
+                if let total = totalBatchOutBytes(for: selectedPreset ?? Preset.builtIn[0]) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Estimated output (all \(videos.count) videos)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "≈ %.0f MB total", Double(total) / 1_048_576))
+                                .font(.title3.weight(.bold).monospacedDigit())
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("Bitrate (per video)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "%.1f + %.0f kbps",
+                                        Double(estimate?.videoBitrate ?? 0) / 1_000_000,
+                                        Double(estimate?.audioBitrate ?? 0) / 1000))
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                        }
+                    }
+                    .padding(14)
+                    .background(Color(.secondarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: 14))
+
+                    Text("One preset applied to every video · each row shows its own estimate · jobs run one at a time in the queue")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else if let est = estimate {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Estimated output")
@@ -235,27 +388,40 @@ struct SetupFlowView: View {
                 start()
             } label: {
                 HStack {
-                    if probe == nil {
+                    if !analysisDone {
                         ProgressView().tint(.white)
                     }
-                    Image(systemName: "arrow.down.forward.circle.fill")
-                    Text(selectedPreset == nil ? "Choose a preset" : "Compress")
+                    Image(systemName: isBatch ? "square.stack.3d.up.badge.plus" : "arrow.down.forward.circle.fill")
+                    Text(buttonTitle)
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(probe == nil || selectedPreset == nil)
+            .disabled(!canStart)
         }
     }
 
+    private var buttonTitle: String {
+        if !analysisDone { return "Analysing…" }
+        guard selectedPreset != nil else { return "Choose a preset" }
+        return isBatch ? "Compress \(videos.count) videos" : "Compress"
+    }
+
+    private var canStart: Bool {
+        guard analysisDone, selectedPreset != nil else { return false }
+        return probes.contains { $0 != nil }
+    }
+
     private func start() {
-        guard let preset = selectedPreset,
-              let probe = probe else { return }
-        let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
-        coordinator.enqueue(source: sourceURL, probe: probe, plan: plan,
-                            preset: preset, thumbnail: thumbnail)
+        guard let preset = selectedPreset, analysisDone else { return }
+        for i in videos.indices {
+            guard let probe = probes[i] else { continue }
+            let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
+            coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,
+                                preset: preset, thumbnail: videos[i].thumbnail)
+        }
         onDone()
     }
 
@@ -298,16 +464,25 @@ struct SetupFlowView: View {
             let last = PresetStore.lastUsedPresetID()
             return availablePresets.first { $0.id == last } ?? Preset.builtIn[0]
         }()
-        do {
-            let p = try await ProbeResult.probe(url: sourceURL)
-            if p.duration.isNaN || p.duration <= 0 {
-                errorText = "Could not read a valid duration; this file may be unsupported."
-                return
+        var failures = 0
+        for i in videos.indices {
+            do {
+                let p = try await ProbeResult.probe(url: videos[i].url)
+                if p.duration.isNaN || p.duration <= 0 {
+                    failures += 1
+                    continue
+                }
+                probes[i] = p
+            } catch {
+                failures += 1
             }
-            probe = p
-        } catch {
-            errorText = error.localizedDescription
         }
+        if failures > 0 {
+            errorText = failures == videos.count
+                ? "None of the selected files could be analysed; they may be unsupported."
+                : "\(failures) of \(videos.count) videos couldn't be analysed and will be skipped."
+        }
+        analysisDone = true
         if let id = selectedPreset?.id {
             PresetStore.setLastUsedPreset(id)
         }
@@ -315,11 +490,12 @@ struct SetupFlowView: View {
 }
 
 /// A selectable detailed preset row: name, codec, resolution, bitrate and
-/// a live estimated file size for the current source.
+/// a live estimated file size for the current source (or the batch total).
 private struct PresetRow: View {
     let preset: Preset
     let isSelected: Bool
     let probe: ProbeResult?
+    var batchTotalBytes: Int64?
     let action: () -> Void
 
     var body: some View {
@@ -346,6 +522,15 @@ private struct PresetRow: View {
                             .font(.callout.weight(.bold).monospacedDigit())
                             .foregroundStyle(.tint)
                         Text(String(format: "%.1f Mbps", Double(plan.videoBitrate) / 1e6))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let totalBytes = batchTotalBytes {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(String(format: "≈ %.0f MB total", Double(totalBytes) / 1_048_576))
+                            .font(.callout.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.tint)
+                        Text(String(format: "%.1f Mbps", Double(preset.fixedBitrateMbps)))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }

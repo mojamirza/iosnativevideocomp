@@ -11,9 +11,8 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var showingSetup = false
-    @State private var importedURL: URL?
-    @State private var importedThumb: UIImage?
-    @State private var photoItem: PhotosPickerItem?
+    @State private var importedVideos: [PickedVideo] = []
+    @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFiles = false
     @State private var importError: String?
 
@@ -60,7 +59,7 @@ struct RootView: View {
             .navigationTitle("VidCompress")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    PhotosPicker(selection: $photoItem, matching: .videos) {
+                    PhotosPicker(selection: $photoItems, matching: .videos) {
                         Image(systemName: "photo.on.rectangle.angled")
                     }
                     Button {
@@ -70,35 +69,49 @@ struct RootView: View {
                     }
                 }
             }
-            // Photos library selection
-            .onChange(of: photoItem) { _, item in
-                guard let item else { return }
+            // Photos library selection (multi-select → batch)
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
                 Task {
-                    do {
-                        let url = try await ImportHelpers.copyFromLibrary(item)
-                        let thumb = await Thumbnails.make(url: url)
-                        importedURL = url
-                        importedThumb = thumb
-                        showingSetup = true
-                    } catch {
-                        importError = error.localizedDescription
+                    var picked: [PickedVideo] = []
+                    for item in items {
+                        do {
+                            let url = try await ImportHelpers.copyFromLibrary(item)
+                            let thumb = await Thumbnails.make(url: url)
+                            picked.append(PickedVideo(url: url, thumbnail: thumb))
+                        } catch {
+                            // Unreadable/untransferable item — skipped; the
+                            // batch card shows what made it through.
+                        }
                     }
-                    photoItem = nil
+                    photoItems = []
+                    if picked.isEmpty {
+                        importError = "The selected videos could not be imported."
+                    } else {
+                        importedVideos = picked
+                        showingSetup = true
+                    }
                 }
             }
-            // Files app selection (UIDocumentPickerViewController-backed)
+            // Files app selection (UIDocumentPickerViewController-backed,
+            // multi-select → batch)
             .fileImporter(isPresented: $showFiles,
                           allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie],
-                          allowsMultipleSelection: false) { result in
-                if case .success(let urls) = result, let url = urls.first {
+                          allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result {
                     Task {
-                        if let copy = SecurityScoped(url: url).importCopy() {
-                            let thumb = await Thumbnails.make(url: copy)
-                            importedURL = copy
-                            importedThumb = thumb
-                            showingSetup = true
+                        var picked: [PickedVideo] = []
+                        for url in urls {
+                            if let copy = SecurityScoped(url: url).importCopy() {
+                                let thumb = await Thumbnails.make(url: copy)
+                                picked.append(PickedVideo(url: copy, thumbnail: thumb))
+                            }
+                        }
+                        if picked.isEmpty {
+                            importError = "The selected files could not be copied into the app's storage."
                         } else {
-                            importError = "The selected file could not be copied into the app's storage."
+                            importedVideos = picked
+                            showingSetup = true
                         }
                     }
                 }
@@ -111,12 +124,9 @@ struct RootView: View {
                 Text(importError ?? "")
             }
             .sheet(isPresented: $showingSetup) {
-                if let url = importedURL {
-                    SetupFlowView(sourceURL: url,
-                                  thumbnail: importedThumb,
-                                  onDone: { showingSetup = false })
-                        .presentationDetents([.large])
-                }
+                SetupFlowView(videos: importedVideos,
+                              onDone: { showingSetup = false })
+                    .presentationDetents([.large])
             }
             .task {
                 coordinator.attach(context: modelContext)
