@@ -30,6 +30,10 @@ targets:
           - com.example.vidcompress.compress
         UIBackgroundModes:
           - processing
+        # Expose the app's folder in Files → "On My iPad" → VidCompress,
+        # so compressed videos can be transferred out easily.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     settings:
       base:
         PRODUCT_NAME: VidCompress

@@ -307,12 +307,20 @@ private struct SwipeToDeleteModifier: ViewModifier {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 25)
             .onChanged { value in
+                // Anchor the drag start on the FIRST change regardless of
+                // direction — anchoring late (only once horizontal-dominant)
+                // made the row jump instead of tracking the finger.
+                if dragStart == nil { dragStart = offsetX }
                 // Horizontal-dominant drags only — vertical ones belong to
                 // the list's ScrollView.
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                if dragStart == nil { dragStart = offsetX }
                 let target = dragStart! + value.translation.width
-                offsetX = min(0, max(-revealWidth, target))
+                // Explicitly unanimated: the row must track the finger 1:1.
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    offsetX = min(0, max(-revealWidth, target))
+                }
             }
             .onEnded { value in
                 defer { dragStart = nil }
