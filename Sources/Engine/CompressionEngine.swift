@@ -8,11 +8,31 @@ final class EngineFlags: @unchecked Sendable {
     private let lock = NSLock()
     private var _cancelled = false
     private var _error: Error?
+    private var _hooks: [() -> Void] = []
 
     var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return _cancelled }
     var error: Error? { lock.lock(); defer { lock.unlock() }; return _error }
 
-    func cancel() { lock.lock(); _cancelled = true; lock.unlock() }
+    /// Registered by the engine's pipes: on cancel() every hook runs — they
+    /// kill the reader/writer and resume the pipe continuations IMMEDIATELY,
+    /// so cancelling can never stall until a queue block happens to fire.
+    func addCancelHook(_ hook: @escaping () -> Void) {
+        lock.lock()
+        let alreadyCancelled = _cancelled
+        if !alreadyCancelled { _hooks.append(hook) }
+        lock.unlock()
+        if alreadyCancelled { hook() }   // cancel happened first — run now
+    }
+
+    func cancel() {
+        lock.lock()
+        _cancelled = true
+        let hooks = _hooks
+        _hooks = []
+        lock.unlock()
+        for h in hooks { h() }
+    }
+
     func setError(_ e: Error) {
         lock.lock(); if _error == nil { _error = e }; lock.unlock()
     }
@@ -288,6 +308,13 @@ enum CompressionEngine {
                 let resume = ResumeBox(cont)
                 let lastKept = CMTimeBox()
                 let queue = DispatchQueue(label: "vidcompress.video.pipe")
+                // Cancel must wake this pipe even when the queue block never
+                // fires again after the writer is cancelled.
+                flags.addCancelHook { [weak resume] in
+                    reader.cancelReading()
+                    writer.cancelWriting()
+                    resume?.resumeOnce()
+                }
 
                 videoInput.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
@@ -403,6 +430,13 @@ enum CompressionEngine {
             await withCheckedContinuation { cont in
                 let resume = ResumeBox(cont)
                 let queue = DispatchQueue(label: "vidcompress.audio.pipe")
+                // Cancel must wake this pipe even when the queue block never
+                // fires again after the writer is cancelled.
+                flags.addCancelHook { [weak resume] in
+                    reader.cancelReading()
+                    writer.cancelWriting()
+                    resume?.resumeOnce()
+                }
                 aIn.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
                     while aIn.isReadyForMoreMediaData {

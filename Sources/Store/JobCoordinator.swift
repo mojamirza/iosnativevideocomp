@@ -28,6 +28,9 @@ final class JobCoordinator: ObservableObject {
     @Published var jobs: [Job] = []
 
     private var workerTask: Task<Void, Never>?
+    /// Bumped every time a worker is spawned or retired, so a late-waking old
+    /// worker's `defer` can't nil out a NEW worker's task reference.
+    private var workerGeneration = 0
     private var cancelFlags: [UUID: EngineFlags] = [:]
     private var modelContext: ModelContext?
 
@@ -59,8 +62,13 @@ final class JobCoordinator: ObservableObject {
 
     private func runQueueIfNeeded() {
         guard workerTask == nil else { return }
+        workerGeneration += 1
+        let generation = workerGeneration
         workerTask = Task { [weak self] in
-            defer { self?.workerTask = nil }
+            defer {
+                guard let self, self.workerGeneration == generation else { return }
+                self.workerTask = nil
+            }
             while !Task.isCancelled {
                 guard let self,
                       let idx = self.jobs.firstIndex(where: { $0.state == .queued }) else { break }
@@ -111,6 +119,15 @@ final class JobCoordinator: ObservableObject {
                 $0.progress = 0
             }
 
+            // Backstop for the whole encode: the engine has its own watchdog,
+            // but if anything wedges the WORKER, this independent task fails
+            // the row and revives the queue. The queue can never stay dead.
+            let compressDeadline = max(240, plan.duration * 6 + 120)
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(compressDeadline * 1_000_000_000))
+                self?.forceCompressTerminal(jobID: jobID)
+            }
+
             try await CompressionEngine.compress(
                 source: job.sourceURL,
                 output: output,
@@ -158,15 +175,21 @@ final class JobCoordinator: ObservableObject {
                     $0.errorMessage = "Output integrity report failed — see details."
                 }
             }
+            // A cancel that landed during verification: honour it — remove
+            // the row entirely instead of reporting a finished file.
+            if flags.cancelled {
+                removeRow(jobID: jobID)
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                return
+            }
             saveRecord(jobID: jobID, outputName: output.lastPathComponent,
                        report: reportData, state: report.passed ? "done" : "failed")
 
         } catch is CancellationError {
-            setJob(jobID) { $0.state = .cancelled; $0.errorMessage = "Cancelled." }
-            saveRecord(jobID: jobID, outputName: nil, report: nil, state: "cancelled")
+            // Cancelled jobs leave no trace: no row, no record, no partial file.
+            removeRow(jobID: jobID)
         } catch CompressionError.cancelled {
-            setJob(jobID) { $0.state = .cancelled; $0.errorMessage = "Cancelled." }
-            saveRecord(jobID: jobID, outputName: nil, report: nil, state: "cancelled")
+            removeRow(jobID: jobID)
         } catch {
             setJob(jobID) {
                 $0.state = .failed
@@ -181,8 +204,25 @@ final class JobCoordinator: ObservableObject {
         try? await Task.sleep(nanoseconds: 200_000_000)
     }
 
-    /// Watchdog backstop: only acts if the job is STILL in .verifying (the
-    /// normal path finishes in ≤60 s and has already moved the row on).
+    /// Watchdog backstop for the ENCODE phase: only acts if the job is still
+    /// in .compressing (the engine's own watchdog fires earlier). Fails the
+    /// row and revives the queue.
+    private func forceCompressTerminal(jobID: UUID) {
+        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[idx].state == .compressing else { return }
+        setJob(jobID) {
+            $0.state = .failed
+            $0.errorMessage = "Encoding stalled and was aborted."
+        }
+        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
+                   errorText: "Encoding stalled and was aborted.")
+        cancelFlags.removeValue(forKey: jobID)
+        reviveWorker()
+    }
+
+    /// Watchdog backstop for the VERIFY phase: only acts if the job is STILL
+    /// in .verifying (the normal path finishes in ≤60 s and has already moved
+    /// the row on).
     private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: Date) {
         guard Date().timeIntervalSince(startedAt) >= 74 else { return }
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
@@ -206,9 +246,7 @@ final class JobCoordinator: ObservableObject {
         // start a fresh one so the queue keeps working. A late-waking old
         // worker can't double-process: jobs are claimed out of .queued and
         // run() refuses already-terminal jobs.
-        workerTask?.cancel()
-        workerTask = nil
-        runQueueIfNeeded()
+        reviveWorker()
     }
 
     // MARK: Actions
@@ -216,8 +254,12 @@ final class JobCoordinator: ObservableObject {
     func cancel(jobID: UUID) {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }) else { return }
         if jobs[idx].state == .queued {
-            jobs.remove(at: idx)
+            // Never started — just drop it.
+            withAnimation { jobs.remove(at: idx) }
         } else if let flags = cancelFlags[jobID] {
+            // Active job: the engine's cancel hooks abort the encode at once;
+            // run() then removes the row entirely (cancelled jobs leave no
+            // record and no list entry).
             flags.cancel()
         }
     }
@@ -240,7 +282,30 @@ final class JobCoordinator: ObservableObject {
         }
         if let flags = cancelFlags[jobID] { flags.cancel() }
         removeRecord(jobID: jobID)
-        jobs.remove(at: idx)
+        withAnimation { jobs.remove(at: idx) }
+        cancelFlags.removeValue(forKey: jobID)
+    }
+
+    /// Removes a job's row + record + partial output entirely (used by cancel
+    /// and by the watchdogs). Cancelled jobs leave nothing behind.
+    private func removeRow(jobID: UUID) {
+        cancelFlags.removeValue(forKey: jobID)
+        removeRecord(jobID: jobID)
+        if let idx = jobs.firstIndex(where: { $0.id == jobID }) {
+            if let url = jobs[idx].outputURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            withAnimation { jobs.remove(at: idx) }
+        }
+    }
+
+    /// Retires a wedged worker task and starts a fresh one, so the queue can
+    /// never be dead-locked by a stuck job.
+    private func reviveWorker() {
+        workerGeneration += 1   // invalidates the old worker's defer
+        workerTask?.cancel()
+        workerTask = nil
+        runQueueIfNeeded()
     }
 
     // MARK: SwiftData history
