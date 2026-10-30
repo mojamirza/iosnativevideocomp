@@ -473,6 +473,9 @@ final class JobCoordinator: ObservableObject {
     func loadHistory() {
         guard let context = modelContext else { return }
         let fm = FileManager.default
+        // Move any pre-restructure files into their new homes FIRST — rows
+        // derive their paths from the directory getters.
+        Self.migrateLegacyStorage()
         var out: [Job] = []
         do {
             let descriptor = FetchDescriptor<JobRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
@@ -595,11 +598,51 @@ final class JobCoordinator: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    static nonisolated func outputsDirectory() -> URL {
-        documentsDirectory().appendingPathComponent("Compressed", isDirectory: true)
+    static nonisolated func cachesDirectory() -> URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     }
 
+    /// Compressed outputs live DIRECTLY in Documents (the folder exposed in
+    /// Files → On My iPad), so the user sees just their finished videos.
+    static nonisolated func outputsDirectory() -> URL {
+        documentsDirectory()
+    }
+
+    /// Import copies live in Caches/Imports — the Files app doesn't show the
+    /// caches folder, so pending sources never clutter "On My iPad".
+    /// (Caches can be purged by the system under storage pressure, but every
+    /// import here belongs to a pending/failed job we'd happily retry from
+    /// the original library selection anyway.)
     static nonisolated func importsDirectory() -> URL {
-        documentsDirectory().appendingPathComponent("Imports", isDirectory: true)
+        cachesDirectory().appendingPathComponent("Imports", isDirectory: true)
+    }
+
+    /// One-time move from the old layout (Documents/Compressed + Documents/Imports)
+    /// to the new one (outputs at Documents root, imports in Caches/Imports).
+    /// MUST run before loadHistory() builds rows — paths are derived from the
+    /// directory getters, so files must be in their new homes first.
+    static func migrateLegacyStorage() {
+        let fm = FileManager.default
+
+        let legacyOutputs = documentsDirectory().appendingPathComponent("Compressed", isDirectory: true)
+        if fm.fileExists(atPath: legacyOutputs.path) {
+            for file in (try? fm.contentsOfDirectory(at: legacyOutputs, includingPropertiesForKeys: nil)) ?? [] {
+                let dst = documentsDirectory().appendingPathComponent(file.lastPathComponent)
+                if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
+                try? fm.moveItem(at: file, to: dst)
+            }
+            try? fm.removeItem(at: legacyOutputs)
+        }
+
+        let legacyImports = documentsDirectory().appendingPathComponent("Imports", isDirectory: true)
+        if fm.fileExists(atPath: legacyImports.path) {
+            try? fm.createDirectory(at: importsDirectory(), withIntermediateDirectories: true)
+            for file in (try? fm.contentsOfDirectory(at: legacyImports, includingPropertiesForKeys: nil)) ?? [] {
+                let dst = importsDirectory().appendingPathComponent(file.lastPathComponent)
+                if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
+                try? fm.moveItem(at: file, to: dst)
+            }
+            try? fm.removeItem(at: legacyImports)
+        }
     }
 }

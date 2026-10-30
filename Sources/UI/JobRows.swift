@@ -269,39 +269,46 @@ private struct SwipeToDeleteModifier: ViewModifier {
 
     private let revealWidth: CGFloat = 92
 
+    /// Whether the delete button is fully revealed (row at max offset).
+    private var revealed: Bool { offsetX <= -revealWidth + 2 }
+
     func body(content: Content) -> some View {
         content
-            .background(
-                GeometryReader { geo in
-                    HStack {
-                        Spacer(minLength: 0)
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                offsetX = 0
-                            }
-                            onDelete()
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "trash.fill").font(.body)
-                                Text("Delete").font(.caption2.weight(.semibold))
-                            }
-                            .foregroundStyle(.white)
-                            .frame(width: revealWidth - 12, height: geo.size.height - 12)
-                            .background(Color.red, in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 6)
-                    }
-                    // The card itself is offset below — which would drag its
-                    // background (and this button) along. Counter-offsetting
-                    // the background cancels that out, so the button STAYS at
-                    // the trailing edge and gets revealed as the card slides
-                    // away to the left.
-                    .offset(x: -offsetX)
-                }
-            )
+            // Offset FIRST: the transform wraps only the card. Then the
+            // overlay is layered on OUTSIDE that transform, so it stays
+            // pinned at the row's un-shifted trailing edge while the card
+            // slides left to reveal it. The previous counter-offset-
+            // background approach made the revealed button drift/glide
+            // instead of appearing crisply in place.
             .offset(x: offsetX)
+            .overlay(alignment: .trailing) {
+                deleteButton
+                    .opacity(revealed ? 1 : 0)
+                    .allowsHitTesting(revealed)
+            }
             .simultaneousGesture(dragGesture)
+    }
+
+    private var deleteButton: some View {
+        Button {
+            // Snap the row shut while the confirmation dialog appears.
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                offsetX = 0
+            }
+            onDelete()
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "trash.fill").font(.body)
+                Text("Delete").font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .frame(width: revealWidth - 14)
+            .frame(maxHeight: .infinity)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 7)
+        .padding(.vertical, 7)
     }
 
     private var dragGesture: some Gesture {

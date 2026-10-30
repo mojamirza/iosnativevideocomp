@@ -550,10 +550,12 @@ struct TagChip: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(.thinMaterial, in: Capsule())
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            // Subtle system fill — the old .thinMaterial capsule read as a
+            // dark "black box" and clashed with the row background.
+            .background(Color(.tertiarySystemFill), in: Capsule())
             .foregroundStyle(.secondary)
     }
 }
