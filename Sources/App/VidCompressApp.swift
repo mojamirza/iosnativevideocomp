@@ -19,6 +19,13 @@ struct VidCompressApp: App {
         }
         // The SwiftData context is attached later from RootView (modelContext
         // is MainActor-isolated and must not be captured in this autoclosure).
+        // Register the background-compression task (iOS 26+) at launch, as
+        // BGTaskScheduler requires. App.init runs on the main thread.
+        if #available(iOS 26.0, *) {
+            MainActor.assumeIsolated {
+                BackgroundCompress.register()
+            }
+        }
         _coordinator = StateObject(wrappedValue: JobCoordinator())
     }
 

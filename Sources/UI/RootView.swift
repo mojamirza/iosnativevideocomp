@@ -50,6 +50,9 @@ struct RootView: View {
                                 .padding(.horizontal)
                         }
                     }
+
+                    StorageFooter()
+                        .padding(.top, 6)
                 }
                 .padding(.vertical)
             }
@@ -117,6 +120,9 @@ struct RootView: View {
             }
             .task {
                 coordinator.attach(context: modelContext)
+                if #available(iOS 26.0, *) {
+                    BackgroundCompress.attach(coordinator: coordinator)
+                }
                 coordinator.loadHistory()
             }
         }
@@ -139,6 +145,57 @@ struct RootView: View {
         }
         .padding(.horizontal)
         .padding(.top, 6)
+    }
+}
+
+// MARK: - Storage footer
+
+/// Small transparency line: how much storage the app keeps, and the policy.
+/// Cleanup itself is automatic (sources deleted after success, orphan sweep
+/// at launch) — this just shows the current footprint.
+private struct StorageFooter: View {
+    @State private var usageText: String?
+
+    var body: some View {
+        Group {
+            if let usageText {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "internaldrive")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(usageText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(.horizontal)
+            }
+        }
+        .task {
+            usageText = Self.describe()
+        }
+    }
+
+    static func describe() -> String? {
+        let outputs = dirSize(JobCoordinator.outputsDirectory())
+        let imports = dirSize(JobCoordinator.importsDirectory())
+        guard outputs + imports > 0 else { return nil }
+        let fmt: (Int64) -> String = {
+            ByteCountFormatter.string(fromByteCount: $0, countStyle: .file)
+        }
+        return "App storage: \(fmt(outputs + imports)) · \(fmt(outputs)) compressed videos kept for sharing — source copies are cleaned up automatically"
+    }
+
+    static func dirSize(_ url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total: Int64 = 0
+        for f in files {
+            let size = (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            total += Int64(size)
+        }
+        return total
     }
 }
 

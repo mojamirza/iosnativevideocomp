@@ -214,7 +214,10 @@ struct JobRowView: View {
             if job.state == .done, let out = job.outputURL {
                 ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
             }
-            if [.failed, .cancelled].contains(job.state) {
+            if [.failed, .cancelled].contains(job.state),
+               // Sources of finished jobs are deleted (storage management) —
+               // offer Retry only while the source still exists.
+               FileManager.default.fileExists(atPath: job.sourceURL.path) {
                 Button("Retry") { coordinator.retry(jobID: job.id) }
             }
             Divider()

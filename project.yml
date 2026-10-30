@@ -12,6 +12,24 @@ targets:
       - path: Sources
     resources:
       - path: Assets.xcassets
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: VidCompress
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSCameraUsageDescription: ""
+        NSPhotoLibraryUsageDescription: Pick videos from your library to compress.
+        ITSAppUsesNonExemptEncryption: false
+        # Background compression (BGContinuedProcessingTask, iOS 26+)
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.example.vidcompress.compress
+        UIBackgroundModes:
+          - processing
     settings:
       base:
         PRODUCT_NAME: VidCompress
@@ -22,13 +40,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "2"          # iPad-focused
         DEVELOPMENT_TEAM: ""                  # set locally in Xcode, or via CI secrets
         CODE_SIGN_STYLE: Automatic
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIRequiresFullScreen: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_NSCameraUsageDescription: ""
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Pick videos from your library to compress."
-        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
 schemes:
   VidCompress:
     build:

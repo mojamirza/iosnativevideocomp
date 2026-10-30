@@ -24,7 +24,14 @@ jobs:
       - name: Select Xcode
         run: |
           ls /Applications | grep -i xcode || true
-          sudo xcode-select -s "/Applications/Xcode_16.4.app" 2>/dev/null || sudo xcode-select -s /Applications/Xcode.app
+          # BGContinuedProcessingTask (background compression) needs the
+          # iOS 26 SDK — prefer the newest Xcode 26, fall back to 16.4.
+          X26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)
+          if [ -n "$X26" ]; then
+            sudo xcode-select -s "$X26"
+          else
+            sudo xcode-select -s "/Applications/Xcode_16.4.app" 2>/dev/null || sudo xcode-select -s /Applications/Xcode.app
+          fi
           xcodebuild -version
 
       - name: Generate Xcode project
