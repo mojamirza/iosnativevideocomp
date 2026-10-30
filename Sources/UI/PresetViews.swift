@@ -90,9 +90,17 @@ struct PresetEditorView: View {
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .font(.callout.monospacedDigit())
-                                .frame(width: 70)
-                                .textFieldStyle(.roundedBorder)
-                                .onChange(of: bitrateText) { _, t in
+                                .frame(width: 78)
+                                // Plain field with an underline — the old
+                                // .roundedBorder style rendered as a dark
+                                // box that clashed with the form.
+                                .textFieldStyle(.plain)
+                                .padding(.bottom, 5)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(Color(.separator))
+                                        .frame(height: 1)
+                                }                                .onChange(of: bitrateText) { _, t in
                                     if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
                                        v >= 0.3, v <= 40 {
                                         fixedMbps = v
