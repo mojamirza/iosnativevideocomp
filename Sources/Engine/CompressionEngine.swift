@@ -311,8 +311,14 @@ enum CompressionEngine {
                 // Cancel must wake this pipe even when the queue block never
                 // fires again after the writer is cancelled.
                 flags.addCancelHook { [weak resume] in
+                    // reader.cancelReading is documented thread-safe and stops
+                    // the sample supply. The writer is deliberately NOT
+                    // cancelled here: cancelWriting() from the UI thread while
+                    // a pipe block is mid-append — and finishWriting() on an
+                    // already-cancelled writer — both crash AVFoundation.
+                    // The engine's post-pipe cancel path tears the writer down
+                    // once no appends can be in flight.
                     reader.cancelReading()
-                    writer.cancelWriting()
                     resume?.resumeOnce()
                 }
 
@@ -433,8 +439,14 @@ enum CompressionEngine {
                 // Cancel must wake this pipe even when the queue block never
                 // fires again after the writer is cancelled.
                 flags.addCancelHook { [weak resume] in
+                    // reader.cancelReading is documented thread-safe and stops
+                    // the sample supply. The writer is deliberately NOT
+                    // cancelled here: cancelWriting() from the UI thread while
+                    // a pipe block is mid-append — and finishWriting() on an
+                    // already-cancelled writer — both crash AVFoundation.
+                    // The engine's post-pipe cancel path tears the writer down
+                    // once no appends can be in flight.
                     reader.cancelReading()
-                    writer.cancelWriting()
                     resume?.resumeOnce()
                 }
                 aIn.requestMediaDataWhenReady(on: queue) {
@@ -492,19 +504,26 @@ enum CompressionEngine {
             throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
 
-        // Finalize, capped: a wedged finishWriting (e.g. an input that never
-        // finished) must not hold the job forever.
-        let finalizeOK = await AsyncTimeout.run(seconds: 120) {
-            await writer.finishWriting()
-        }
-        if finalizeOK == nil {
-            try? FileManager.default.removeItem(at: output)
-            throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")
-        }
-
+        // Honour a user cancel BEFORE touching finishWriting: calling
+        // finishWriting() on an already-cancelled writer is a hard crash.
+        // The pipes have stopped by now (they exit on flags.cancelled), so
+        // no sample appends can be in flight.
         if flags.cancelled {
+            writer.cancelWriting()
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.cancelled
+        }
+
+        // Finalize, capped: a wedged finishWriting (e.g. an input that never
+        // finished) must not hold the job forever.
+        if writer.status == .writing {
+            let finalizeOK = await AsyncTimeout.run(seconds: 120) {
+                await writer.finishWriting()
+            }
+            if finalizeOK == nil {
+                try? FileManager.default.removeItem(at: output)
+                throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")
+            }
         }
         if let e = flags.error {
             try? FileManager.default.removeItem(at: output)

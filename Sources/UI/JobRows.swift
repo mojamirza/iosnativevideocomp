@@ -120,6 +120,14 @@ struct JobRowView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(Rectangle())
+        // Tapping anywhere on a finished row opens its integrity report
+        // (rows without a report — e.g. legacy cancelled — do nothing).
+        .onTapGesture {
+            if job.report != nil {
+                showingReport = true
+            }
+        }
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
@@ -273,6 +281,12 @@ private struct SwipeToDeleteModifier: ViewModifier {
                         .buttonStyle(.plain)
                         .padding(.trailing, 6)
                     }
+                    // The card itself is offset below — which would drag its
+                    // background (and this button) along. Counter-offsetting
+                    // the background cancels that out, so the button STAYS at
+                    // the trailing edge and gets revealed as the card slides
+                    // away to the left.
+                    .offset(x: -offsetX)
                 }
             )
             .offset(x: offsetX)
@@ -353,8 +367,14 @@ struct ReportSheet: View {
                         ShareLink(item: out) { Label("Share", systemImage: "square.and.arrow.up") }
                     }
                     Button(role: .destructive) {
-                        coordinator.delete(jobID: job.id)
                         dismiss()
+                        // Delete after the sheet has started dismissing —
+                        // removing the presenting row mid-sheet-animation
+                        // can upset SwiftUI.
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            coordinator.delete(jobID: job.id)
+                        }
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
