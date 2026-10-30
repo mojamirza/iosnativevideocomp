@@ -120,14 +120,6 @@ struct JobRowView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        .contentShape(Rectangle())
-        // Tapping anywhere on a finished row opens its integrity report
-        // (rows without a report — e.g. legacy cancelled — do nothing).
-        .onTapGesture {
-            if job.report != nil {
-                showingReport = true
-            }
-        }
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
@@ -203,27 +195,8 @@ struct JobRowView: View {
                 ellipsisMenu
 
             case .done:
-                if let out = job.outputURL {
-                    ShareLink(item: out) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.caption.weight(.semibold))
-                            .padding(9)
-                            .background(.tint.opacity(0.12), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                if let report = job.report {
-                    Button {
-                        showingReport = true
-                    } label: {
-                        Label("Report", systemImage: "checklist")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.tint.opacity(0.12), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
+                // Just the three-dot menu: report, share, and delete all live
+                // there.
                 ellipsisMenu
             }
         }
@@ -231,6 +204,13 @@ struct JobRowView: View {
 
     private var ellipsisMenu: some View {
         Menu {
+            if job.report != nil {
+                Button {
+                    showingReport = true
+                } label: {
+                    Label("Integrity report", systemImage: "checklist")
+                }
+            }
             if job.state == .done, let out = job.outputURL {
                 ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
             }
