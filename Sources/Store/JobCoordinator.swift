@@ -66,8 +66,9 @@ final class JobCoordinator: ObservableObject {
         let generation = workerGeneration
         workerTask = Task { [weak self] in
             defer {
-                guard let self, self.workerGeneration == generation else { return }
-                self.workerTask = nil
+                if let self, self.workerGeneration == generation {
+                    self.workerTask = nil
+                }
             }
             while !Task.isCancelled {
                 guard let self,

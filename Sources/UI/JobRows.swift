@@ -179,6 +179,21 @@ struct JobRowView: View {
                 .buttonStyle(.plain)
                 ellipsisMenu
 
+            case .cancelled:
+                // Legacy state (only old history records can carry it — new
+                // cancels remove the row entirely). Keep the menu actions.
+                Button {
+                    coordinator.retry(jobID: job.id)
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.tint.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                ellipsisMenu
+
             case .done:
                 if let out = job.outputURL {
                     ShareLink(item: out) {
