@@ -121,8 +121,11 @@ final class JobCoordinator: ObservableObject {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard let self,
                   self.workerTask == nil,
-                  !BackgroundCompress.isRunning,
                   self.jobs.contains(where: { $0.state == .queued }) else { return }
+            if #available(iOS 26.0, *) {
+                // A BG task did start after all — let it drive.
+                if BackgroundCompress.isRunning { return }
+            }
             self.startForegroundWorker()
         }
     }
