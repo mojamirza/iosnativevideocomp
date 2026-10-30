@@ -163,13 +163,27 @@ final class JobCoordinator: ObservableObject {
             }
             bgSubtitle("Encoding \(job.sourceName)…")
 
-            // Backstop for the whole encode: the engine has its own watchdog,
-            // but if anything wedges the WORKER, this independent task fails
-            // the row and revives the queue. The queue can never stay dead.
-            let compressDeadline = max(240, plan.duration * 6 + 120)
+            // Backstop for the whole encode: STALL-based, not wall-clock — it
+            // only fires when the row shows NO progress for 20 s while
+            // compressing. A suspend→resume cycle resumes progress, so the
+            // deadline re-arms instead of executing a healthy encode. If
+            // anything wedges the WORKER, this fails the row and revives the
+            // queue — the queue can never stay dead.
             Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(compressDeadline * 1_000_000_000))
-                self?.forceCompressTerminal(jobID: jobID)
+                var lastProgress: Double = -1
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 20_000_000_000)
+                    guard let self,
+                          let idx = self.jobs.firstIndex(where: { $0.id == jobID }),
+                          self.jobs[idx].state == .compressing else { return }
+                    let p = self.jobs[idx].progress
+                    if p != lastProgress {
+                        lastProgress = p
+                        continue
+                    }
+                    self.forceCompressTerminal(jobID: jobID)
+                    return
+                }
             }
 
             try await CompressionEngine.compress(

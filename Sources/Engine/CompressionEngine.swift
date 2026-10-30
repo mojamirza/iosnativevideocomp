@@ -99,6 +99,13 @@ enum CompressionEngine {
                          flags: EngineFlags,
                          onProgress: @escaping @Sendable (Double) -> Void) async throws {
 
+        // Stall watchdog — declared before the pipe functions so they can
+        // capture it. Every progress report re-arms it; the deadline only
+        // fires when the encode GENUINELY stops progressing (a wall-clock
+        // timer would wrongly fire the instant the app resumed from
+        // suspension, executing a healthy encode).
+        let heartbeat = StallWatchdog()
+
         try? FileManager.default.removeItem(at: output)
 
         let asset = AVURLAsset(url: source)
@@ -416,6 +423,10 @@ enum CompressionEngine {
                         }
 
                         framesAppended += 1
+                        // Heartbeat on EVERY frame (cheap): the stall
+                        // watchdog must re-arm continuously, not just when a
+                        // throttled progress report happens to land.
+                        heartbeat.beat()
                         // Throttle progress: report only on ≥0.5% deltas so the
                         // per-frame MainActor task churn doesn't flood the UI.
                         let p = min(0.99, Double(framesAppended) / Double(expected))
@@ -484,12 +495,16 @@ enum CompressionEngine {
             }
         }
 
-        // Run both pipes concurrently, guarded by a hard wall-clock watchdog:
-        // if either pipe ever stops making progress (its continuation never
-        // resuming, a wedged queue block, a wedged reader), the encode fails
-        // cleanly instead of hanging the job row forever.
-        let watchdogLimit = max(120, plan.duration * 6)
-        let pipesDone = await AsyncTimeout.run(seconds: watchdogLimit) {
+        // Run both pipes concurrently, guarded by a STALL watchdog: if either
+        // pipe stops making progress (its continuation never resuming, a
+        // wedged queue block, a wedged reader) the encode fails cleanly
+        // instead of hanging the job row forever. Progress heartbeats re-arm
+        // the deadline, so a suspend→resume cycle never kills a healthy
+        // encode.
+        let pipesDone = await AsyncTimeout.runWithHeartbeat(
+            watchdog: heartbeat,
+            stallSeconds: max(90, plan.duration * 3),
+            minimumWallClock: 15) {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await pipeVideo() }
                 group.addTask { await pipeAudio() }
@@ -535,6 +550,7 @@ enum CompressionEngine {
             throw CompressionError.writerFailed(msg)
         }
 
+        heartbeat.beat()
         onProgress(1.0)
     }
 
