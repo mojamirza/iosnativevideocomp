@@ -70,19 +70,21 @@ final class JobCoordinator: ObservableObject {
     /// worker task runs the queue while the app is open.
     private func runQueueIfNeeded() {
         guard workerTask == nil else { return }
-        if #available(iOS 26.0, *), BackgroundCompress.isRegistered {
-            // A live BG driver picks up newly queued jobs by itself.
-            if BackgroundCompress.isRunning { return }
-            let queued = jobs.filter { $0.state == .queued }
-            guard !queued.isEmpty else { return }
-            let subtitle = queued.count == 1
-                ? queued[0].sourceName
-                : "\(queued.count) videos"
-            if BackgroundCompress.submit(subtitle: subtitle) {
-                scheduleBackgroundLivenessCheck()
-                return
+        if #available(iOS 26.0, *) {
+            if BackgroundCompress.isRegistered {
+                // A live BG driver picks up newly queued jobs by itself.
+                if BackgroundCompress.isRunning { return }
+                let queued = jobs.filter { $0.state == .queued }
+                guard !queued.isEmpty else { return }
+                let subtitle = queued.count == 1
+                    ? queued[0].sourceName
+                    : "\(queued.count) videos"
+                if BackgroundCompress.submit(subtitle: subtitle) {
+                    scheduleBackgroundLivenessCheck()
+                    return
+                }
+                // Submission refused → fall through to the in-app worker.
             }
-            // Submission refused → fall through to the in-app worker.
         }
         startForegroundWorker()
     }
