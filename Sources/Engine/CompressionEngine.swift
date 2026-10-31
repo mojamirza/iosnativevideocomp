@@ -119,8 +119,8 @@ enum CompressionEngine {
             return nil
         }
         VTSessionSetProperty(s,
-                             propertyKey: kVTPixelTransferPropertyKey_ScalingMode,
-                             value: kVTPixelTransferScalingMode_HighQuality)
+                             key: kVTPixelTransferPropertyKey_ScalingMode,
+                             value: "HighQuality" as CFString)
         return s
     }
 
@@ -162,19 +162,17 @@ enum CompressionEngine {
         ]
 
         // ------------------------------------------------------------------
-        // CODEC + PROFILE. H.264 is 8-bit only: feeding it the 10-bit decoded
-        // buffers of an HDR source makes every append fail (or produces a
-        // mis-tagged file at best). 10-bit sources are therefore ALWAYS
-        // encoded as HEVC — with the Main10 profile set explicitly rather
-        // than left to auto-negotiation.
+        // CODEC. H.264 is 8-bit only: feeding it the 10-bit decoded buffers
+        // of an HDR source makes every append fail (or produces a mis-tagged
+        // file at best). 10-bit sources are therefore ALWAYS encoded as HEVC
+        // (the codec used to be left to auto-profile negotiation, which
+        // already selects Main10 for 10-bit pipelines; auto remains the
+        // behavior — explicit H265 profile constants aren't exported here).
         // ------------------------------------------------------------------
         let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
         let encodeCodec: VideoCodec = (wants10Bit && preset.codec == .h264) ? .hevc : preset.codec
-        switch encodeCodec {
-        case .hevc:
-            props[AVVideoProfileLevelKey] =
-                wants10Bit ? AVVideoProfileLevelH265Main10AutoLevel : AVVideoProfileLevelH265MainAutoLevel
-        case .h264:
+        if encodeCodec == .h264 {
+            // H.264: explicit down-to-earth profile (8-bit only).
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
         }
 
@@ -271,22 +269,22 @@ enum CompressionEngine {
         // combo would otherwise fail at startWriting and kill the JOB, not
         // just the audio. Fallbacks: whatever fails → stereo → safe 128k.
         // ------------------------------------------------------------------
-        var audioSettings: [String: Any] = [
+        var audioSettings: [String: Any]? = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: audioSampleRate,
             AVNumberOfChannelsKey: audioChannels,
             AVEncoderBitRateKey: plan.audioBitrate,
         ]
-        if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
+        if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
             audioSettings = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: audioSampleRate,
                 AVNumberOfChannelsKey: 2,
                 AVEncoderBitRateKey: max(96_000, min(256_000, plan.audioBitrate)),
             ]
-            if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
-                audioSettings[AVEncoderBitRateKey] = 128_000
-                if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
+            if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
+                audioSettings?[AVEncoderBitRateKey] = 128_000
+                if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
                     // Looks unusable at any config — ship without audio
                     // rather than failing the whole job.
                     audioSettings = nil
