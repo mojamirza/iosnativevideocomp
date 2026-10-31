@@ -7,7 +7,7 @@ A simple but professional, **100% native** (no external frameworks) iPad video c
 | UI | SwiftUI (iPad-first) |
 | Media I/O | `import AVFoundation` (AVAssetReader / AVAssetWriter, PhotosPicker + document picker) |
 | Encoding | **VideoToolbox** — AVAssetWriter feeds VT directly (`AVVideoCompressionPropertiesKey`, profile levels, GOP, bitrate) |
-| Per-frame analysis | **Core Image + Core Video** (luminance maps, complexity scoring, Lanczos scaling) |
+| Per-frame analysis | **Core Video + VideoToolbox** (HighQuality-mode pixel transfer for all downscaling) |
 | Persistence | **SwiftData** (compression history) |
 
 ## The three differentiators (vs. Kompresso & friends)

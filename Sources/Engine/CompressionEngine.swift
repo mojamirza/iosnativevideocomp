@@ -1,9 +1,12 @@
 import AVFoundation
-import CoreImage
-import CoreVideo
 import VideoToolbox
 
-/// Cooperative cancellation shared between the UI and the encoder thread(s).
+/// Cooperative cancellation + error signalling shared between the UI and the
+/// encoder thread(s).
+///
+/// `cancel()` (user) and `fail(_:)` (engine error) both run every registered
+/// hook, but each holds the reason so the caller can distinguish them: the
+/// engine checks `error` FIRST, then `cancelled`.
 final class EngineFlags: @unchecked Sendable {
     private let lock = NSLock()
     private var _cancelled = false
@@ -13,17 +16,19 @@ final class EngineFlags: @unchecked Sendable {
     var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return _cancelled }
     var error: Error? { lock.lock(); defer { lock.unlock() }; return _error }
 
-    /// Registered by the engine's pipes: on cancel() every hook runs — they
-    /// kill the reader/writer and resume the pipe continuations IMMEDIATELY,
-    /// so cancelling can never stall until a queue block happens to fire.
+    /// Registered by the engine's pipes: on cancel()/fail() every hook runs —
+    /// they stop the reader and resume the pipe continuations THROUGH THE
+    /// PIPE'S OWN SERIAL QUEUE, so any in-flight block finishes first and no
+    /// resume can race an append.
     func addCancelHook(_ hook: @escaping () -> Void) {
         lock.lock()
-        let alreadyCancelled = _cancelled
-        if !alreadyCancelled { _hooks.append(hook) }
+        let alreadyDone = _cancelled
+        if !alreadyDone { _hooks.append(hook) }
         lock.unlock()
-        if alreadyCancelled { hook() }   // cancel happened first — run now
+        if alreadyDone { hook() }   // cancel happened first — run now
     }
 
+    /// User cancel: records the state and drains the hooks.
     func cancel() {
         lock.lock()
         _cancelled = true
@@ -33,8 +38,18 @@ final class EngineFlags: @unchecked Sendable {
         for h in hooks { h() }
     }
 
-    func setError(_ e: Error) {
-        lock.lock(); if _error == nil { _error = e }; lock.unlock()
+    /// Engine-side failure (decode/append/transfer errors): records the FIRST
+    /// error and runs the cancel hooks so BOTH pipes wake up immediately —
+    /// without this, a failed video pipe would leave the audio pipe waiting
+    /// for a callback that never comes (surfacing only via the watchdog).
+    func fail(_ e: Error) {
+        lock.lock()
+        if _error == nil { _error = e }
+        _cancelled = true
+        let hooks = _hooks
+        _hooks = []
+        lock.unlock()
+        for h in hooks { h() }
     }
 }
 
@@ -43,6 +58,7 @@ enum CompressionError: LocalizedError {
     case readerFailed(String)
     case writerFailed(String)
     case cancelled
+    case framesDropped(Int)
 
     var errorDescription: String? {
         switch self {
@@ -50,29 +66,29 @@ enum CompressionError: LocalizedError {
         case .readerFailed(let m): return "Decode failed: \(m)"
         case .writerFailed(let m): return "Encode failed: \(m)"
         case .cancelled: return "Compression was cancelled."
+        case .framesDropped(let n):
+            return "Fell behind while scaling — \(n) frames were lost and the output would stutter."
         }
     }
 }
 
-/// The pipeline: AVAssetReader → [Core Image / VTPixelTransfer] → VideoToolbox
-/// (through AVAssetWriter).
+/// The pipeline: AVAssetReader → VTPixelTransfer (only when scaling) →
+/// VideoToolbox (through AVAssetWriter).
 ///
 /// Paths, all strictly color-safe:
-///  * Direct path            — "keep resolution": decoded pixel buffers
-///                             (bit-depth aware: 10-bit buffers for 10-bit/HDR
-///                             sources) go straight into the encoder with the
-///                             source color tags intact.
-///  * VTPixelTransfer scale  — 10-bit/HDR downscaling: a pure geometric rescale
-///                             (Lanczos) of 10-bit buffers — no tonemapping, no
-///                             bit-depth loss, tags re-applied on the output.
-///  * Core Image scale       — 8-bit SDR downscaling, re-tagged with the source
-///                             color metadata.
+///  * Direct path        — "keep resolution": decoded pixel buffers
+///                         (bit-depth aware: 10-bit buffers for 10-bit/HDR
+///                         sources) go straight into the encoder with the
+///                         source color tags intact.
+///  * VTPixelTransfer    — any downscale (8-bit and 10-bit alike) through a
+///                         VideoToolbox pixel transfer session in explicit
+///                         HighQuality scaling mode. Pure geometric rescale:
+///                         no tonemapping, no bit-depth loss, source color
+///                         metadata re-applied on the destination buffer
+///                         BEFORE transferring.
 ///
 /// IMPORTANT: the reader always DECODES (explicit pixel format settings). Passing
 /// compressed samples into an input configured for re-encoding is invalid.
-
-/// Copy-free shared CI context for the 8-bit SDR scaling renders.
-let AnalysisCIContext = CIContext(options: [.cacheIntermediates: false])
 
 enum CompressionEngine {
 
@@ -90,6 +106,22 @@ enum CompressionEngine {
                 continuation.resume()
             }
         }
+    }
+
+    /// One pixel-transfer session for ANY downscale (8-bit SDR included).
+    /// The default scaling mode is unspecified/driver-dependent — HighQuality
+    /// is requested explicitly so 4K→720p doesn't alias.
+    private static func makeTransferSession() -> VTPixelTransferSession? {
+        var s: VTPixelTransferSession?
+        // VTCreatePixelTransferSession is macOS-only; iOS uses the classic call.
+        guard VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault,
+                                           pixelTransferSessionOut: &s) == noErr, let s else {
+            return nil
+        }
+        VTSessionSetProperty(s,
+                             propertyKey: kVTPixelTransferPropertyKey_ScalingMode,
+                             value: kVTPixelTransferScalingMode_HighQuality)
+        return s
     }
 
     static func compress(source: URL,
@@ -128,11 +160,20 @@ enum CompressionEngine {
             // Offline (non realtime) VT session => best quality math.
             (kVTCompressionPropertyKey_RealTime as String): NSNumber(value: false),
         ]
-        switch preset.codec {
+
+        // ------------------------------------------------------------------
+        // CODEC + PROFILE. H.264 is 8-bit only: feeding it the 10-bit decoded
+        // buffers of an HDR source makes every append fail (or produces a
+        // mis-tagged file at best). 10-bit sources are therefore ALWAYS
+        // encoded as HEVC — with the Main10 profile set explicitly rather
+        // than left to auto-negotiation.
+        // ------------------------------------------------------------------
+        let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
+        let encodeCodec: VideoCodec = (wants10Bit && preset.codec == .h264) ? .hevc : preset.codec
+        switch encodeCodec {
         case .hevc:
-            // HEVC profile is picked automatically by AVFoundation/VideoToolbox;
-            // the 10-bit Main10 profile is auto-selected for HDR pass-through.
-            break
+            props[AVVideoProfileLevelKey] =
+                wants10Bit ? AVVideoProfileLevelH265Main10AutoLevel : AVVideoProfileLevelH265MainAutoLevel
         case .h264:
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
         }
@@ -146,34 +187,26 @@ enum CompressionEngine {
         //  * scale path            → plan.outputSize
         //  * direct (keep-res) path → the source's ENCODED dimensions from the
         //    format description (naturalSize is the post-rotation display size)
+        //
+        // ALL scales (8-bit and 10-bit alike) run through VideoToolbox's
+        // pixel transfer session — a pure geometric rescale: no tonemapping,
+        // no bit-depth loss, color metadata re-applied onto the destination
+        // buffer (color-safe).
         // ------------------------------------------------------------------
-        let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
-        let scaleIs10Bit = plan.scaleNeeded && wants10Bit
-        // 10-bit/HDR sources scale through VideoToolbox's pixel transfer
-        // session — a pure geometric rescale: no tonemapping, no bit-depth
-        // loss, color tags carried onto the destination buffer unchanged
-        // (color-safe). 8-bit SDR scales through Core Image.
-        let transferSession: VTPixelTransferSession? = scaleIs10Bit ? {
-            var s: VTPixelTransferSession?
-            // VTCreatePixelTransferSession is macOS-only; iOS uses the classic
-            // create call (default scaling mode is aspect-preserving).
-            guard VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault,
-                                               pixelTransferSessionOut: &s) == noErr, let s else {
-                return nil
-            }
-            return s
-        }() : nil
+        let transferSession: VTPixelTransferSession? = plan.scaleNeeded
+            ? makeTransferSession()
+            : nil
         // Extremely unlikely fallback: if the transfer session could not be
-        // created, keep the source resolution rather than risk tonemapping.
-        let scaleNeeded = plan.scaleNeeded && (!scaleIs10Bit || transferSession != nil)
+        // created, keep the source resolution rather than risk mangling.
+        let scaleNeeded = plan.scaleNeeded && transferSession != nil
 
-        // ------------------------------------------------------------------
         // ROTATE-AWARE GEOMETRY. plan.outputSize is the *display* size (post-
         // rotation, e.g. 480×854 for a portrait video). The encoder writes
         // pre-rotation frames and carries the preferredTransform in the output,
         // so under a 90°/270° rotation the ENCODED frame must be the transposed
         // size (854×480) — this is what makes portrait videos scaleable at all.
-        // ------------------------------------------------------------------
+        // (Preset.outputSize emits even numbers; swapping even W/H keeps them
+        // even, so H.264/HEVC's even-dimension requirement always holds.)
         let preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
         let rotationDegrees = Int(abs(atan2(preferredTransform.b, preferredTransform.a)
                                       * 180 / .pi).rounded())
@@ -192,7 +225,7 @@ enum CompressionEngine {
         }
 
         var settings: [String: Any] = [
-            AVVideoCodecKey: preset.codec.avCodecType,
+            AVVideoCodecKey: encodeCodec.avCodecType,
             AVVideoWidthKey: encodeW,
             AVVideoHeightKey: encodeH,
             AVVideoCompressionPropertiesKey: props,
@@ -231,6 +264,36 @@ enum CompressionEngine {
             }
         }
 
+        // ------------------------------------------------------------------
+        // AAC settings are validated with canApply BEFORE startWriting —
+        // AVFoundation is strict above stereo (a channel layout is expected)
+        // and about bitrate/channel/sample-rate combinations. An invalid
+        // combo would otherwise fail at startWriting and kill the JOB, not
+        // just the audio. Fallbacks: whatever fails → stereo → safe 128k.
+        // ------------------------------------------------------------------
+        var audioSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: audioSampleRate,
+            AVNumberOfChannelsKey: audioChannels,
+            AVEncoderBitRateKey: plan.audioBitrate,
+        ]
+        if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
+            audioSettings = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: audioSampleRate,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: max(96_000, min(256_000, plan.audioBitrate)),
+            ]
+            if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
+                audioSettings[AVEncoderBitRateKey] = 128_000
+                if !writer.canApply(outputSettings: audioSettings, forMediaType: .audio) {
+                    // Looks unusable at any config — ship without audio
+                    // rather than failing the whole job.
+                    audioSettings = nil
+                }
+            }
+        }
+
         let reader = try AVAssetReader(asset: asset)
 
         // ------------------------------------------------------------------
@@ -250,7 +313,7 @@ enum CompressionEngine {
         reader.add(videoOut)
 
         var scalePool: CVPixelBufferPool?
-        if scaleIs10Bit && transferSession != nil {
+        if scaleNeeded {
             let poolAttrs: [String: Any] = [
                 String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
@@ -261,7 +324,7 @@ enum CompressionEngine {
 
         var audioInput: AVAssetWriterInput?
         var audioOutput: AVAssetReaderTrackOutput?
-        if let audioTrack {
+        if let audioTrack, let aSettings = audioSettings {
             audioOutput = try AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVLinearPCMBitDepthKey: 16,
@@ -271,12 +334,7 @@ enum CompressionEngine {
             ])
             reader.add(audioOutput!)
 
-            audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: audioSampleRate,
-                AVNumberOfChannelsKey: audioChannels,
-                AVEncoderBitRateKey: plan.audioBitrate,
-            ])
+            audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
             audioInput?.expectsMediaDataInRealTime = false
             writer.add(audioInput!)
         }
@@ -304,7 +362,12 @@ enum CompressionEngine {
         writer.startSession(atSourceTime: .zero)
 
         let expected = plan.expectedFrames
-        var framesAppended = 0
+        // Hard cap on SILENTLY dropped frames (buffer-allocation/transfer
+        // failures, NOT the fps cap which is intentional): a handful are a
+        // decodable blemish; more than 0.1% means something is genuinely
+        // wrong and the job must fail instead of shipping a stuttering file.
+        var droppedFrames = 0
+        let dropLimit = max(1, expected / 1000)
         var lastReported = 0.0
 
         // ------------------------------------------------------------------
@@ -313,124 +376,114 @@ enum CompressionEngine {
         func pipeVideo() async {
             await withCheckedContinuation { cont in
                 let resume = ResumeBox(cont)
-                let lastKept = CMTimeBox()
                 let queue = DispatchQueue(label: "vidcompress.video.pipe")
-                // Cancel must wake this pipe even when the queue block never
-                // fires again after the writer is cancelled.
+                var nextSlot = CMTime.zero
+                var slotActive = false
+
+                // Cancel + error hooks: stop the reader, then resume THROUGH
+                // this pipe's serial queue so any in-flight block completes
+                // BEFORE the continuation pops — the engine may then tear the
+                // writer down without any append racing it.
                 flags.addCancelHook { [weak resume] in
-                    // reader.cancelReading is documented thread-safe and stops
-                    // the sample supply. The writer is deliberately NOT
-                    // cancelled here: cancelWriting() from the UI thread while
-                    // a pipe block is mid-append — and finishWriting() on an
-                    // already-cancelled writer — both crash AVFoundation.
-                    // The engine's post-pipe cancel path tears the writer down
-                    // once no appends can be in flight.
                     reader.cancelReading()
-                    resume?.resumeOnce()
+                    queue.async { resume?.resumeOnce() }
                 }
 
                 videoInput.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
                     while videoInput.isReadyForMoreMediaData {
                         // Bail out when cancelled, when the OTHER pipe already
-                        // failed (writer cancelled), or when the writer died —
-                        // otherwise this continuation may never resume and the
-                        // job would hang forever.
+                        // failed (error set by either hook path), or when the
+                        // writer died — otherwise this continuation may never
+                        // resume and the job would hang forever.
                         if flags.cancelled || flags.error != nil || writer.status == .failed {
                             reader.cancelReading()
-                            writer.cancelWriting()
                             resume.resumeOnce()
                             return
                         }
                         guard let sb = videoOut.copyNextSampleBuffer() else {
+                            // EOF or reader failure. Do NOT markAsFinished on
+                            // a writer that is cancelled/failed already —
+                            // that raises. The engine tears the writer down.
                             if reader.status == .failed {
-                                flags.setError(CompressionError.readerFailed(
+                                flags.fail(CompressionError.readerFailed(
                                     reader.error?.localizedDescription ?? "unknown"))
-                                writer.cancelWriting()
-                                resume.resumeOnce()
-                                return
+                            } else if !flags.cancelled, writer.status == .writing {
+                                videoInput.markAsFinished()      // clean end of stream
                             }
-                            videoInput.markAsFinished()      // clean end of stream
                             resume.resumeOnce()
                             return
                         }
 
                         let pts = CMSampleBufferGetPresentationTimeStamp(sb)
 
-                        // Optional frame-rate cap: drop frames on a steady cadence.
+                        // Frame-rate cap on a SLOT GRID: each accepted frame
+                        // opens a slot 1/cap wide; frames inside an open slot
+                        // are dropped. Steady cadence, correct for any source
+                        // rate (and the FIRST frame is always kept — the grid
+                        // anchors on it, not on a negative starting point).
                         if let cap = preset.fpsCap, cap > 0 {
-                            let halfSlot = CMTime(value: 1, timescale: CMTimeScale(cap) * 2)
-                            if CMTimeCompare(CMTimeSubtract(pts, lastKept.value), halfSlot) < 0 {
+                            if !slotActive {
+                                slotActive = true
+                                nextSlot = pts
+                            } else if CMTimeCompare(pts, nextSlot) < 0 {
                                 continue
                             }
-                            lastKept.value = pts
+                            nextSlot = CMTimeAdd(nextSlot, CMTime(value: 1, timescale: CMTimeScale(cap)))
                         }
 
                         if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
-                            if let transfer = transferSession {
-                                // 10-bit/HDR scale: VideoToolbox pixel transfer
-                                // (geometric rescale only — color-safe).
-                                guard let dst = Self.nextPoolBuffer(
-                                        scalePool, width: encodeW, height: encodeH,
-                                        format: decodeFormat) else { continue }
-                                if VTPixelTransferSessionTransferImage(transfer, from: src, to: dst) != noErr {
-                                    continue
-                                }
-                                // COLOR-SAFE: re-apply the source color metadata.
-                                ColorTags.attach(to: dst, tags: tags)
-                                if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
-                                    flags.setError(writer.error
-                                        ?? CompressionError.writerFailed("pixel buffer append failed"))
-                                    writer.cancelWriting()
-                                    resume.resumeOnce()
-                                    return
-                                }
-                            } else {
-                                // 8-bit SDR scale: Core Image.
-                                guard let dst = nextScaledBuffer(from: adaptor,
-                                                                 width: encodeW,
-                                                                 height: encodeH) else {
-                                    continue
-                                }
-                                let sx = CGFloat(encodeW) / CGFloat(CVPixelBufferGetWidth(src))
-                                let sy = CGFloat(encodeH) / CGFloat(CVPixelBufferGetHeight(src))
-                                let scaled = CIImage(cvPixelBuffer: src)
-                                    .transformed(by: CGAffineTransform(
-                                        scaleX: max(0.001, sx), y: max(0.001, sy)))
-                                    .cropped(to: CGRect(x: 0, y: 0, width: encodeW, height: encodeH))
-                                AnalysisCIContext.render(scaled, to: dst)
-                                // COLOR-SAFE: re-apply the source color metadata.
-                                ColorTags.attach(to: dst, tags: tags)
-                                if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
-                                    flags.setError(writer.error
-                                        ?? CompressionError.writerFailed("pixel buffer append failed"))
-                                    writer.cancelWriting()
-                                    resume.resumeOnce()
-                                    return
-                                }
+                            guard let transfer = transferSession else {
+                                droppedFrames += 1
+                                continue
+                            }
+                            guard let dst = Self.nextPoolBuffer(
+                                    scalePool, width: encodeW, height: encodeH,
+                                    format: decodeFormat) else {
+                                droppedFrames += 1
+                                continue
+                            }
+                            // COLOR-SAFE: copy the source's full attachment
+                            // set (incl. mastering display / light level) and
+                            // enforce the three core tags BEFORE any pixels
+                            // are written, so the scaler and the writer see
+                            // the exact source colorimetry.
+                            ColorTags.attach(to: dst, tags: tags, from: src)
+                            if VTPixelTransferSessionTransferImage(transfer, from: src, to: dst) != noErr {
+                                droppedFrames += 1
+                                continue
+                            }
+                            // Tagging happens pre-transfer (above); nothing to
+                            // do post-transfer — the attachments traveled with
+                            // the buffer into the writer.
+                            if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+                                flags.fail(writer.error
+                                    ?? CompressionError.writerFailed("pixel buffer append failed"))
+                                resume.resumeOnce()
+                                return
                             }
                         } else {
                             // Pass-through: the decoded buffer already carries the
                             // exact source color tags; the writer input was
                             // configured with matching color properties.
                             if !videoInput.append(sb) {
-                                flags.setError(writer.error
+                                flags.fail(writer.error
                                     ?? CompressionError.writerFailed("sample append failed"))
-                                writer.cancelWriting()
                                 resume.resumeOnce()
                                 return
                             }
                         }
 
-                        framesAppended += 1
                         // Heartbeat on EVERY frame (cheap): the stall
                         // watchdog must re-arm continuously, not just when a
                         // throttled progress report happens to land.
                         heartbeat.beat()
-                        // Throttle progress: report only on ≥0.5% deltas so the
-                        // per-frame MainActor task churn doesn't flood the UI.
-                        let p = min(0.99, Double(framesAppended) / Double(expected))
-                        if p - lastReported >= 0.005 || framesAppended == expected {
+                        // Progress derived from the presentation TIME, not a
+                        // frame count — this stays truthful across frame-rate
+                        // caps and variable-frame-rate sources.
+                        let secs = CMTimeGetSeconds(pts)
+                        let p = min(0.99, secs.isFinite && secs >= 0 ? secs / plan.duration : 0)
+                        if p - lastReported >= 0.005 {
                             lastReported = p
                             onProgress(p)
                         }
@@ -447,46 +500,35 @@ enum CompressionEngine {
             await withCheckedContinuation { cont in
                 let resume = ResumeBox(cont)
                 let queue = DispatchQueue(label: "vidcompress.audio.pipe")
-                // Cancel must wake this pipe even when the queue block never
-                // fires again after the writer is cancelled.
+                // Same queued-resume strategy as the video pipe: no resume
+                // can race an in-flight append.
                 flags.addCancelHook { [weak resume] in
-                    // reader.cancelReading is documented thread-safe and stops
-                    // the sample supply. The writer is deliberately NOT
-                    // cancelled here: cancelWriting() from the UI thread while
-                    // a pipe block is mid-append — and finishWriting() on an
-                    // already-cancelled writer — both crash AVFoundation.
-                    // The engine's post-pipe cancel path tears the writer down
-                    // once no appends can be in flight.
                     reader.cancelReading()
-                    resume?.resumeOnce()
+                    queue.async { resume?.resumeOnce() }
                 }
                 aIn.requestMediaDataWhenReady(on: queue) {
                     if resume.isDone { return }
                     while aIn.isReadyForMoreMediaData {
                         // Bail out when cancelled, when the OTHER pipe already
-                        // failed (writer cancelled), or when the writer died.
+                        // failed, or when the writer died.
                         if flags.cancelled || flags.error != nil || writer.status == .failed {
                             reader.cancelReading()
-                            writer.cancelWriting()
                             resume.resumeOnce()
                             return
                         }
                         guard let sb = aOut.copyNextSampleBuffer() else {
                             if reader.status == .failed {
-                                flags.setError(CompressionError.readerFailed(
+                                flags.fail(CompressionError.readerFailed(
                                     reader.error?.localizedDescription ?? "audio decode failed"))
-                                writer.cancelWriting()
-                                resume.resumeOnce()
-                                return
+                            } else if !flags.cancelled, writer.status == .writing {
+                                aIn.markAsFinished()
                             }
-                            aIn.markAsFinished()
                             resume.resumeOnce()
                             return
                         }
                         if !aIn.append(sb) {
-                            flags.setError(writer.error
+                            flags.fail(writer.error
                                 ?? CompressionError.writerFailed("audio append failed"))
-                            writer.cancelWriting()
                             resume.resumeOnce()
                             return
                         }
@@ -500,10 +542,12 @@ enum CompressionEngine {
         // wedged queue block, a wedged reader) the encode fails cleanly
         // instead of hanging the job row forever. Progress heartbeats re-arm
         // the deadline, so a suspend→resume cycle never kills a healthy
-        // encode.
+        // encode. FLAT 120s stall limit: heartbeats fire on EVERY frame, so a
+        // stall is, by definition, "no beat for N seconds" — the old
+        // duration*3 rule (~6h for a long film) was meaningless.
         let pipesDone = await AsyncTimeout.runWithHeartbeat(
             watchdog: heartbeat,
-            stallSeconds: max(90, plan.duration * 3),
+            stallSeconds: 120,
             minimumWallClock: 15) {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await pipeVideo() }
@@ -519,14 +563,31 @@ enum CompressionEngine {
             throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
 
+        // Errors FIRST (a real engine error also flips `cancelled`): teardown
+        // BEFORE touching finalize — never finishWriting() past a failure,
+        // and never spend a 120s finalize window on a writer that died anyway.
+        if let e = flags.error {
+            if writer.status == .writing { writer.cancelWriting() }
+            try? FileManager.default.removeItem(at: output)
+            throw e
+        }
+
         // Honour a user cancel BEFORE touching finishWriting: calling
         // finishWriting() on an already-cancelled writer is a hard crash.
-        // The pipes have stopped by now (they exit on flags.cancelled), so
-        // no sample appends can be in flight.
+        // The hooks resume the pipes' continuations only AFTER their in-flight
+        // blocks complete, so by now no sample appends can be in flight.
         if flags.cancelled {
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.cancelled
+        }
+
+        // Silent-drop guard: report lost frames honestly instead of shipping
+        // an output with gaps the verifier can't plainly catch.
+        if droppedFrames > dropLimit {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: output)
+            throw CompressionError.framesDropped(droppedFrames)
         }
 
         // Finalize, capped: a wedged finishWriting (e.g. an input that never
@@ -540,10 +601,6 @@ enum CompressionEngine {
                 throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")
             }
         }
-        if let e = flags.error {
-            try? FileManager.default.removeItem(at: output)
-            throw e
-        }
         guard writer.status == .completed else {
             let msg = writer.error?.localizedDescription ?? "writer did not complete"
             try? FileManager.default.removeItem(at: output)
@@ -552,13 +609,6 @@ enum CompressionEngine {
 
         heartbeat.beat()
         onProgress(1.0)
-    }
-
-    private static func nextScaledBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor?,
-                                         width: Int, height: Int) -> CVPixelBuffer? {
-        guard let adaptor else { return nil }
-        return nextPoolBuffer(adaptor.pixelBufferPool, width: width, height: height,
-                              format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     }
 
     /// Fetch a destination pixel buffer from a pool (falling back to a plain
@@ -580,9 +630,4 @@ enum CompressionEngine {
                             attrs as CFDictionary, &newBuf)
         return newBuf
     }
-}
-
-/// Small mutable CMTime holder for the fps-cap gate.
-final class CMTimeBox: @unchecked Sendable {
-    var value = CMTime(value: CMTimeValue(-1), timescale: 60)
 }

@@ -76,6 +76,20 @@ struct SetupFlowView: View {
                             .font(.callout)
                     }
 
+                    // 10-bit/HDR sources cannot be encoded as H.264 (H.264 is
+                    // 8-bit only) — the engine silently uses HEVC instead.
+                    // Tell the user WHY the codec chip will lie.
+                    if let preset = selectedPreset, preset.codec == .h264,
+                       probes.contains(where: { p in
+                           guard let p else { return false }
+                           return p.tags.isHDR || p.bitDepth >= 10
+                       }) {
+                        Label("This preset encodes H.264, but 10-bit/HDR sources can only be encoded as HEVC — HEVC will be used.",
+                              systemImage: "info.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+
                     startButton
                 }
                 .padding()
