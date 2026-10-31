@@ -173,42 +173,41 @@ struct Preset: Identifiable, Codable, Hashable {
              fpsCap, audioBitrateKbps, isUserDefined
     }
 
-    /// Normalises every field into its validated range. Shared by both inits.
-    private func normalized(name: String, codec: VideoCodec, resolution: ResolutionClass,
-                            bitrate: Double, fpsCap: Int?, audio: Int, userDefined: Bool) -> Preset {
-        var p = Preset()
-        p.id = id
-        p.name = name.isEmpty ? "Custom" : name
-        p.codec = codec
-        p.resolution = resolution
-        p.fixedBitrateMbps = min(Preset.bitrateRange.upperBound, max(Preset.bitrateRange.lowerBound, bitrate))
-        p.fpsCap = fpsCap.map { min(Preset.fpsCapRange.upperBound, max(Preset.fpsCapRange.lowerBound, $0)) }
-        p.audioBitrateKbps = min(Preset.audioRange.upperBound, max(Preset.audioRange.lowerBound, audio))
-        p.isUserDefined = userDefined
-        return p
-    }
-
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
          fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
          audioBitrateKbps: Int = 128, isUserDefined: Bool = false) {
-        let p = normalized(name: name, codec: codec, resolution: resolution,
-                           bitrate: fixedBitrateMbps, fpsCap: fpsCap,
-                           audio: audioBitrateKbps, userDefined: isUserDefined)
-        self = p
+        self.id = UUID()
+        self.name = name.isEmpty ? "Custom" : name
+        self.codec = codec
+        self.resolution = resolution
+        // Clamp everything into validated ranges — an out-of-range value from
+        // a hand-edited store must not reach the engine (e.g. a huge fps cap
+        // would trap CMTimeScale(cap)*2 inside VideoToolbox's helpers).
+        self.fixedBitrateMbps = min(Preset.bitrateRange.upperBound,
+                                    max(Preset.bitrateRange.lowerBound, fixedBitrateMbps))
+        self.fpsCap = fpsCap.map { min(Preset.fpsCapRange.upperBound,
+                                       max(Preset.fpsCapRange.lowerBound, $0)) }
+        self.audioBitrateKbps = min(Preset.audioRange.upperBound,
+                                    max(Preset.audioRange.lowerBound, audioBitrateKbps))
+        self.isUserDefined = isUserDefined
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        name = try c.decode(String.self, forKey: .name)
-        codec = try c.decode(VideoCodec.self, forKey: .codec)
-        resolution = try c.decode(ResolutionClass.self, forKey: .resolution)
+        let decodedID = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        let name = try c.decode(String.self, forKey: .name)
+        let codec = try c.decode(VideoCodec.self, forKey: .codec)
+        let resolution = try c.decode(ResolutionClass.self, forKey: .resolution)
+        // Older presets (adaptive/size-target modes) decode to a sane default;
+        // everything is clamped by the normal (validated) init below.
         let bitrate = try c.decodeIfPresent(Double.self, forKey: .fixedBitrateMbps) ?? 4.0
         let cap = try c.decodeIfPresent(Int.self, forKey: .fpsCap)
         let audio = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
         let user = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
-        self = normalized(name: name, codec: codec, resolution: resolution,
-                          bitrate: bitrate, fpsCap: cap, audio: audio, userDefined: user)
+        self.init(name: name, codec: codec, resolution: resolution,
+                  fixedBitrateMbps: bitrate, fpsCap: cap,
+                  audioBitrateKbps: audio, isUserDefined: user)
+        self.id = decodedID   // keep the stored identity
     }
 
     var modeSummary: String {
