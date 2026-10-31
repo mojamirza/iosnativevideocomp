@@ -114,10 +114,19 @@ struct JobRowView: View {
                     showingReport = true
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: report.passed ? "checkmark.seal.fill" : "xmark.seal.fill")
-                            .foregroundStyle(report.passed ? .green : .red)
+                        // Three-state verdict: warnings (timed-out checks,
+                        // inconclusive decode) are NOT a green pass.
+                        switch report.status {
+                        case .verified:
+                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                        case .warnings:
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color(UIColor.systemOrange))
+                        case .failed:
+                            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                        }
                         Text(ByteCountFormatter.string(fromByteCount: job.report?.inBytes ?? 0, countStyle: .file))
-                            .strikethrough()
+                            .strikethrough(!report.grew)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Image(systemName: "arrow.right")
@@ -125,9 +134,17 @@ struct JobRowView: View {
                             .foregroundStyle(.tertiary)
                         Text(ByteCountFormatter.string(fromByteCount: job.report?.outBytes ?? 0, countStyle: .file))
                             .font(.caption.weight(.bold))
-                        Text(String(format: "−%.0f%%", report.savingsPercent))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.green)
+                        if report.grew {
+                            // Negative savings (output LARGER than source)
+                            // must be visible, not rounded to 0%.
+                            Text(String(format: "+%.0f%%", abs(report.savingsPercent)))
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Color(UIColor.systemOrange))
+                        } else {
+                            Text(String(format: "−%.0f%%", report.savingsPercent))
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.green)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -292,19 +309,30 @@ struct JobRowView: View {
                 }
             }
             if job.state == .done, let out = job.outputURL {
-                ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
-                // One click → straight into the photo library. The icon
-                // matches the native "Save Video" action.
-                Button {
-                    saveToPhotos(out)
-                } label: {
-                    Label("Save to Photos", systemImage: "square.and.arrow.down")
-                }
-                Button {
-                    renameText = displayName
-                    showingRename = true
-                } label: {
-                    Label("Rename…", systemImage: "pencil")
+                // The app folder is user-visible in Files — the output can be
+                // deleted out from under a row at any time. Dead actions are
+                // replaced with an honest "file removed" entry.
+                if FileManager.default.fileExists(atPath: out.path) {
+                    ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
+                    // One click → straight into the photo library. The icon
+                    // matches the native "Save Video" action.
+                    Button {
+                        saveToPhotos(out)
+                    } label: {
+                        Label("Save to Photos", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        renameText = displayName
+                        showingRename = true
+                    } label: {
+                        Label("Rename…", systemImage: "pencil")
+                    }
+                } else {
+                    Button {
+                        saveNotice = "The compressed file is gone from the app folder (deleted in Files?) — delete this row to clean up."
+                    } label: {
+                        Label("File removed", systemImage: "questionmark.square.dashed")
+                    }
                 }
             }
             if [.failed, .cancelled].contains(job.state),
@@ -504,20 +532,36 @@ struct ReportSheet: View {
 
     private var summaryCard: some View {
         let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+        // Nil stats (verification timed out) display as "—", never "0".
+        let durationText = report.outputDuration.map {
+            String(format: "%d:%02d", Int($0) / 60, Int($0) % 60)
+        } ?? "—"
+        let bitrateText = report.outputBitrateMbps.map { String(format: "%.1f Mbps", $0) } ?? "—"
+        let savedText = report.grew
+            ? String(format: "+%.0f%%", abs(report.savingsPercent))     // output grew
+            : String(format: "%.0f%%", report.savingsPercent)
         let cells: [(String, String)] = [
             (ByteCountFormatter.string(fromByteCount: report.inBytes, countStyle: .file), "Input"),
             (ByteCountFormatter.string(fromByteCount: report.outBytes, countStyle: .file), "Output"),
-            (String(format: "%.0f%%", report.savingsPercent), "Saved"),
+            (savedText, report.grew ? "Grew by" : "Saved"),
             (String(format: "%.2f s", report.encodeSeconds), "Encode time"),
-            (String(format: "%d:%02d", Int(report.outputDuration) / 60, Int(report.outputDuration) % 60), "Duration"),
-            (String(format: "%.1f Mbps", report.outputBitrateMbps), "Output bitrate"),
+            (durationText, "Duration"),
+            (bitrateText, "Output bitrate"),
         ]
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Image(systemName: report.passed ? "checkmark.seal.fill" : "xmark.octagon.fill")
-                    .foregroundStyle(report.passed ? .green : .red)
-                Text(report.passed ? "All integrity checks passed" : "Integrity issues found")
-                    .font(.headline)
+                switch report.status {
+                case .verified:
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    Text("All integrity checks passed").font(.headline)
+                case .warnings:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color(UIColor.systemOrange))
+                    Text("Not fully verified").font(.headline)
+                case .failed:
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                    Text("Integrity issues found").font(.headline)
+                }
             }
             LazyVGrid(columns: cols, spacing: 10) {
                 ForEach(cells, id: \.1) { cell in
@@ -526,6 +570,8 @@ struct ReportSheet: View {
                             .font(.callout.weight(.bold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
+                            .foregroundStyle(report.grew && cell.1 == "Grew by"
+                                             ? Color(UIColor.systemOrange) : .primary)
                         Text(cell.1)
                             .font(.caption2)
                             .foregroundStyle(.secondary)

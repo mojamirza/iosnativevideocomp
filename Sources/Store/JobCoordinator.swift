@@ -226,12 +226,17 @@ final class JobCoordinator: ObservableObject {
                 encodeSeconds: Date().timeIntervalSince(encodeStart)
             )
             let reportData = try? JSONEncoder().encode(report)
+            // Three-state verdict: a FAILED report fails the job; a WARN-only
+            // report (timed-out verification, inconclusive decode) still
+            // completes the job as done — the row just shows "not fully
+            // verified" instead of a green seal.
+            let encodeOK = report.status != .failed
 
             setJob(jobID) {
-                $0.state = report.passed ? .done : .failed
+                $0.state = encodeOK ? .done : .failed
                 $0.report = report
                 $0.outputURL = output
-                if !report.passed {
+                if report.status == .failed {
                     $0.errorMessage = "Output integrity report failed — see details."
                 }
             }
@@ -248,10 +253,10 @@ final class JobCoordinator: ObservableObject {
                 return
             }
             saveRecord(jobID: jobID, outputName: output.lastPathComponent,
-                       report: reportData, state: report.passed ? "done" : "failed")
+                       report: reportData, state: encodeOK ? "done" : "failed")
             // Storage management: a finished job doesn't need our copy of the
             // source anymore — the original still lives in Photos/Files.
-            if report.passed {
+            if encodeOK {
                 deleteSourceImport(job)
             }
 
@@ -328,9 +333,9 @@ final class JobCoordinator: ObservableObject {
                 "The integrity checks took too long and were stopped. The output file was finalized by the encoder — if it plays in Files, it is good.", .warn)],
             inBytes: jobs[idx].plan?.source.fileSize ?? 0,
             outBytes: fileSize,
-            outputBitrateMbps: 0,
+            outputBitrateMbps: nil,
             encodeSeconds: encodeSeconds,
-            outputDuration: 0)
+            outputDuration: nil)
         jobs[idx].state = .done
         jobs[idx].report = report
         jobs[idx].outputURL = output
@@ -525,7 +530,21 @@ final class JobCoordinator: ObservableObject {
         do {
             let descriptor = FetchDescriptor<JobRecord>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
             let records = try context.fetch(descriptor)
+            // Dedupe robustness: a double-saved record would produce a
+            // duplicate row forever (records sort newest-first, so the FIRST
+            // occurrence is the newest one). A SwiftData @Attribute(.unique)
+            // constraint was deliberately avoided — adding it to an EXISTING
+            // store fails schema migration when duplicates are present.
+            var seenJobIDs = Set<UUID>()
+            var duplicateIDs = Set<UUID>()
             for r in records {
+                if !seenJobIDs.insert(r.jobID).inserted {
+                    context.delete(r)
+                    duplicateIDs.insert(r.jobID)
+                }
+            }
+            if !duplicateIDs.isEmpty { try? context.save() }
+            for r in records where !duplicateIDs.contains(r.jobID) {
                 guard let state = JobState(rawValue: r.stateRaw) else { continue }
                 guard state != .queued, state != .analyzing,
                       state != .compressing, state != .verifying else { continue }
@@ -609,8 +628,8 @@ final class JobCoordinator: ObservableObject {
             errorMessage: errorText,
             reportJSON: report,
             presetJSON: try? JSONEncoder().encode(job.preset),
-            codecLabel: job.preset.codec.rawValue,
-            resolutionLabel: job.preset.resolution.rawValue
+            codecLabel: job.preset.codec.displayName,
+            resolutionLabel: job.preset.resolution.displayName
         )
         context.insert(record)
         try? context.save()

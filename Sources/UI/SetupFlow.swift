@@ -524,7 +524,7 @@ private struct PresetRow: View {
                         .foregroundStyle(.primary)
                     HStack(spacing: 6) {
                         TagChip(text: preset.codec == .hevc ? "HEVC" : "H.264")
-                        TagChip(text: preset.resolution.rawValue)
+                        TagChip(text: preset.resolution.displayName)
                         // Bitrate intentionally NOT a chip: it's shown at the
                         // trailing side (and in the estimate card) — a second
                         // dark pill here just cluttered the row.

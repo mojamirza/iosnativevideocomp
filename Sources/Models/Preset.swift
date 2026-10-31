@@ -2,11 +2,20 @@ import Foundation
 import AVFoundation
 
 /// Output codec family. Both are driven by VideoToolbox through AVAssetWriter.
+/// STABLE raw keys ("hevc", "h264") — never display strings: presets and
+/// history records would break the moment a label is renamed or localised.
+/// Legacy builds persisted the display strings; init(from:) accepts those.
 enum VideoCodec: String, Codable, CaseIterable, Identifiable, Hashable {
-    case hevc = "HEVC (H.265)"
-    case h264 = "H.264"
+    case hevc, h264
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .hevc: return "HEVC (H.265)"
+        case .h264: return "H.264"
+        }
+    }
 
     var avCodecType: AVVideoCodecType {
         switch self {
@@ -14,18 +23,55 @@ enum VideoCodec: String, Codable, CaseIterable, Identifiable, Hashable {
         case .h264: return .h264
         }
     }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "hevc", "HEVC (H.265)": self = .hevc      // legacy display string
+        case "h264", "H.264":        self = .h264      // legacy display string
+        default:
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                      debugDescription: "Unknown codec value: \(raw)"))
+        }
+    }
 }
 
 /// Target resolution class (the standard tiers). "keep" preserves the source.
+/// STABLE raw keys ("keep", "uhd"…) with display strings shown in the UI —
+/// old stores saved the display strings as raw values, so init(from:)
+/// decodes BOTH spellings.
 enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
-    case keep = "Keep original"
-    case uhd = "2160p (4K)"
-    case qhd = "1440p (2K)"
-    case fhd = "1080p"
-    case hd = "720p"
-    case sd = "480p"
+    case keep, uhd, qhd, fhd, hd, sd
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .keep: return "Keep original"
+        case .uhd:  return "2160p (4K)"
+        case .qhd:  return "1440p (2K)"
+        case .fhd:  return "1080p"
+        case .hd:   return "720p"
+        case .sd:   return "480p"
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "keep", "Keep original": self = .keep
+        case "uhd",  "2160p (4K)":    self = .uhd
+        case "qhd",  "1440p (2K)":    self = .qhd
+        case "fhd",  "1080p":         self = .fhd
+        case "hd",   "720p":          self = .hd
+        case "sd",   "480p":          self = .sd
+        default:
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath,
+                                      debugDescription: "Unknown resolution class: \(raw)"))
+        }
+    }
 
     /// Long-side limit for the class (never upscales, keeps aspect ratio).
     var longSideLimit: CGFloat? {
@@ -41,6 +87,10 @@ enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
 
     /// Returns a scaled output DISPLAY size (even numbers) for a given source
     /// display size. Never upscales.
+    /// Note: width and height are floored (then evened) INDEPENDENTLY, which
+    /// shifts the aspect ratio by up to 1px on each axis — deliberate (the
+    /// encoder requires even dimensions); the engine's separate sx/sy scale
+    /// factors pass that sub-pixel deviation through unchanged.
     func outputSize(for source: CGSize) -> CGSize {
         let w = max(2, source.width), h = max(2, source.height)
         let target: CGSize
@@ -64,6 +114,9 @@ enum ResolutionClass: String, Codable, CaseIterable, Identifiable, Hashable {
 
 /// A reusable compression configuration: codec, resolution and an exact
 /// video bitrate (kept simple on purpose — no adaptive heuristics).
+/// Values are CLAMPED on construction (both the memberwise init and JSON
+/// decoding) — untrusted numbers must never reach the engine: e.g. a huge
+/// fps cap would trap CMTimeScale(cap)*2.
 struct Preset: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var name: String
@@ -74,12 +127,17 @@ struct Preset: Identifiable, Codable, Hashable {
     var audioBitrateKbps: Int = 128
     var isUserDefined: Bool = false
 
-    /// Deterministic UUID derived from the preset name, so built-in IDs are
-    /// stable across launches (last-used selection keeps working).
-    private static func stableID(_ name: String) -> UUID {
+    static let bitrateRange: ClosedRange<Double> = 0.1...40
+    static let fpsCapRange: ClosedRange<Int> = 1...240
+    static let audioRange: ClosedRange<Int> = 32...320
+
+    /// Deterministic UUID derived from a FIXED system key (never the display
+    /// name), so renaming or localising a built-in can't reset the saved
+    /// "last used" selection or orphan stored references.
+    private static func stableID(_ key: String) -> UUID {
         var h1: UInt64 = 0xcbf29ce484222325
         var h2: UInt64 = 0x6c62272e07bb0142
-        for b in name.utf8 {
+        for b in key.utf8 {
             h1 = (h1 ^ UInt64(b)) &* 0x100000001b3
             h2 = (h2 &+ UInt64(b)) &* 0x9E3779B97F4A7C15
         }
@@ -104,7 +162,9 @@ struct Preset: Identifiable, Codable, Hashable {
             Preset(name: "Low (480p)", codec: .hevc, resolution: .sd,
                    fixedBitrateMbps: 1.5, fpsCap: nil, audioBitrateKbps: 96),
         ]
-        for i in list.indices { list[i].id = stableID(list[i].name) }
+        list[0].id = stableID("builtin.high")
+        list[1].id = stableID("builtin.720p")
+        list[2].id = stableID("builtin.480p")
         return list
     }()
 
@@ -113,17 +173,28 @@ struct Preset: Identifiable, Codable, Hashable {
              fpsCap, audioBitrateKbps, isUserDefined
     }
 
+    /// Normalises every field into its validated range. Shared by both inits.
+    private func normalized(name: String, codec: VideoCodec, resolution: ResolutionClass,
+                            bitrate: Double, fpsCap: Int?, audio: Int, userDefined: Bool) -> Preset {
+        var p = Preset()
+        p.id = id
+        p.name = name.isEmpty ? "Custom" : name
+        p.codec = codec
+        p.resolution = resolution
+        p.fixedBitrateMbps = min(Preset.bitrateRange.upperBound, max(Preset.bitrateRange.lowerBound, bitrate))
+        p.fpsCap = fpsCap.map { min(Preset.fpsCapRange.upperBound, max(Preset.fpsCapRange.lowerBound, $0)) }
+        p.audioBitrateKbps = min(Preset.audioRange.upperBound, max(Preset.audioRange.lowerBound, audio))
+        p.isUserDefined = userDefined
+        return p
+    }
+
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
          fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
          audioBitrateKbps: Int = 128, isUserDefined: Bool = false) {
-        self.id = UUID()
-        self.name = name
-        self.codec = codec
-        self.resolution = resolution
-        self.fixedBitrateMbps = fixedBitrateMbps
-        self.fpsCap = fpsCap
-        self.audioBitrateKbps = audioBitrateKbps
-        self.isUserDefined = isUserDefined
+        let p = normalized(name: name, codec: codec, resolution: resolution,
+                           bitrate: fixedBitrateMbps, fpsCap: fpsCap,
+                           audio: audioBitrateKbps, userDefined: isUserDefined)
+        self = p
     }
 
     init(from decoder: Decoder) throws {
@@ -132,11 +203,12 @@ struct Preset: Identifiable, Codable, Hashable {
         name = try c.decode(String.self, forKey: .name)
         codec = try c.decode(VideoCodec.self, forKey: .codec)
         resolution = try c.decode(ResolutionClass.self, forKey: .resolution)
-        // Older presets (adaptive/size-target modes) decode to a sane default.
-        fixedBitrateMbps = try c.decodeIfPresent(Double.self, forKey: .fixedBitrateMbps) ?? 4.0
-        fpsCap = try c.decodeIfPresent(Int.self, forKey: .fpsCap)
-        audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
-        isUserDefined = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
+        let bitrate = try c.decodeIfPresent(Double.self, forKey: .fixedBitrateMbps) ?? 4.0
+        let cap = try c.decodeIfPresent(Int.self, forKey: .fpsCap)
+        let audio = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
+        let user = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
+        self = normalized(name: name, codec: codec, resolution: resolution,
+                          bitrate: bitrate, fpsCap: cap, audio: audio, userDefined: user)
     }
 
     var modeSummary: String {

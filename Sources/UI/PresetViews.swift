@@ -11,7 +11,20 @@ enum PresetStore {
 
     static func loadCustom() -> [Preset] {
         guard let data = UserDefaults.standard.data(forKey: customsKey) else { return [] }
-        return (try? JSONDecoder().decode([Preset].self, from: data)) ?? []
+        // LENIENT decode: presets round-trip as a JSON array, and a plain
+        // [Preset] decode is all-or-nothing — one bad element (hand-edited,
+        // corrupted, or from a very old schema) would silently lose ALL
+        // customs. Decode each element independently and skip failures.
+        guard let dicts = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+            return []
+        }
+        var out: [Preset] = []
+        for dict in dicts {
+            guard let d = try? JSONSerialization.data(withJSONObject: dict),
+                  let p = try? JSONDecoder().decode(Preset.self, from: d) else { continue }
+            out.append(p)
+        }
+        return out
     }
 
     static func saveCustom(_ presets: [Preset]) {
@@ -67,10 +80,10 @@ struct PresetEditorView: View {
                 Section("Name & codec") {
                     TextField("Preset name", text: $name)
                     Picker("Codec", selection: $codec) {
-                        ForEach(VideoCodec.allCases) { c in Text(c.rawValue).tag(c) }
+                        ForEach(VideoCodec.allCases) { c in Text(c.displayName).tag(c) }
                     }
                     Picker("Resolution", selection: $resolution) {
-                        ForEach(ResolutionClass.allCases) { r in Text(r.rawValue).tag(r) }
+                        ForEach(ResolutionClass.allCases) { r in Text(r.displayName).tag(r) }
                     }
                 }
 

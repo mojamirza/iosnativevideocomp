@@ -26,9 +26,9 @@ enum IntegrityVerifier {
                 "Integrity checks did not finish in time. The output was written and finalized by the encoder — inspect it in Files; if it plays, it is good.", .warn)],
             inBytes: probe.fileSize,
             outBytes: fileSize,
-            outputBitrateMbps: 0,
+            outputBitrateMbps: nil,
             encodeSeconds: encodeSeconds,
-            outputDuration: 0)
+            outputDuration: nil)
     }
 
     private static func verifyImpl(source: URL,
