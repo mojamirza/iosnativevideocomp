@@ -1,4 +1,5 @@
 import SwiftUI
+import Photos
 
 /// The "compressing row": source info, live progress with cancel, error states
 /// with retry, and the finished row with the output integrity report.
@@ -9,6 +10,18 @@ struct JobRowView: View {
     @State private var showingReport = false
     @State private var confirmingCancel = false
     @State private var confirmingDelete = false
+    @State private var showingRename = false
+    @State private var renameText = ""
+    @State private var saveNotice: String?
+
+    /// The row's title: for finished jobs, the OUTPUT's name (so renames
+    /// are reflected); otherwise the source name.
+    private var displayName: String {
+        if job.state == .done, let out = job.outputURL {
+            return (out.lastPathComponent as NSString).deletingPathExtension
+        }
+        return job.sourceName
+    }
 
     var body: some View {
         // Finished rows can be swiped sideways to reveal Delete; active
@@ -38,7 +51,7 @@ struct JobRowView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(job.sourceName)
+                    Text(displayName)
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
                     HStack(spacing: 4) {
@@ -153,6 +166,45 @@ struct JobRowView: View {
                 ReportSheet(job: job, report: report)
             }
         }
+        .alert("Rename video", isPresented: $showingRename) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                coordinator.renameOutput(jobID: job.id, to: renameText)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The file in the app folder will be renamed.")
+        }
+        .alert("Save to Photos", isPresented: Binding(
+            get: { saveNotice != nil },
+            set: { if !$0 { saveNotice = nil } })) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(saveNotice ?? "")
+        }
+    }
+
+    /// Writes the compressed output straight into the user's photo library
+    /// (add-only permission; no re-encode). Icon mirrors the native
+    /// "Save Video" action as an SF symbol.
+    private func saveToPhotos(_ url: URL) {
+        Task { @MainActor in
+            let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard status == .authorized || status == .limited else {
+                saveNotice = "Photos access was denied. Allow it in Settings → Privacy → Photos → Add Photos Only."
+                return
+            }
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }
+                saveNotice = "Saved to Photos."
+            } catch {
+                if !(error is CancellationError) {
+                    saveNotice = "Couldn't save to Photos: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     private var stateLabel: String {
@@ -241,6 +293,19 @@ struct JobRowView: View {
             }
             if job.state == .done, let out = job.outputURL {
                 ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
+                // One click → straight into the photo library. The icon
+                // matches the native "Save Video" action.
+                Button {
+                    saveToPhotos(out)
+                } label: {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    renameText = displayName
+                    showingRename = true
+                } label: {
+                    Label("Rename…", systemImage: "pencil")
+                }
             }
             if [.failed, .cancelled].contains(job.state),
                // Sources of finished jobs are deleted (storage management) —
@@ -312,7 +377,9 @@ private struct SwipeToDeleteModifier: ViewModifier {
     }
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 25)
+        // Short arming distance — a long one made the first stretch of the
+        // drag feel dead, which reads as "laggy" even when tracking cleanly.
+        DragGesture(minimumDistance: 10)
             .onChanged { value in
                 // Anchor the drag start on the FIRST change regardless of
                 // direction — anchoring late (only once horizontal-dominant)
@@ -321,19 +388,29 @@ private struct SwipeToDeleteModifier: ViewModifier {
                 // Horizontal-dominant drags only — vertical ones belong to
                 // the list's ScrollView.
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let target = dragStart! + value.translation.width
-                // Explicitly unanimated: the row must track the finger 1:1.
+                let raw = dragStart! + value.translation.width
+                // Rubber-band past the reveal point (soft clamp) and stop
+                // hard at zero; the row moves with the finger, unanimated.
+                let target: CGFloat
+                if raw < -revealWidth {
+                    target = -revealWidth + (raw + revealWidth) * 0.15
+                } else {
+                    target = min(0, raw)
+                }
                 var t = Transaction()
                 t.disablesAnimations = true
                 withTransaction(t) {
-                    offsetX = min(0, max(-revealWidth, target))
+                    offsetX = max(-revealWidth - 24, target)
                 }
             }
             .onEnded { value in
                 defer { dragStart = nil }
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    offsetX = offsetX < -revealWidth / 2 ? -revealWidth : 0
+                // A quick flick opens fully even on a short drag; a slow
+                // drag needs to pass half the reveal width.
+                let flick = value.velocity.width < -900
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                    offsetX = (flick || offsetX < -revealWidth / 2) ? -revealWidth : 0
                 }
             }
     }

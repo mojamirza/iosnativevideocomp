@@ -470,6 +470,51 @@ final class JobCoordinator: ObservableObject {
 
     // MARK: SwiftData history
 
+    /// Renames a finished job's output file on disk AND in the history
+    /// record, so the new name survives relaunches.
+    func renameOutput(jobID: UUID, to newName: String) {
+        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
+              let out = jobs[idx].outputURL else { return }
+        let fm = FileManager.default
+
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Strip path-hostile characters so the file stays a plain file in Files.
+        let bad = CharacterSet(charactersIn: "/\\:$\"?*<>|")
+        let clean = trimmed.components(separatedBy: bad).joined(separator: "-")
+        let ext = out.pathExtension
+        var finalName = clean
+        if ext.isEmpty || !clean.lowercased().hasSuffix("." + ext.lowercased()) {
+            finalName = "\(clean).\(ext)"
+        }
+
+        // Collide-proof: append "(2)", "(3)"… if a file with that name exists.
+        var dst = Self.outputsDirectory().appendingPathComponent(finalName)
+        var bump = 1
+        while fm.fileExists(atPath: dst.path) {
+            bump += 1
+            let stem = (finalName as NSString).deletingPathExtension
+            let newAppended = "\(stem) (\(bump)).\(ext)"
+            dst = Self.outputsDirectory().appendingPathComponent(newAppended)
+        }
+        do {
+            try fm.moveItem(at: out, to: dst)
+        } catch {
+            return  // leave the file untouched if the move fails
+        }
+
+        jobs[idx].outputURL = dst
+
+        // Update the record's stored file name.
+        if let context = modelContext {
+            let descriptor = FetchDescriptor<JobRecord>(predicate: #Predicate { $0.jobID == jobID })
+            if let r = try? context.fetch(descriptor).first {
+                r.outputFileName = dst.lastPathComponent
+                try? context.save()
+            }
+        }
+    }
+
     func loadHistory() {
         guard let context = modelContext else { return }
         let fm = FileManager.default

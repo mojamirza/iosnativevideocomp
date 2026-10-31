@@ -24,6 +24,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: ""
         NSPhotoLibraryUsageDescription: Pick videos from your library to compress.
+        NSPhotoLibraryAddUsageDescription: Save compressed videos back to your photo library.
         ITSAppUsesNonExemptEncryption: false
         # Background compression (BGContinuedProcessingTask, iOS 26+)
         BGTaskSchedulerPermittedIdentifiers:
