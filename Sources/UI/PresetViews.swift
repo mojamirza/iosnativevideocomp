@@ -157,8 +157,69 @@ struct PresetEditorView: View {
                     }
                 }
 
+                // TARGET SIZE — its own section ABOVE the bitrate. The Fit
+                // helper never crowds the slider row, and the semantics are
+                // stated up front: type a size goal, Fit solves the bitrate.
+                Section("Target size (optional)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Know the file size you need — messaging or attachment limits? Type it in MB and tap Fit: the bitrate below is solved so video + audio land under that size. The output stays a fixed bitrate — re-tap Fit after changing resolution or audio.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            TextField("Target size", text: $fitUnderText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .font(.body.monospacedDigit())
+                            Text("MB")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                applyFit()
+                            } label: {
+                                Label("Fit bitrate", systemImage: "target")
+                                    .font(.headline)
+                                    .padding(.vertical, 2)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(fitUnderText.isEmpty)
+                        }
+                    }
+                }
+
                 Section("Video bitrate") {
                     VStack(alignment: .leading, spacing: 9) {
+                        // EXACT VALUE TYPING — the typable field sits IN FRONT
+                        // of the bar: its own row ABOVE the slider, not under it.
+                        HStack {
+                            TextField("Exact bitrate", text: $bitrateText)
+                                .keyboardType(.decimalPad)
+                                // Centered so the digits sit right on the
+                                // underline regardless of value length.
+                                .multilineTextAlignment(.center)
+                                .font(.callout.monospacedDigit())
+                                .frame(width: 72)
+                                // Plain field with a short underline — no box.
+                                .textFieldStyle(.plain)
+                                .padding(.bottom, 5)
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(Color(.separator))
+                                        .frame(height: 1)
+                                        .padding(.horizontal, 8)
+                                }
+                                .onChange(of: bitrateText) { _, t in
+                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
+                                       v >= 0.1, v <= 40 {
+                                        fixedMbps = v
+                                        sliderPos = Self.pos(fromMbps: v)
+                                    }
+                                }
+                            Text("Exact Mbps")
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        // The slider bar comes AFTER the typing field.
                         HStack {
                             // LOGARITHMIC slider — useful values cluster
                             // between 1 and 10 Mbps, where a linear bar
@@ -179,58 +240,6 @@ struct PresetEditorView: View {
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
                                 .frame(width: 86, alignment: .trailing)
                         }
-                        HStack {
-                            TextField("Mbps", text: $bitrateText)
-                                .keyboardType(.decimalPad)
-                                // Centered so the digits sit right on the
-                                // underline regardless of value length.
-                                .multilineTextAlignment(.center)
-                                .font(.callout.monospacedDigit())
-                                .frame(width: 62)
-                                // Plain field with a short underline — no box.
-                                .textFieldStyle(.plain)
-                                .padding(.bottom, 5)
-                                .overlay(alignment: .bottom) {
-                                    Rectangle()
-                                        .fill(Color(.separator))
-                                        .frame(height: 1)
-                                        .padding(.horizontal, 8)
-                                }
-                                .onChange(of: bitrateText) { _, t in
-                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
-                                       v >= 0.1, v <= 40 {
-                                        fixedMbps = v
-                                        sliderPos = Self.pos(fromMbps: v)
-                                    }
-                                }
-                            Text("Mbps")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            // "Fit under X MB" helper: computes the exact
-                            // video bitrate that lands the TOTAL (video +
-                            // audio over the duration) under a target size —
-                            // answers the email/chat-limit question while
-                            // keeping the fixed-bitrate model.
-                            HStack(spacing: 6) {
-                                Text("Target size")
-                                    .foregroundStyle(.secondary)
-                                TextField("MB", text: $fitUnderText)
-                                    .keyboardType(.numberPad)
-                                    .multilineTextAlignment(.center)
-                                    .font(.callout.monospacedDigit())
-                                    .frame(width: 52)
-                                Button("Fit") { applyFit() }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                            .font(.callout)
-                        }
-                        // HOW Fit works, where the field is: type a size goal
-                        // in MB and tap Fit — the bitrate is solved so video
-                        // + audio land under it. The output stays FIXED-bitrate.
-                        Text("Target size + Fit: enter the file size you need (MB) and tap Fit — the bitrate is computed to land under it. Tap Fit again after changing resolution or audio for a fresh fit.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
                         // QUALITY hint: rate the chosen bitrate against the
                         // source resolution + fps BEFORE committing.
                         if let hint = qualityHint() {
@@ -251,7 +260,7 @@ struct PresetEditorView: View {
                                 .font(.footnote.weight(.medium).monospacedDigit())
                                 .foregroundStyle(.tint)
                         }
-                        Text("Type an exact value, drag the bar, or set a size target with Fit. Lower = smaller file.")
+                        Text("Type an exact value or drag the bar. Lower = smaller file.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
