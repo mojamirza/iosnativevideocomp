@@ -41,63 +41,19 @@ struct JobRowView: View {
         }
     }
 
-    private var rowBody: some View {
+    /// The card WITHOUT modifier chain — kept a separate expression so the
+    /// whole row (chain included) stays under the type-checker's complexity
+    /// budget; combining everything into one expression stalled type-checking.
+    private var baseCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 thumbnail
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(displayName)
-                        .font(.callout.weight(.semibold))
-                        .lineLimit(1)
-                    HStack(spacing: 4) {
-                        Text(job.preset.name)
-                            .font(.caption2)
-                            .lineLimit(1)
-                        Text("·").font(.caption2)
-                        Text(stateLabel)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(stateColor)
-                    }
-                    .foregroundStyle(.secondary)
-                }
+                titleBlock
                 Spacer()
                 actionButtons
             }
 
-            if job.state == .compressing {
-                ProgressView(value: job.progress) {
-                    HStack {
-                        Text("Encoding… \(Int(job.progress * 100))%")
-                            .font(.caption2)
-                            .monospacedDigit()
-                            .contentTransition(.numericText())
-                        Spacer()
-                    }
-                }
-                .tint(.tint)
-            } else if job.state == .verifying {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Verifying output integrity…")
-                        .font(.caption2)
-                }
-                .foregroundStyle(.tertiary)
-            } else if job.state == .queued {
-                HStack(spacing: 6) {
-                    Image(systemName: "timer")
-                        .font(.caption2)
-                    Text("Queued").font(.caption2)
-                }
-                .foregroundStyle(.tertiary)
-            } else if job.state == .analyzing {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Analysing frames with Core Image…")
-                        .font(.caption2)
-                }
-                .foregroundStyle(.tertiary)
-            }
+            stateSection
 
             if let msg = job.errorMessage {
                 Label(msg, systemImage: "exclamationmark.octagon.fill")
@@ -115,49 +71,16 @@ struct JobRowView: View {
                 }
             }
 
-            if job.state == .done, let report = job.report {
-                Button {
-                    showingReport = true
-                } label: {
-                    HStack(spacing: 8) {
-                        // Three-state verdict: warnings (timed-out checks,
-                        // inconclusive decode) are NOT a green pass.
-                        switch report.status {
-                        case .verified:
-                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                        case .warnings:
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(Color(UIColor.systemOrange))
-                        case .failed:
-                            Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                        }
-                        Text(ByteCountFormatter.string(fromByteCount: job.report?.inBytes ?? 0, countStyle: .file))
-                            .strikethrough(!report.grew)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "arrow.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Text(ByteCountFormatter.string(fromByteCount: job.report?.outBytes ?? 0, countStyle: .file))
-                            .font(.caption.weight(.bold))
-                        if report.grew {
-                            // Negative savings (output LARGER than source)
-                            // must be visible, not rounded to 0%.
-                            Text(String(format: "+%.0f%%", abs(report.savingsPercent)))
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(Color(UIColor.systemOrange))
-                        } else {
-                            Text(String(format: "−%.0f%%", report.savingsPercent))
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.green)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
+            if job.state == .done {
+                reportRow
             }
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var rowBody: some View {
+        baseCard
         // Fat-finger protection for destructive actions.
         .confirmationDialog(
             job.state == .queued ? "Remove from queue?" : "Stop this compression?",
@@ -215,6 +138,115 @@ struct JobRowView: View {
         }
         .sensoryFeedback(.error, trigger: stateTrigger) { _, newValue in
             newValue == .failed
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(displayName)
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(job.preset.name)
+                    .font(.caption2)
+                    .lineLimit(1)
+                Text("·").font(.caption2)
+                Text(stateLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(stateColor)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var stateSection: some View {
+        switch job.state {
+        case .compressing:
+            ProgressView(value: job.progress) {
+                HStack {
+                    Text("Encoding… \(Int(job.progress * 100))%")
+                        .font(.caption2)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Spacer()
+                }
+            }
+            .tint(Color.accentColor)
+        case .verifying:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Verifying output integrity…")
+                    .font(.caption2)
+            }
+            .foregroundStyle(.tertiary)
+        case .queued:
+            HStack(spacing: 6) {
+                Image(systemName: "timer")
+                    .font(.caption2)
+                Text("Queued").font(.caption2)
+            }
+            .foregroundStyle(.tertiary)
+        case .analyzing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Analysing frames with Core Image…")
+                    .font(.caption2)
+            }
+            .foregroundStyle(.tertiary)
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Tappable in/out size line with the three-state verdict icon.
+    private var reportRow: some View {
+        Button {
+            showingReport = true
+        } label: {
+            HStack(spacing: 8) {
+                // Three-state verdict: warnings (timed-out checks,
+                // inconclusive decode) are NOT a green pass.
+                switch job.report?.status {
+                case .verified:
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                case .warnings:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color(UIColor.systemOrange))
+                case .failed:
+                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+                default:
+                    EmptyView()
+                }
+                inOutSizeTexts
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var inOutSizeTexts: some View {
+        HStack(spacing: 8) {
+            let report = job.report
+            Text(ByteCountFormatter.string(fromByteCount: report?.inBytes ?? 0, countStyle: .file))
+                .strikethrough(!(report?.grew ?? false))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Image(systemName: "arrow.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(ByteCountFormatter.string(fromByteCount: report?.outBytes ?? 0, countStyle: .file))
+                .font(.caption.weight(.bold))
+            if report?.grew == true {
+                // Negative savings (output LARGER than source) must be
+                // visible, not rounded to 0%.
+                Text(String(format: "+%.0f%%", abs(report?.savingsPercent ?? 0)))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color(UIColor.systemOrange))
+            } else {
+                Text(String(format: "−%.0f%%", report?.savingsPercent ?? 0))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.green)
+            }
         }
     }
 
@@ -783,7 +815,7 @@ private struct OutputPlayerSheet: View {
                 // Compare toggle ONLY when both the output and the source
                 // still exist (done jobs delete the source import).
                 if outputExists && sourceExists {
-                    Picker("Compare", selection: $side.animation) {
+                    Picker("Compare", selection: $side) {
                         Text("Output").tag(Side.output)
                         Text("Source").tag(Side.source)
                     }
@@ -833,11 +865,12 @@ private struct OutputPlayerSheet: View {
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
         // Default to the output; fall back to the source if it's gone.
         side = outputExists ? .output : .source
-        player.replaceCurrentItem(item(for: side))
+        let next = playerItem(for: side)
+        player.replaceCurrentItem(with: next)
         player.play()
     }
 
-    private func item(for side: Side) -> AVPlayerItem? {
+    private func playerItem(for side: Side) -> AVPlayerItem? {
         switch side {
         case .output:
             if outputExists, let out = job.outputURL {
@@ -855,7 +888,8 @@ private struct OutputPlayerSheet: View {
     private func swapSide(new: Side) {
         let time = player.currentTime()
         let wasPlaying = player.rate > 0
-        player.replaceCurrentItem(item(for: new))
+        let next = playerItem(for: new)
+        player.replaceCurrentItem(with: next)
         if time.seconds > 0 {
             // The compressed runtime can differ slightly (fps cap), but
             // AVPlayer clamps the seek itself.
