@@ -176,7 +176,10 @@ struct PresetEditorView: View {
                             Button {
                                 applyFit()
                             } label: {
-                                Label("Fit bitrate", systemImage: "target")
+                                // No icon: the artwork vanished from the filled
+                                // (blue) state on device — a plain bold label
+                                // reads cleaner anyway.
+                                Text("Fit bitrate")
                                     .font(.headline)
                                     .padding(.vertical, 2)
                             }
@@ -188,38 +191,9 @@ struct PresetEditorView: View {
 
                 Section("Video bitrate") {
                     VStack(alignment: .leading, spacing: 9) {
-                        // EXACT VALUE TYPING — the typable field sits IN FRONT
-                        // of the bar: its own row ABOVE the slider, not under it.
-                        HStack {
-                            TextField("Exact bitrate", text: $bitrateText)
-                                .keyboardType(.decimalPad)
-                                // Centered so the digits sit right on the
-                                // underline regardless of value length.
-                                .multilineTextAlignment(.center)
-                                .font(.callout.monospacedDigit())
-                                .frame(width: 72)
-                                // Plain field with a short underline — no box.
-                                .textFieldStyle(.plain)
-                                .padding(.bottom, 5)
-                                .overlay(alignment: .bottom) {
-                                    Rectangle()
-                                        .fill(Color(.separator))
-                                        .frame(height: 1)
-                                        .padding(.horizontal, 8)
-                                }
-                                .onChange(of: bitrateText) { _, t in
-                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
-                                       v >= 0.1, v <= 40 {
-                                        fixedMbps = v
-                                        sliderPos = Self.pos(fromMbps: v)
-                                    }
-                                }
-                            Text("Exact Mbps")
-                                .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        // The slider bar comes AFTER the typing field.
+                        // SLIDER + TAP-TO-EDIT number: the field IS the readout
+                        // beside the bar. Tap the number, type an exact value,
+                        // and the slider follows. No separate field row.
                         HStack {
                             // LOGARITHMIC slider — useful values cluster
                             // between 1 and 10 Mbps, where a linear bar
@@ -236,9 +210,35 @@ struct PresetEditorView: View {
                                     }
                                     fixedMbps = mbps
                                 }
-                            Text(String(format: "%.1f Mbps", fixedMbps))
+                            TextField("0", text: $bitrateText)
+                                .keyboardType(.decimalPad)
+                                // Centered so the digits sit right on the
+                                // underline regardless of value length.
+                                .multilineTextAlignment(.center)
                                 .font(.subheadline.weight(.semibold).monospacedDigit())
-                                .frame(width: 86, alignment: .trailing)
+                                .textFieldStyle(.plain)
+                                // Grows with what is typed; at minimum a
+                                // tappable sliver.
+                                .fixedSize(horizontal: true, vertical: false)
+                                .frame(minWidth: 40)
+                                .padding(.bottom, 3)
+                                // Short underline: tap-to-edit affordance.
+                                .overlay(alignment: .bottom) {
+                                    Rectangle()
+                                        .fill(Color(.separator))
+                                        .frame(height: 1)
+                                }
+                                .onChange(of: bitrateText) { _, t in
+                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
+                                       v >= 0.1, v <= 40 {
+                                        fixedMbps = v
+                                        sliderPos = Self.pos(fromMbps: v)
+                                    }
+                                }
+                            Text("Mbps")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
                         }
                         // QUALITY hint: rate the chosen bitrate against the
                         // source resolution + fps BEFORE committing.
@@ -260,7 +260,7 @@ struct PresetEditorView: View {
                                 .font(.footnote.weight(.medium).monospacedDigit())
                                 .foregroundStyle(.tint)
                         }
-                        Text("Type an exact value or drag the bar. Lower = smaller file.")
+                        Text("Drag the bar or tap the number next to it to type an exact value. Lower = smaller file.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
