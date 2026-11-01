@@ -127,15 +127,17 @@ enum CompressionEngine {
         let modeStatus = VTSessionSetProperty(
             s,
             key: kVTPixelTransferPropertyKey_ScalingMode,
-            value: kVTPixelTransferScalingMode_Normal)
+            value: "Normal" as CFString)
         if modeStatus != noErr {
             NSLog("VidCompress: explicit scaling mode rejected (%d) — using VT default", modeStatus)
         }
-        // Anti-aliasing: averaging downsampling for every downscale.
+        // Anti-aliasing: averaging downsampling for every downscale. The
+        // VALUE constants (single macros like the scaling-mode ones) are not
+        // exported to Swift; the property's documented value is "Average".
         let dsStatus = VTSessionSetProperty(
             s,
             key: kVTPixelTransferPropertyKey_DownsamplingMode,
-            value: kVTDownsamplingMode_Average)
+            value: "Average" as CFString)
         if dsStatus != noErr {
             NSLog("VidCompress: averaging downsampling rejected (%d) — using VT default", dsStatus)
         }
