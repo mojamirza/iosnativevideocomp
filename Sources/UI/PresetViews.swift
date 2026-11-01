@@ -67,6 +67,12 @@ struct PresetEditorView: View {
     /// values cluster between 1 and 10, where a linear bar starved the arm.
     @State private var sliderPos: Double
 
+    /// Field focus: the number pads have NO return/done key, so dismissing
+    /// the keyboard needs an explicit control (Fit / the keyboard's Done key).
+    /// Without this, the keyboard swallowed the FIRST tap on Fit.
+    @FocusState private var fitMBFocused: Bool
+    @FocusState private var bitrateFocused: Bool
+
     init(existing: Preset? = nil, contextProbe: ProbeResult? = nil, onSaved: @escaping (Preset) -> Void) {
         self.existing = existing
         self.contextProbe = contextProbe
@@ -130,7 +136,11 @@ struct PresetEditorView: View {
 
     /// "Fit under X MB": exact video bitrate that keeps video + audio (at the
     /// current audio setting, over the source duration) under the target.
+    /// Dismisses the keyboard FIRST so the tap that lands here can't be
+    /// eaten by the responder change (the swallowed-first-tap bug).
     private func applyFit() {
+        fitMBFocused = false
+        bitrateFocused = false
         guard let probe = contextProbe, probe.duration > 0.5,
               let mb = Double(fitUnderText.replacingOccurrences(of: ",", with: ".")),
               mb >= 1, mb <= 200_000 else { return }
@@ -167,6 +177,7 @@ struct PresetEditorView: View {
                             .foregroundStyle(.secondary)
                         HStack(spacing: 10) {
                             TextField("Target size", text: $fitUnderText)
+                                .focused($fitMBFocused)
                                 .keyboardType(.numberPad)
                                 .multilineTextAlignment(.trailing)
                                 .font(.body.monospacedDigit())
@@ -211,6 +222,7 @@ struct PresetEditorView: View {
                                     fixedMbps = mbps
                                 }
                             TextField("0", text: $bitrateText)
+                                .focused($bitrateFocused)
                                 .keyboardType(.decimalPad)
                                 // Centered so the digits sit right on the
                                 // underline regardless of value length.
@@ -292,6 +304,9 @@ struct PresetEditorView: View {
             }
             .navigationTitle(existing == nil ? "Custom preset" : "Edit preset")
             .navigationBarTitleDisplayMode(.inline)
+            // Any scroll (e.g. to the Save… row area) instantly drops the
+            // number pads — they linger otherwise and eat taps below.
+            .scrollDismissesKeyboard(.immediately)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
@@ -312,6 +327,17 @@ struct PresetEditorView: View {
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
+                }
+                // Keyboard accessory: the number pads have no return key, so
+                // there was no way to dismiss the keyboard except tapping —
+                // and that first tap was swallowed by the dismissal. Done
+                // gives an explicit exit that costs no button tap.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        fitMBFocused = false
+                        bitrateFocused = false
+                    }
                 }
             }
         }
