@@ -201,9 +201,24 @@ struct SetupFlowView: View {
             .disabled(!canStart)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
+        // Top inset only matters when content sits above the button (estimate,
+        // warnings) — otherwise it is dead blank space in front of the bar.
+        .padding(.top, hasContextRows ? 10 : 6)
         .padding(.bottom, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 0))
+        // The material must run THROUGH the home-indicator strip: safeAreaInset
+        // layouts this view INSIDE the safe area, so a plain background stops
+        // at the safe-area edge and the scroll content peeks through a blank
+        // strip UNDER the bar. Extending the fill removes it.
+        .background(Rectangle()
+            .fill(.regularMaterial)
+            .ignoresSafeArea(edges: .bottom))
+    }
+
+    /// Whether the estimate / warning rows exist above the Compress button —
+    /// controls the bar's top inset so no blank band fronts the button.
+    private var hasContextRows: Bool {
+        errorText != nil
+            || (estimateBytes != nil && selectedPreset != nil)
     }
 
     // MARK: subviews

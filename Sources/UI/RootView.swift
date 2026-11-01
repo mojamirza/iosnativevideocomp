@@ -60,19 +60,22 @@ struct RootView: View {
             .navigationTitle("VidCompress")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    // One labeled "+" menu instead of two unlabeled icons.
-                    Menu {
-                        PhotosPicker(selection: $photoItems, matching: .videos) {
-                            Label("From Photos", systemImage: "photo.on.rectangle.angled")
-                        }
-                        Button {
-                            showFiles = true
-                        } label: {
-                            Label("From Files", systemImage: "folder")
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
+                    // DIRECT toolbar buttons: a PhotosPicker nested inside a
+                    // Menu is unreliable on device (the sheet can be swallowed
+                    // by the menu's dismissal). The empty-state pickers — which
+                    // work on device — are direct, so the toolbar matches that
+                    // proven shape.
+                    PhotosPicker(selection: $photoItems, matching: .videos) {
+                        Image(systemName: "photo.on.rectangle.angled")
                     }
+                    .accessibilityLabel("Import from Photos")
+
+                    Button {
+                        showFiles = true
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .accessibilityLabel("Import from Files")
                 }
             }
             // Photos library selection (multi-select → batch)

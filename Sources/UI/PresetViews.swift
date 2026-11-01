@@ -212,17 +212,25 @@ struct PresetEditorView: View {
                             // answers the email/chat-limit question while
                             // keeping the fixed-bitrate model.
                             HStack(spacing: 6) {
+                                Text("Target size")
+                                    .foregroundStyle(.secondary)
                                 TextField("MB", text: $fitUnderText)
                                     .keyboardType(.numberPad)
                                     .multilineTextAlignment(.center)
                                     .font(.callout.monospacedDigit())
-                                    .frame(width: 56)
+                                    .frame(width: 52)
                                 Button("Fit") { applyFit() }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
                             }
                             .font(.callout)
                         }
+                        // HOW Fit works, where the field is: type a size goal
+                        // in MB and tap Fit — the bitrate is solved so video
+                        // + audio land under it. The output stays FIXED-bitrate.
+                        Text("Target size + Fit: enter the file size you need (MB) and tap Fit — the bitrate is computed to land under it. Tap Fit again after changing resolution or audio for a fresh fit.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                         // QUALITY hint: rate the chosen bitrate against the
                         // source resolution + fps BEFORE committing.
                         if let hint = qualityHint() {
