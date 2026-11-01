@@ -81,13 +81,15 @@ struct ColorTags: Hashable {
         else if isHDR { tf = "SMPTE_ST_2084_PQ" }
         else { tf = "ITU_R_709_2" }
 
-        // PRIMARIES: PRESERVE what exists (2020 / P3 / SMPTE-C / EBU); 2020
-        // only for HDR-with-nothing; 709 otherwise.
+        // PRIMARIES: PRESERVE what exists (2020 / P3 / SMPTE-C); 2020 only
+        // for HDR-with-nothing; 709 otherwise. NOTE: EBU_3213 is intentionally
+        // absent — the AVFoundation constant is unavailable on iOS, so EBU
+        // sources resolve to 709 alongside every other unrecognised color
+        // space (consumers must stay in step with what can be written).
         let pri: String
         if p.contains("2020") { pri = "ITU_R_2020" }
         else if p.contains("p3") { pri = "P3_D65" }
         else if p.contains("smpte_c") || p.contains("smptec") { pri = "SMPTE_C" }
-        else if p.contains("ebu") { pri = "EBU_3213" }
         else if isHDR && p.isEmpty { pri = "ITU_R_2020" }
         else { pri = "ITU_R_709_2" }
 
@@ -150,7 +152,6 @@ struct ColorTags: Hashable {
             if c.contains("2020") { return kCVImageBufferColorPrimaries_ITU_R_2020 }
             if c.contains("P3") { return kCVImageBufferColorPrimaries_P3_D65 }
             if c.contains("SMPTE_C") { return kCVImageBufferColorPrimaries_SMPTE_C }
-            if c.contains("EBU") { return kCVImageBufferColorPrimaries_EBU_3213 }
             return kCVImageBufferColorPrimaries_ITU_R_709_2
         }
         static func cvTransfer(_ c: String) -> CFString {
@@ -167,7 +168,6 @@ struct ColorTags: Hashable {
             if c.contains("2020") { return AVVideoColorPrimaries_ITU_R_2020 }
             if c.contains("P3") { return AVVideoColorPrimaries_P3_D65 }
             if c.contains("SMPTE_C") { return AVVideoColorPrimaries_SMPTE_C }
-            if c.contains("EBU") { return AVVideoColorPrimaries_EBU_3213 }
             return AVVideoColorPrimaries_ITU_R_709_2
         }
         static func avTransfer(_ c: String) -> String {
@@ -293,8 +293,9 @@ struct ProbeResult: Hashable {
         var sourceDuration = CMTimeGetSeconds(durationTime)
         if sourceDuration.isFinite, sourceDuration > 0 {
             let videoStart = ((try? await track.load(.timeRange))?.start) ?? .zero
-            let audioStart: CMTime? = audioTracks.first.flatMap {
-                (try? await $0.load(.timeRange))?.start
+            var audioStart: CMTime?
+            if let aTrack = audioTracks.first {
+                audioStart = (try? await aTrack.load(.timeRange))?.start
             }
             let offset = CMTimeGetSeconds(SessionAnchor.start(
                 video: videoStart, audio: audioStart))

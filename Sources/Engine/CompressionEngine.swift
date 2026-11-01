@@ -267,9 +267,6 @@ enum CompressionEngine {
                                             outputSettings: settings,
                                             sourceFormatHint: hint)
         videoInput.expectsMediaDataInRealTime = false
-        // Pass-through path hands reader-owned sample buffers straight to
-        // VT — no defensive copy needed (documented optimization).
-        videoInput.alwaysCopiesSampleData = false
         // Preserve rotation on every path (the scale path encodes transposed
         // pre-rotation frames; the transform restores the display orientation).
         if !preferredTransform.isIdentity {
@@ -375,7 +372,6 @@ enum CompressionEngine {
 
             audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
             audioInput?.expectsMediaDataInRealTime = false
-            audioInput?.alwaysCopiesSampleData = false
             writer.add(audioInput!)
         }
 
@@ -405,8 +401,9 @@ enum CompressionEngine {
         // clips, whose first PTS is often above zero — startSession(0)
         // writes an empty lead; a track starting at/below 0 anchors to 0.
         let videoStart = ((try? await track.load(.timeRange))?.start) ?? .zero
-        let audioStart: CMTime? = audioTrack.flatMap {
-            (try? await $0.load(.timeRange))?.start
+        var audioStart: CMTime?
+        if let aTrack = audioTrack {
+            audioStart = (try? await aTrack.load(.timeRange))?.start
         }
         writer.startSession(atSourceTime: SessionAnchor.start(
             video: videoStart, audio: audioStart))
