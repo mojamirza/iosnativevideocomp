@@ -21,7 +21,8 @@ struct RootView: View {
             ScrollView {
                 LazyVStack(spacing: 14) {
                     if coordinator.jobs.isEmpty {
-                        EmptyState()
+                        EmptyState(photoItems: $photoItems,
+                                   onFiles: { showFiles = true })
                             .padding(.top, 40)
                     }
 
@@ -59,13 +60,18 @@ struct RootView: View {
             .navigationTitle("VidCompress")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    PhotosPicker(selection: $photoItems, matching: .videos) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                    }
-                    Button {
-                        showFiles = true
+                    // One labeled "+" menu instead of two unlabeled icons.
+                    Menu {
+                        PhotosPicker(selection: $photoItems, matching: .videos) {
+                            Label("From Photos", systemImage: "photo.on.rectangle.angled")
+                        }
+                        Button {
+                            showFiles = true
+                        } label: {
+                            Label("From Files", systemImage: "folder")
+                        }
                     } label: {
-                        Image(systemName: "folder")
+                        Image(systemName: "plus.circle.fill")
                     }
                 }
             }
@@ -212,18 +218,39 @@ private struct StorageFooter: View {
 // MARK: - Empty state
 
 private struct EmptyState: View {
+    @Binding var photoItems: [PhotosPickerItem]
+    let onFiles: () -> Void
+
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             Image(systemName: "video.badge.ellipsis")
                 .font(.system(size: 52))
                 .foregroundStyle(.tertiary)
             Text("No compressions yet")
                 .font(.title3.weight(.semibold))
-            Text("Use the photo or folder buttons in the top corner to pick a video from your Photos library or the Files app.")
+            Text("Pick one video — or a whole batch — from your library or the Files app to start.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+            // Real entry points, not just directions.
+            HStack(spacing: 12) {
+                PhotosPicker(selection: $photoItems, matching: .videos) {
+                    Label("Photos", systemImage: "photo.on.rectangle.angled")
+                        .font(.callout.weight(.semibold))
+                        .frame(minWidth: 110)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: onFiles) {
+                    Label("Files", systemImage: "folder")
+                        .font(.callout.weight(.semibold))
+                        .frame(minWidth: 110)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.bordered)
+            }
         }
     }
 }

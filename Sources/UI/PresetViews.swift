@@ -49,6 +49,9 @@ enum PresetStore {
 struct PresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let existing: Preset?
+    /// The video currently being set up (nil elsewhere): powers the live
+    /// estimate, the quality hint and the "fit under X MB" helper.
+    let contextProbe: ProbeResult?
     let onSaved: (Preset) -> Void
 
     @State private var name: String
@@ -56,12 +59,17 @@ struct PresetEditorView: View {
     @State private var resolution: ResolutionClass
     @State private var fixedMbps: Double
     @State private var bitrateText: String
+    @State private var fitUnderText: String = ""
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
+    /// LOG slider position 0…1: 0.1 Mbps → 40 Mbps on a log scale — useful
+    /// values cluster between 1 and 10, where a linear bar starved the arm.
+    @State private var sliderPos: Double
 
-    init(existing: Preset? = nil, onSaved: @escaping (Preset) -> Void) {
+    init(existing: Preset? = nil, contextProbe: ProbeResult? = nil, onSaved: @escaping (Preset) -> Void) {
         self.existing = existing
+        self.contextProbe = contextProbe
         self.onSaved = onSaved
         _name = State(initialValue: existing?.name ?? "Custom")
         _codec = State(initialValue: existing?.codec ?? .hevc)
@@ -69,9 +77,71 @@ struct PresetEditorView: View {
         let mbps = existing?.fixedBitrateMbps ?? 4
         _fixedMbps = State(initialValue: mbps)
         _bitrateText = State(initialValue: String(format: "%.1f", mbps))
+        _sliderPos = State(initialValue: Self.pos(fromMbps: mbps))
         _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
         _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
         _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
+    }
+
+    private static func pos(fromMbps m: Double) -> Double {
+        let v = min(40, max(0.1, m))
+        return log(v / 0.1) / log(400)          // 0.1 → 0.0, 40 → 1.0
+    }
+
+    private static func mbps(fromPos t: Double) -> Double {
+        0.1 * pow(400, min(1, max(0, t)))
+    }
+
+    /// Plain-language quality rating from bits-per-pixel-second against the
+    /// probed resolution + frame rate. bpp ≈ bitrate/(W·H·fps); the ranges
+    /// come from common HEVC experience (0.06 ≈ 4 Mbps 1080p30).
+    private func qualityHint() -> (label: String, color: Color)? {
+        guard let probe = contextProbe else { return nil }
+        let w = max(1, Double(probe.sourceSize.width))
+        let h = max(1, Double(probe.sourceSize.height))
+        let fps = max(1, Double(probe.nominalFPS))
+        let bpp = fixedMbps * 1_000_000 / (w * h * fps)
+        let res = "\(Int(probe.sourceSize.width))×\(Int(probe.sourceSize.height))"
+        switch bpp {
+        case ..<0.045:
+            return ("Low for \(res) — expect blockiness on busy motion",
+                    Color(UIColor.systemOrange))
+        case ..<0.20:
+            return ("Good for \(res) — a sensible bitrate", .green)
+        default:
+            return ("High for \(res) — most bits exceed what the pixels can use",
+                    Color(UIColor.systemTeal))
+        }
+    }
+
+    /// Estimated output size for the draft preset against the given source.
+    private func draftEstimateBytes(for probe: ProbeResult) -> Int64 {
+        let draft = Preset(
+            name: name.isEmpty ? "Custom" : name,
+            codec: codec,
+            resolution: resolution,
+            fixedBitrateMbps: fixedMbps,
+            fpsCap: fpsCapEnabled ? Int(fpsCap) : nil,
+            audioBitrateKbps: Int(audioKbps),
+            isUserDefined: true)
+        let est = QualitySizeOptimizer.plan(preset: draft, probe: probe)
+        return Int64(est.estimatedSizeMB() * 1_048_576)
+    }
+
+    /// "Fit under X MB": exact video bitrate that keeps video + audio (at the
+    /// current audio setting, over the source duration) under the target.
+    private func applyFit() {
+        guard let probe = contextProbe, probe.duration > 0.5,
+              let mb = Double(fitUnderText.replacingOccurrences(of: ",", with: ".")),
+              mb >= 1, mb <= 200_000 else { return }
+        let totalMbits = mb * 8
+        let audioMbits = Double(audioKbps) * probe.duration / 1000
+        let videoMBits = max(1, totalMbits - audioMbits)
+        let videoMbps = videoMBits / probe.duration
+        let clamped = min(40, max(0.1, videoMbps))
+        fixedMbps = clamped
+        bitrateText = String(format: "%.1f", clamped)
+        sliderPos = Self.pos(fromMbps: clamped)
     }
 
     var body: some View {
@@ -88,17 +158,28 @@ struct PresetEditorView: View {
                 }
 
                 Section("Video bitrate") {
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 9) {
                         HStack {
-                            Slider(value: $fixedMbps, in: 0.3...40, step: 0.1)
-                                .onChange(of: fixedMbps) { _, v in
+                            // LOGARITHMIC slider — useful values cluster
+                            // between 1 and 10 Mbps, where a linear bar
+                            // starved the low end.
+                            Slider(value: $sliderPos, in: 0...1, step: 0.005)
+                                .onChange(of: sliderPos) { _, t in
+                                    let mbps = Self.mbps(fromPos: t)
                                     // Only rewrite the text field when the
                                     // change came from the slider — never
                                     // clobber what the user is typing.
-                                    if abs((Double(bitrateText.replacingOccurrences(of: ",", with: ".")) ?? -1) - v) > 0.05 {
-                                        bitrateText = String(format: "%.1f", v)
+                                    let typed = Double(bitrateText.replacingOccurrences(of: ",", with: ".")) ?? -1
+                                    if abs(typed - mbps) > 0.05 {
+                                        bitrateText = String(format: "%.1f", mbps)
                                     }
+                                    fixedMbps = mbps
                                 }
+                            Text(String(format: "%.1f Mbps", fixedMbps))
+                                .font(.subheadline.weight(.semibold).monospacedDigit())
+                                .frame(width: 86, alignment: .trailing)
+                        }
+                        HStack {
                             TextField("Mbps", text: $bitrateText)
                                 .keyboardType(.decimalPad)
                                 // Centered so the digits sit right on the
@@ -106,9 +187,7 @@ struct PresetEditorView: View {
                                 .multilineTextAlignment(.center)
                                 .font(.callout.monospacedDigit())
                                 .frame(width: 62)
-                                // Plain field with a short underline — the
-                                // old .roundedBorder style rendered as a dark
-                                // box that clashed with the form.
+                                // Plain field with a short underline — no box.
                                 .textFieldStyle(.plain)
                                 .padding(.bottom, 5)
                                 .overlay(alignment: .bottom) {
@@ -119,14 +198,52 @@ struct PresetEditorView: View {
                                 }
                                 .onChange(of: bitrateText) { _, t in
                                     if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
-                                       v >= 0.3, v <= 40 {
+                                       v >= 0.1, v <= 40 {
                                         fixedMbps = v
+                                        sliderPos = Self.pos(fromMbps: v)
                                     }
                                 }
                             Text("Mbps")
                                 .foregroundStyle(.secondary)
+                            Spacer()
+                            // "Fit under X MB" helper: computes the exact
+                            // video bitrate that lands the TOTAL (video +
+                            // audio over the duration) under a target size —
+                            // answers the email/chat-limit question while
+                            // keeping the fixed-bitrate model.
+                            HStack(spacing: 6) {
+                                TextField("MB", text: $fitUnderText)
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.center)
+                                    .font(.callout.monospacedDigit())
+                                    .frame(width: 56)
+                                Button("Fit") { applyFit() }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                            .font(.callout)
                         }
-                        Text("Type an exact value above, or drag the bar. Lower = smaller file.")
+                        // QUALITY hint: rate the chosen bitrate against the
+                        // source resolution + fps BEFORE committing.
+                        if let hint = qualityHint() {
+                            Label(hint.label, systemImage: "gauge.with.needle")
+                                .font(.footnote)
+                                .foregroundStyle(hint.color)
+                        }
+                        // LIVE estimate for the video being set up — tuning
+                        // a preset is never guesswork.
+                        if let probe = contextProbe {
+                            let outBytes = draftEstimateBytes(for: probe)
+                            let pct = probe.fileSize > 0
+                                ? (1 - Double(outBytes) / Double(probe.fileSize)) * 100 : 0
+                            Text(String(format: "%@ → ≈ %@ (−%.0f%%)",
+                                        ByteCountFormatter.string(fromByteCount: probe.fileSize, countStyle: .file),
+                                        ByteCountFormatter.string(fromByteCount: outBytes, countStyle: .file),
+                                        max(0, pct)))
+                                .font(.footnote.weight(.medium).monospacedDigit())
+                                .foregroundStyle(.tint)
+                        }
+                        Text("Type an exact value, drag the bar, or set a size target with Fit. Lower = smaller file.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

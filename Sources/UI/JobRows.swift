@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import AVKit
 
 /// The "compressing row": source info, live progress with cancel, error states
 /// with retry, and the finished row with the output integrity report.
@@ -8,11 +9,17 @@ struct JobRowView: View {
 
     let job: JobCoordinator.Job
     @State private var showingReport = false
+    @State private var showingPlayer = false
     @State private var confirmingCancel = false
     @State private var confirmingDelete = false
     @State private var showingRename = false
     @State private var renameText = ""
     @State private var saveNotice: String?
+
+    /// Haptic on terminal transitions: success vs. failure feel different.
+    private var stateTrigger: JobCoordinator.JobState? {
+        [.done, .failed, .cancelled].contains(job.state) ? job.state : nil
+    }
 
     /// The row's title: for finished jobs, the OUTPUT's name (so renames
     /// are reflected); otherwise the source name.
@@ -37,18 +44,7 @@ struct JobRowView: View {
     private var rowBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                if let thumb = job.thumbnail {
-                    Image(uiImage: thumb)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 74, height: 46)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.quaternary)
-                        .frame(width: 74, height: 46)
-                        .overlay { Image(systemName: "film").foregroundStyle(.secondary) }
-                }
+                thumbnail
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(displayName)
@@ -75,10 +71,11 @@ struct JobRowView: View {
                         Text("Encoding… \(Int(job.progress * 100))%")
                             .font(.caption2)
                             .monospacedDigit()
+                            .contentTransition(.numericText())
                         Spacer()
                     }
                 }
-                .tint(.green)
+                .tint(.tint)
             } else if job.state == .verifying {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -107,6 +104,15 @@ struct JobRowView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(3)
+            }
+
+            if job.state == .compressing,
+               let started = job.startedAt, let plan = job.plan {
+                // Alive-proof line: speed against realtime + honest ETA,
+                // recomputed every second from REAL elapsed time.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    etaLabel(started: started, plan: plan)
+                }
             }
 
             if job.state == .done, let report = job.report {
@@ -183,6 +189,9 @@ struct JobRowView: View {
                 ReportSheet(job: job, report: report)
             }
         }
+        .sheet(isPresented: $showingPlayer) {
+            OutputPlayerSheet(job: job)
+        }
         .alert("Rename video", isPresented: $showingRename) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -199,6 +208,92 @@ struct JobRowView: View {
         } message: {
             Text(saveNotice ?? "")
         }
+        // Haptic polish on terminal transitions: success vs. problem feel
+        // different. The nil→state change is what fires the feedback.
+        .sensoryFeedback(.success, trigger: stateTrigger) { _, newValue in
+            newValue == .done
+        }
+        .sensoryFeedback(.error, trigger: stateTrigger) { _, newValue in
+            newValue == .failed
+        }
+    }
+
+    /// The thumbnail doubles as the PLAY button: on finished rows a tap
+    /// opens the output player (source/output toggle). While active, it's
+    /// just an image so taps can't get lost mid-encode.
+    @ViewBuilder
+    private var thumbnail: some View {
+        let isTerminal = [.done, .failed, .cancelled].contains(job.state)
+        let image = Group {
+            if let thumb = job.thumbnail {
+                Image(uiImage: thumb)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 74, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.quaternary)
+                    .frame(width: 74, height: 46)
+                    .overlay { Image(systemName: "film").foregroundStyle(.secondary) }
+            }
+        }
+        if isTerminal {
+            Button {
+                showingPlayer = true
+            } label: {
+                image
+                    .overlay {
+                        ZStack {
+                            Circle().fill(.black.opacity(0.55))
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .offset(x: 0.5)
+                        }
+                        .frame(width: 22, height: 22)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play video")
+        } else {
+            image
+        }
+    }
+
+    /// "2.3× realtime · about 4 min left" — elapsed time against progress.
+    private func etaLabel(started: Date, plan: OptimizerPlan) -> some View {
+        let elapsed = Date().timeIntervalSince(started)
+        let p = max(0.001, job.progress)
+        let encodedSeconds = Double(p) * plan.duration
+        let speed = elapsed > 0.5 ? encodedSeconds / elapsed : 0
+        let eta = p > 0.02 ? elapsed / p * (1 - p) : nil
+        var parts: [String] = []
+        if speed >= 0.2 {
+            parts.append(String(format: "%.1f× realtime", speed))
+        }
+        if let eta, eta > 5 {
+            let min = Int(eta.rounded()) / 60
+            let sec = Int(eta.rounded()) % 60
+            parts.append(min > 0 ? "about \(min) min \(sec) s left" : "about \(sec) s left")
+        }
+        guard !parts.isEmpty else {
+            return AnyView(HStack(spacing: 6) {
+                Image(systemName: "gauge.with.needle")
+                    .font(.caption2)
+                Text("Encoding in progress…").font(.caption2)
+            }
+            .foregroundStyle(.tertiary))
+        }
+        return AnyView(HStack(spacing: 6) {
+            Image(systemName: "gauge.with.needle")
+                .font(.caption2)
+                .foregroundStyle(.tint)
+            Text(parts.joined(separator: " · "))
+                .font(.caption2.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        })
     }
 
     /// Writes the compressed output straight into the user's photo library
@@ -292,8 +387,32 @@ struct JobRowView: View {
                 ellipsisMenu
 
             case .done:
-                // Just the three-dot menu: report, share, and delete all live
-                // there.
+                // The next actions people actually take — share it or put
+                // it in Photos — live right on the row; Rename, Report and
+                // Remove stay in the menu.
+                if let out = job.outputURL,
+                   FileManager.default.fileExists(atPath: out.path) {
+                    Button {
+                        saveToPhotos(out)
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.tint.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Save to Photos")
+
+                    ShareLink(item: out) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.tint.opacity(0.12), in: Capsule())
+                    }
+                    .accessibilityLabel("Share")
+                }
                 ellipsisMenu
             }
         }
@@ -452,6 +571,17 @@ struct ReportSheet: View {
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingDelete = false
+    /// Passed checks start COLLAPSED — six green detail cards are noise;
+    /// failures and warnings are expanded by default.
+    @State private var showingPasses = false
+
+    /// Issues (failures + warnings) in report order — shown expanded.
+    private var issueItems: [ReportItem] {
+        report.items.filter { $0.severity != .pass }
+    }
+    private var passItems: [ReportItem] {
+        report.items.filter { $0.severity == .pass }
+    }
 
     var body: some View {
         NavigationStack {
@@ -459,20 +589,19 @@ struct ReportSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     summaryCard
 
-                    ForEach(report.items) { item in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: item.severity.symbol)
-                                .foregroundStyle(color(item.severity))
-                                .font(.title3)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.title)
-                                    .font(.callout.weight(.semibold))
-                                Text(item.detail)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(4)
+                    ForEach(issueItems) { itemView($0) }
+
+                    if !passItems.isEmpty {
+                        DisclosureGroup(isExpanded: $showingPasses) {
+                            VStack(spacing: 10) {
+                                ForEach(passItems) { itemView($0) }
                             }
-                            Spacer()
+                            .padding(.top, 8)
+                        } label: {
+                            Label("Passed checks (\(passItems.count))",
+                                  systemImage: "checkmark.circle")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
                         .padding(12)
                         .background(Color(.secondarySystemGroupedBackground),
@@ -530,6 +659,27 @@ struct ReportSheet: View {
         }
     }
 
+    @ViewBuilder
+    private func itemView(_ item: ReportItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.severity.symbol)
+                .foregroundStyle(color(item.severity))
+                .font(.title3)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.callout.weight(.semibold))
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private var summaryCard: some View {
         let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
         // Nil stats (verification timed out) display as "—", never "0".
@@ -553,14 +703,14 @@ struct ReportSheet: View {
                 switch report.status {
                 case .verified:
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                    Text("All integrity checks passed").font(.headline)
+                    Text("\(passItems.count) checks passed").font(.headline)
                 case .warnings:
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(Color(UIColor.systemOrange))
-                    Text("Not fully verified").font(.headline)
+                    Text("\(passItems.count) of \(report.items.count) checks passed").font(.headline)
                 case .failed:
                     Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                    Text("Integrity issues found").font(.headline)
+                    Text("\(issueItems.count) checks failed").font(.headline)
                 }
             }
             LazyVGrid(columns: cols, spacing: 10) {
@@ -593,5 +743,124 @@ struct ReportSheet: View {
         case .warn: return Color(UIColor.systemOrange)
         case .fail: return .red
         }
+    }
+}
+
+// MARK: - Output player
+
+/// In-app playback of the compressed result with a Source toggle for
+/// side-by-side comparison at the SAME timestamp — quality claims become
+/// checkable without leaving the app.
+///
+/// Graceful degradation matters here: done jobs delete the source import,
+/// and any file can be removed by the user in Files, so the toggle only
+/// appears when BOTH files still exist, and the sheet picks whichever
+/// side is actually available.
+private struct OutputPlayerSheet: View {
+    @EnvironmentObject private var coordinator: JobCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    let job: JobCoordinator.Job
+
+    @State private var player = AVPlayer()
+    @State private var side: Side = .output
+    @State private var sourceExists = false
+    @State private var outputExists = false
+    @State private var didLoad = false
+
+    enum Side: Hashable { case output, source }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 14) {
+                VideoPlayer(player: player)
+                    .aspectRatio(16 / 9, contentMode: .fit)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                    .accessibilityLabel("Video preview")
+
+                // Compare toggle ONLY when both the output and the source
+                // still exist (done jobs delete the source import).
+                if outputExists && sourceExists {
+                    Picker("Compare", selection: $side.animation) {
+                        Text("Output").tag(Side.output)
+                        Text("Source").tag(Side.source)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    Text("Switching keeps the same playback position.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if !outputExists && sourceExists {
+                    Text("The compressed file is gone — showing the source instead.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(.top, 12)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(displayTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .onAppear(perform: load)
+            // Source↔Output comparison keeps the same playback position.
+            .onChange(of: side) { _, newSide in
+                swapSide(new: newSide)
+            }
+        }
+    }
+
+    private var displayTitle: String {
+        if job.state == .done, let out = job.outputURL {
+            return (out.lastPathComponent as NSString).deletingPathExtension
+        }
+        return job.sourceName
+    }
+
+    private func load() {
+        guard !didLoad else { return }
+        didLoad = true
+        let out = job.outputURL
+        // The real existence check — Job.outputURL can outlive its file.
+        outputExists = out.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
+        // Default to the output; fall back to the source if it's gone.
+        side = outputExists ? .output : .source
+        player.replaceCurrentItem(item(for: side))
+        player.play()
+    }
+
+    private func item(for side: Side) -> AVPlayerItem? {
+        switch side {
+        case .output:
+            if outputExists, let out = job.outputURL {
+                return AVPlayerItem(url: out)
+            }
+            return nil
+        case .source:
+            guard sourceExists else { return nil }
+            return AVPlayerItem(url: job.sourceURL)
+        }
+    }
+
+    /// Swapping to compare preserves the playback position and continues
+    /// playback — the two videos stay in lock-step on the same frame.
+    private func swapSide(new: Side) {
+        let time = player.currentTime()
+        let wasPlaying = player.rate > 0
+        player.replaceCurrentItem(item(for: new))
+        if time.seconds > 0 {
+            // The compressed runtime can differ slightly (fps cap), but
+            // AVPlayer clamps the seek itself.
+            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+        if wasPlaying { player.play() }
     }
 }

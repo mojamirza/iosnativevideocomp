@@ -23,6 +23,10 @@ final class JobCoordinator: ObservableObject {
         var outputURL: URL?
         var thumbnail: UIImage?
         var createdAt = Date()
+        /// When the encode actually started (nil until .compressing) — the
+        /// row derives encode speed and ETA from this, proving the job is
+        /// alive without inventing fake progress.
+        var startedAt: Date?
     }
 
     @Published var jobs: [Job] = []
@@ -160,6 +164,7 @@ final class JobCoordinator: ObservableObject {
             setJob(jobID) {
                 $0.state = .compressing
                 $0.progress = 0
+                $0.startedAt = Date()
             }
             bgSubtitle("Encoding \(job.sourceName)…")
 

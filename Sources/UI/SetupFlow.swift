@@ -69,32 +69,15 @@ struct SetupFlowView: View {
                     }
 
                     presetSection
-
-                    if let errorText {
-                        Label(errorText, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                            .font(.callout)
-                    }
-
-                    // 10-bit/HDR sources cannot be encoded as H.264 (H.264 is
-                    // 8-bit only) — the engine silently uses HEVC instead.
-                    // Tell the user WHY the codec chip will lie.
-                    if let preset = selectedPreset, preset.codec == .h264,
-                       probes.contains(where: { p in
-                           guard let p else { return false }
-                           return p.tags.isHDR || p.bitDepth >= 10
-                       }) {
-                        Label("This preset encodes H.264, but 10-bit/HDR sources can only be encoded as HEVC — HEVC will be used.",
-                              systemImage: "info.circle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    startButton
                 }
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
+            // Estimate + Compress live in a PINNED bottom bar: the primary
+            // action stays reachable no matter how the preset list grows.
+            .safeAreaInset(edge: .bottom) {
+                bottomBar
+            }
             .navigationTitle(isBatch ? "Batch · \(videos.count) videos" : "New compression")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -106,12 +89,13 @@ struct SetupFlowView: View {
                 }
             }
             .sheet(isPresented: $showEditor) {
-                PresetEditorView { newPreset in
+                PresetEditorView(contextProbe: singleProbe) { newPreset in
                     savePreset(newPreset)
                 }
             }
             .sheet(item: $editingPreset) { preset in
-                PresetEditorView(existing: preset) { updated in
+                PresetEditorView(existing: preset,
+                                 contextProbe: singleProbe) { updated in
                     savePreset(updated)
                 }
             }
@@ -119,6 +103,107 @@ struct SetupFlowView: View {
                 await analyze()
             }
         }
+    }
+
+    // MARK: pinned bottom bar
+
+    /// Estimated output bytes for the current selection (single or batch).
+    private var estimateBytes: Int64? {
+        guard analysisDone, selectedPreset != nil else { return nil }
+        if isBatch {
+            return totalBatchOutBytes(for: selectedPreset!)
+        }
+        return estimate.map { Int64($0.estimatedSizeMB() * 1_048_576) }
+    }
+
+    /// True when the estimate leaves almost nothing saved — say so BEFORE
+    /// the user commits instead of shipping a disappointing report.
+    private var littleToGain: Bool {
+        guard let out = estimateBytes, let preset = selectedPreset else { return false }
+        let input = isBatch ? totalInBytes : (singleProbe?.fileSize ?? 0)
+        guard input > 0 else { return false }
+        return Double(out) >= Double(input) * 0.85 && preset.resolution != .keep
+    }
+
+    private var bottomBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let errorText {
+                Label(errorText, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+            // H.264 cannot encode 10-bit/HDR — the engine uses HEVC. Tell the
+            // user WHY the selected codec chip will be overridden.
+            if let preset = selectedPreset, preset.codec == .h264,
+               probes.contains(where: { p in
+                   guard let p else { return false }
+                   return p.tags.isHDR || p.bitDepth >= 10
+               }) {
+                Label("10-bit/HDR source — HEVC will be used (H.264 is 8-bit only).",
+                      systemImage: "info.circle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            // BEFORE → AFTER story with a proportional bar.
+            if let out = estimateBytes, selectedPreset != nil {
+                let input = isBatch ? totalInBytes : (singleProbe?.fileSize ?? 0)
+                let inText = ByteCountFormatter.string(fromByteCount: input, countStyle: .file)
+                let outText = ByteCountFormatter.string(fromByteCount: out, countStyle: .file)
+                let ratio = input > 0 ? Double(out) / Double(input) : 0
+                let pct = input > 0 ? (1 - Double(out) / Double(input)) * 100 : 0
+                VStack(alignment: .leading, spacing: 7) {
+                    if isBatch {
+                        Text(String(format: "%d files · %@ → ≈ %@ (−%.0f%%)",
+                                    videos.count, inText, outText, max(0, pct)))
+                            .font(.callout.weight(.semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    } else {
+                        Text(String(format: "%@ → ≈ %@ (−%.0f%%)", inText, outText, max(0, pct)))
+                            .font(.callout.weight(.semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    // Proportional bar: tinted portion = output size share.
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color(.systemFill))
+                            Capsule().fill(ratio <= 1 ? Color.accentColor : Color(.systemOrange))
+                                .frame(width: max(4, min(1, ratio) * geo.size.width))
+                        }
+                    }
+                    .frame(height: 6)
+                    if littleToGain {
+                        Label("Little to gain — the source is already leaner than this preset targets.",
+                              systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(Color(UIColor.systemOrange))
+                    }
+                }
+            }
+
+            Button {
+                start()
+            } label: {
+                HStack {
+                    if !analysisDone {
+                        ProgressView().tint(.white)
+                    }
+                    Image(systemName: isBatch ? "square.stack.3d.up.badge.plus" : "arrow.down.forward.circle.fill")
+                    Text(buttonTitle)
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canStart)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 0))
     }
 
     // MARK: subviews
@@ -182,6 +267,14 @@ struct SetupFlowView: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        // Per-video OUTPUT estimate next to the input size.
+                        if let p = probes[i],
+                           analysisDone, let preset = selectedPreset {
+                            Text(String(format: "→ ≈ %.0f MB",
+                                        QualitySizeOptimizer.plan(preset: preset, probe: p).estimatedSizeMB()))
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(.tint)
+                        }
                     }
                     Spacer()
                     if probes[i] != nil {
@@ -334,87 +427,6 @@ struct SetupFlowView: View {
     private var estimate: OptimizerPlan? {
         guard let probe = singleProbe, let preset = selectedPreset else { return nil }
         return QualitySizeOptimizer.plan(preset: preset, probe: probe)
-    }
-
-    private var startButton: some View {
-        VStack(spacing: 8) {
-            if isBatch {
-                if let total = totalBatchOutBytes(for: selectedPreset ?? Preset.builtIn[0]) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Estimated output (all \(videos.count) videos)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "≈ %.0f MB total", Double(total) / 1_048_576))
-                                .font(.title3.weight(.bold).monospacedDigit())
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Bitrate (per video)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "%.1f + %.0f kbps",
-                                        Double(estimate?.videoBitrate ?? 0) / 1_000_000,
-                                        Double(estimate?.audioBitrate ?? 0) / 1000))
-                                .font(.subheadline.weight(.semibold).monospacedDigit())
-                        }
-                    }
-                    .padding(14)
-                    .background(Color(.secondarySystemGroupedBackground),
-                                in: RoundedRectangle(cornerRadius: 14))
-
-                    Text("One preset applied to every video · each row shows its own estimate · jobs run one at a time in the queue")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else if let est = estimate {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Estimated output")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(String(format: "≈ %.0f MB", est.estimatedSizeMB()))
-                            .font(.title3.weight(.bold).monospacedDigit())
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("Bitrate")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(String(format: "%.1f + %.0f kbps",
-                                    Double(est.videoBitrate) / 1_000_000,
-                                    Double(est.audioBitrate) / 1000))
-                            .font(.subheadline.weight(.semibold).monospacedDigit())
-                    }
-                }
-                .padding(14)
-                .background(Color(.secondarySystemGroupedBackground),
-                            in: RoundedRectangle(cornerRadius: 14))
-
-                Text(est.rationale)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Button {
-                start()
-            } label: {
-                HStack {
-                    if !analysisDone {
-                        ProgressView().tint(.white)
-                    }
-                    Image(systemName: isBatch ? "square.stack.3d.up.badge.plus" : "arrow.down.forward.circle.fill")
-                    Text(buttonTitle)
-                        .font(.headline)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canStart)
-        }
     }
 
     private var buttonTitle: String {
