@@ -33,8 +33,21 @@ enum QualitySizeOptimizer {
     static func plan(preset: Preset, probe: ProbeResult) -> OptimizerPlan {
         let outputSize = preset.resolution.outputSize(for: probe.sourceSize)
         let duration = max(0.1, probe.duration)
-        let fps = probe.nominalFPS > 0 ? probe.nominalFPS : 30
-        let audioBitrate = max(32, min(preset.audioBitrateKbps, 320)) * 1000
+        let rawFPS = probe.nominalFPS > 0 ? probe.nominalFPS : 30
+        // The plan's fps must reflect the CAP, not the raw source rate:
+        // encoder GOP metadata, expected-frame counts and the live ETA are
+        // all derived from plan.fps.
+        let fps: Float
+        if let cap = preset.fpsCap {
+            fps = min(rawFPS, Float(cap))
+        } else {
+            fps = rawFPS
+        }
+        // Silent sources plan NO audio — the size estimate must not count a
+        // track that doesn't exist (and the report must not describe one).
+        let audioBitrate = probe.hasAudio
+            ? max(32, min(preset.audioBitrateKbps, 320)) * 1000
+            : 0
 
         // Exact bitrate from the preset, with a tiny floor for degenerate input.
         let requested = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
@@ -49,19 +62,29 @@ enum QualitySizeOptimizer {
         let ceiling: Double = probe.videoDataRate > 0
             ? probe.videoDataRate * areaRatio * (areaRatio < 1 ? 1.25 : 0.95)
             : .infinity
-        let videoBitrate = min(requested, max(200_000, Int(ceiling)))
+        // Int(Double) TRAPS when the value isn't representable — and an
+        // unknown source data rate leaves ceiling at INFINITY (the old
+        // Int(ceiling) crashed the setup sheet for such files). Apply the
+        // ceiling only when finite, hard-clamped well inside Int range;
+        // unknown rates skip it entirely (pure fixed-bitrate).
+        let videoBitrate: Int = ceiling.isFinite
+            ? min(requested, max(200_000, Int(min(ceiling, 40e9))))
+            : requested
+        let audioNote = probe.hasAudio
+            ? String(format: "%.0f kbps audio", Double(audioBitrate) / 1000)
+            : "no audio"
         let rationale: String
-        if Double(requested) > ceiling {
+        if videoBitrate < requested {
             rationale = String(
-                format: "%.1f Mbps requested — capped to %.1f Mbps for %d×%d (%.0f%% of source pixels, source is %.1f Mbps) · %.0f kbps audio",
+                format: "%.1f Mbps requested — capped to %.1f Mbps for %d×%d (%.0f%% of source pixels, source is %.1f Mbps) · %@",
                 Double(requested) / 1e6, Double(videoBitrate) / 1e6,
                 Int(outputSize.width), Int(outputSize.height),
                 areaRatio * 100, probe.videoDataRate / 1e6,
-                Double(audioBitrate) / 1000)
+                audioNote)
         } else {
             rationale = String(
-                format: "%.1f Mbps video · %.0f kbps audio at %d×%d",
-                preset.fixedBitrateMbps, Double(audioBitrate) / 1000,
+                format: "%.1f Mbps video · %@ at %d×%d",
+                preset.fixedBitrateMbps, audioNote,
                 Int(outputSize.width), Int(outputSize.height))
         }
 

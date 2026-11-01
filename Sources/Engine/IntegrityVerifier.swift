@@ -127,7 +127,9 @@ enum IntegrityVerifier {
                     "The source had audio but the output does not.", .fail))
             } else {
                 items.append(ReportItem("audio", "Audio track preserved",
-                    String(format: "AAC %.0f kbps", plan.audioBitrate / 1000), .pass))
+                    // Double division — the old Int/1000 passed to %.0f
+                    // printed 0 or garbage.
+                    String(format: "AAC %.0f kbps", Double(plan.audioBitrate) / 1000), .pass))
             }
         }
 
@@ -165,6 +167,28 @@ enum IntegrityVerifier {
                 let hdrNote = src.isHDR ? " — HDR transfer preserved end-to-end" : ""
                 items.append(ReportItem("color", "Color-safe engine passed",
                     "\(src.humanLabel)\(hdrNote). " + detail.joined(separator: "; "), .pass))
+            }
+        }
+
+        // 5b. 10-bit depth preservation: an HDR/10-bit source MUST come out
+        // as 10-bit HEVC. Main10 is explicitly requested now (see engine),
+        // but verify, don't trust — parse the output's own hvcC atom; if
+        // auto-negotiation ever picked Main (8-bit), the HDR chain broke.
+        if probe.bitDepth >= 10 || probe.tags.isHDR {
+            if let outTrack = videoTracks.first {
+                let outFmts: [CMFormatDescription] = (try? await outTrack.load(.formatDescriptions)) ?? []
+                let parsed = outFmts.first.flatMap { SampleDescription.depth(of: $0) }
+                switch parsed {
+                case .some(let d) where d >= 10:
+                    items.append(ReportItem("hdr", "10-bit depth preserved",
+                        String(format: "Output decodes at %d bpc — HDR data intact.", d), .pass))
+                case .some(let d):
+                    items.append(ReportItem("hdr", "10-bit source flattened to 8-bit",
+                        String(format: "An HDR/10-bit source produced a %d bpc output — the HDR chain broke somewhere in the pipeline.", d), .fail))
+                case nil:
+                    items.append(ReportItem("hdr", "10-bit depth could not be confirmed",
+                        "The output's hvcC atom did not parse; the encoder's profile negotiation may or may not have chosen Main10. If HDR looks washed out, this file is 8-bit.", .warn))
+                }
             }
         }
 

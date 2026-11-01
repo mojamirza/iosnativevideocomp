@@ -81,8 +81,9 @@ enum CompressionError: LocalizedError {
 ///                         sources) go straight into the encoder with the
 ///                         source color tags intact.
 ///  * VTPixelTransfer    — any downscale (8-bit and 10-bit alike) through a
-///                         VideoToolbox pixel transfer session in explicit
-///                         HighQuality scaling mode. Pure geometric rescale:
+///                         VideoToolbox pixel transfer session (normal
+///                         scaling + averaging downsampling, the documented
+///                         anti-aliasing switch). Pure geometric rescale:
 ///                         no tonemapping, no bit-depth loss, source color
 ///                         metadata re-applied on the destination buffer
 ///                         BEFORE transferring.
@@ -109,8 +110,13 @@ enum CompressionEngine {
     }
 
     /// One pixel-transfer session for ANY downscale (8-bit SDR included).
-    /// The default scaling mode is unspecified/driver-dependent — HighQuality
-    /// is requested explicitly so 4K→720p doesn't alias.
+    /// The DOCUMENTED scaling modes are Normal / CropSourceToCleanAperture /
+    /// Letterbox / Trim — the old "HighQuality" value is not a scaling mode
+    /// at all, and the ignored OSStatus made the failure invisible (the
+    /// session silently kept its default). "Normal" is set explicitly and
+    /// the status is checked; aliasing on big downscale ratios is handled by
+    /// the AVERAGING downsampling mode instead (that's the dedicated switch
+    /// for 4K→720p: average the source block instead of point-decimating).
     private static func makeTransferSession() -> VTPixelTransferSession? {
         var s: VTPixelTransferSession?
         // VTCreatePixelTransferSession is macOS-only; iOS uses the classic call.
@@ -118,9 +124,21 @@ enum CompressionEngine {
                                            pixelTransferSessionOut: &s) == noErr, let s else {
             return nil
         }
-        VTSessionSetProperty(s,
-                             key: kVTPixelTransferPropertyKey_ScalingMode,
-                             value: "HighQuality" as CFString)
+        let modeStatus = VTSessionSetProperty(
+            s,
+            key: kVTPixelTransferPropertyKey_ScalingMode,
+            value: kVTPixelTransferScalingMode_Normal)
+        if modeStatus != noErr {
+            NSLog("VidCompress: explicit scaling mode rejected (%d) — using VT default", modeStatus)
+        }
+        // Anti-aliasing: averaging downsampling for every downscale.
+        let dsStatus = VTSessionSetProperty(
+            s,
+            key: kVTPixelTransferPropertyKey_DownsamplingMode,
+            value: kVTDownsamplingMode_Average)
+        if dsStatus != noErr {
+            NSLog("VidCompress: averaging downsampling rejected (%d) — using VT default", dsStatus)
+        }
         return s
     }
 
@@ -174,6 +192,11 @@ enum CompressionEngine {
         if encodeCodec == .h264 {
             // H.264: explicit down-to-earth profile (8-bit only).
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
+        } else if wants10Bit {
+            // 10-bit/HDR sources: EXPLICIT Main10 instead of trusting the
+            // auto-negotiation — and the verifier re-parses the output's own
+            // hvcC atom to prove the depth survived (never take it on faith).
+            props[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main10_AutoLevel as String
         }
 
         let fmts: [CMFormatDescription] = (try? await track.load(.formatDescriptions)) ?? []
@@ -228,9 +251,11 @@ enum CompressionEngine {
             AVVideoHeightKey: encodeH,
             AVVideoCompressionPropertiesKey: props,
         ]
-        if let color = tags.writerColorProperties() {
-            settings[AVVideoColorPropertiesKey] = color
-        }
+        // Always complete — the resolver produces a full, valid triplet
+        // (never a partial dictionary; the old optional-dict path could
+        // omit color props entirely).
+        settings[AVVideoColorPropertiesKey] =
+            tags.writerColorProperties(displayWidth: Int(plan.source.sourceSize.width))
 
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
@@ -355,9 +380,27 @@ enum CompressionEngine {
         guard writer.startWriting() else {
             throw writer.error ?? CompressionError.writerFailed("startWriting returned false")
         }
-        // Single, race-free session start: 0 is <= every sample PTS of both
-        // tracks, so neither pipe can append "before the session".
-        writer.startSession(atSourceTime: .zero)
+        // Session start: 0 is wrong for EDITED/TRIMMED clips, whose first
+        // PTS is often above zero — startSession(0) writes an empty lead
+        // (a silent/black gap) and can append "before the session" when the
+        // OTHER track starts earlier than the session. Anchor at the
+        // earliest track start that is actually above zero; a track that
+        // starts at/below 0 forces the anchor to 0 so nothing appends
+        // before it.
+        var sessionStart = ((try? await track.load(.timeRange))?.start) ?? .zero
+        if !(sessionStart.seconds.isFinite && sessionStart.seconds > 0) {
+            sessionStart = .zero
+        }
+        if let aTrack = audioTrack, let audioRange = (try? await aTrack.load(.timeRange)) {
+            let aStart = audioRange.start
+            if !(aStart.seconds.isFinite && aStart.seconds > 0) {
+                // The audio starts at/before zero — anchor the session there.
+                sessionStart = .zero
+            } else if CMTimeCompare(aStart, sessionStart) < 0 {
+                sessionStart = aStart
+            }
+        }
+        writer.startSession(atSourceTime: sessionStart)
 
         let expected = plan.expectedFrames
         // Hard cap on SILENTLY dropped frames (buffer-allocation/transfer
@@ -415,19 +458,31 @@ enum CompressionEngine {
 
                         let pts = CMSampleBufferGetPresentationTimeStamp(sb)
 
-                        // Frame-rate cap on a SLOT GRID: each accepted frame
-                        // opens a slot 1/cap wide; frames inside an open slot
-                        // are dropped. Steady cadence, correct for any source
-                        // rate (and the FIRST frame is always kept — the grid
-                        // anchors on it, not on a negative starting point).
+                        // Frame-rate cap on a SLOT GRID with re-anchoring:
+                        // each accepted frame opens a slot 1/cap wide; frames
+                        // inside the open slot are dropped (first frame
+                        // anchors the grid). WITHOUT re-anchoring the grid
+                        // drifts: after a slower stretch (variable-rate screen
+                        // recordings) nextSlot lags behind and a later burst
+                        // passes entirely uncapped. A half-slot tolerance
+                        // absorbs the timestamp jitter of a source hovering
+                        // just above the cap.
                         if let cap = preset.fpsCap, cap > 0 {
+                            let period = CMTime(value: 1, timescale: CMTimeScale(cap))
                             if !slotActive {
                                 slotActive = true
-                                nextSlot = pts
+                                nextSlot = CMTimeAdd(pts, period)
                             } else if CMTimeCompare(pts, nextSlot) < 0 {
+                                // Still inside the open slot — kept cadence.
                                 continue
+                            } else if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 2.0 / Double(cap) {
+                                // Grid lagged more than a full period: re-
+                                // anchor HERE so a follow-up burst is capped
+                                // again instead of sliding through.
+                                nextSlot = CMTimeAdd(pts, period)
+                            } else {
+                                nextSlot = CMTimeAdd(nextSlot, period)
                             }
-                            nextSlot = CMTimeAdd(nextSlot, CMTime(value: 1, timescale: CMTimeScale(cap)))
                         }
 
                         if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
