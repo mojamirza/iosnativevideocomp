@@ -34,6 +34,14 @@ struct ColorTags: Hashable {
         return t
     }
 
+    /// SD classification — ONE rule used by attach() AND writerColorProperties()
+    /// with the same SOURCE display dimensions, so the two consumers can never
+    /// disagree. Covers 720×480 / 720×576 / 640×480 SD; excludes 720×1280
+    /// portrait HD (which a width-only rule would misread as SD) and 854×480.
+    static func isSD(width: Int, height: Int) -> Bool {
+        max(width, height) <= 720 && min(width, height) <= 576
+    }
+
     // ------------------------------------------------------------------
     // THE one canonical colorimetry resolver (claim-hardening): used by
     // BOTH attach() and writerColorProperties(), so the two consumers can
@@ -42,42 +50,51 @@ struct ColorTags: Hashable {
     // values: the SDK's constant VALUES are uppercase ("ITU_R_709_2"), and
     // PQ's canonical name is SMPTE_ST_2084_PQ ("itu_r_2100_pq" does not
     // exist at all). Feeding an invalid value to AVAssetWriterInput
-    // raises an uncatchable Objective-C exception. Any token this file
-    // carried is mapped onto a REAL constant; anything unrecognised falls
-    // to the canonical default for its class.
+    // raises an uncatchable Objective-C exception. 
+    //
+    // PRESERVATION RULE: what the file carried is kept (mapped onto the
+    // matching real constant) whenever one exists — P3, SMPTE-C, EBU and
+    // 2020 primaries are NOT relabeled to 709, otherwise Display-P3
+    // content shifts colour on every path. Only files carrying nothing
+    // (or something unrecognised) fall to the canonical default for their
+    // class: Rec.601 family for SD (matrix only — there IS a 601 primaries
+    // constant family but no file ever carries it as "601 primaries"),
+    // Rec.709 for HD, Rec.2020 + HLG/PQ for HDR.
     // ------------------------------------------------------------------
 
     /// (primaries, transferFunction, matrix) as canonical constant strings.
-    /// The fallbacks: Rec.601 family for SD (≤720 px wide, matrix only —
-    /// AVVideo has no 601 primaries/transfer constant), Rec.709 for HD,
-    /// Rec.2020 + HLG/PQ for HDR. `displayWidth` is the SOURCE display
-    /// width — colorimetry describes the content, not the output scale.
-    func resolved(isHDR: Bool, displayWidth: Int)
+    /// `sd` is the shared SD classification (see isSD(width:height:)).
+    func resolved(isHDR: Bool, sd: Bool)
         -> (primaries: String, transferFunction: String, yCbCrMatrix: String) {
         let t = (transferFunction ?? "").lowercased()
         let p = (primaries ?? "").lowercased()
         let m = (yCbCrMatrix ?? "").lowercased()
-        let sd = displayWidth > 0 && displayWidth <= 720
         let carriedNothing = t.isEmpty && p.isEmpty && m.isEmpty
 
         // TRANSFER: HLG / PQ / HDR-fallback PQ / 709. (There is no "601"
-        // transfer constant, so untagged SD keeps 709's transfer curve.)
+        // transfer constant, so untagged SD keeps 709's transfer curve —
+        // visually indistinguishable from an sRGB 2.2 curve at these gamma
+        // levels, and the verifier compares against this same resolution.)
         let tf: String
         if t.contains("hlg") { tf = "ITU_R_2100_HLG" }
         else if t.contains("pq") || t.contains("2084") { tf = "SMPTE_ST_2084_PQ" }
         else if isHDR { tf = "SMPTE_ST_2084_PQ" }
         else { tf = "ITU_R_709_2" }
 
-        // PRIMARIES: 2020 for HDR or a carried 2020; otherwise 709 (the
-        // only other primaries that every consumer accepts safely).
+        // PRIMARIES: PRESERVE what exists (2020 / P3 / SMPTE-C / EBU); 2020
+        // only for HDR-with-nothing; 709 otherwise.
         let pri: String
-        if p.contains("2020") || isHDR { pri = "ITU_R_2020" }
+        if p.contains("2020") { pri = "ITU_R_2020" }
+        else if p.contains("p3") { pri = "P3_D65" }
+        else if p.contains("smpte_c") || p.contains("smptec") { pri = "SMPTE_C" }
+        else if p.contains("ebu") { pri = "EBU_3213" }
+        else if isHDR && p.isEmpty { pri = "ITU_R_2020" }
         else { pri = "ITU_R_709_2" }
 
-        // MATRIX: 2020 for HDR; a carried 601/170-family stays 601_4; and
-        // UNTAGGED SD sources default to 601_4 — the usual SD colorimetry.
+        // MATRIX: preserve carried 601/170; 2020 for HDR; UNTAGGED SD
+        // sources default to 601_4 — the usual SD colorimetry.
         let mat: String
-        if m.contains("2020") || isHDR { mat = "ITU_R_2020" }
+        if m.contains("2020") || (isHDR && m.isEmpty) { mat = "ITU_R_2020" }
         else if m.contains("601") || m.contains("170")
                  || (carriedNothing && sd) { mat = "ITU_R_601_4" }
         else { mat = "ITU_R_709_2" }
@@ -108,11 +125,15 @@ struct ColorTags: Hashable {
             }
         }
         // Resolve ALL THREE tags through the canonical resolver — even when
-        // the source file is missing some — using the SOURCE's display
-        // width for the SD/HD decision (colorimetry follows the content).
-        let sourceWidth = source.map { CVPixelBufferGetWidth($0) }
+        // the source file is missing some — with the SD/HD decision from the
+        // SAME inputs (source buffer geometry + shared isSD rule) as the
+        // writer path, so the store/W/R paths can never disagree.
+        let sw = source.map { CVPixelBufferGetWidth($0) }
             ?? CVPixelBufferGetWidth(buffer)
-        let r = tags.resolved(isHDR: tags.isHDR, displayWidth: sourceWidth)
+        let sh = source.map { CVPixelBufferGetHeight($0) }
+            ?? CVPixelBufferGetHeight(buffer)
+        let r = tags.resolved(isHDR: tags.isHDR,
+                              sd: ColorTags.isSD(width: sw, height: sh))
         CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey,
                               ColorCanon.cvPrimaries(r.primaries), .shouldPropagate)
         CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey,
@@ -126,8 +147,11 @@ struct ColorTags: Hashable {
     /// AVFoundation twins. Never a hand-typed literal value.
     enum ColorCanon {
         static func cvPrimaries(_ c: String) -> CFString {
-            c.contains("2020") ? kCVImageBufferColorPrimaries_ITU_R_2020
-                               : kCVImageBufferColorPrimaries_ITU_R_709_2
+            if c.contains("2020") { return kCVImageBufferColorPrimaries_ITU_R_2020 }
+            if c.contains("P3") { return kCVImageBufferColorPrimaries_P3_D65 }
+            if c.contains("SMPTE_C") { return kCVImageBufferColorPrimaries_SMPTE_C }
+            if c.contains("EBU") { return kCVImageBufferColorPrimaries_EBU_3213 }
+            return kCVImageBufferColorPrimaries_ITU_R_709_2
         }
         static func cvTransfer(_ c: String) -> CFString {
             if c.contains("HLG") { return kCVImageBufferTransferFunction_ITU_R_2100_HLG }
@@ -140,8 +164,11 @@ struct ColorTags: Hashable {
             return kCVImageBufferYCbCrMatrix_ITU_R_709_2
         }
         static func avPrimaries(_ c: String) -> String {
-            c.contains("2020") ? AVVideoColorPrimaries_ITU_R_2020
-                               : AVVideoColorPrimaries_ITU_R_709_2
+            if c.contains("2020") { return AVVideoColorPrimaries_ITU_R_2020 }
+            if c.contains("P3") { return AVVideoColorPrimaries_P3_D65 }
+            if c.contains("SMPTE_C") { return AVVideoColorPrimaries_SMPTE_C }
+            if c.contains("EBU") { return AVVideoColorPrimaries_EBU_3213 }
+            return AVVideoColorPrimaries_ITU_R_709_2
         }
         static func avTransfer(_ c: String) -> String {
             if c.contains("HLG") { return AVVideoTransferFunction_ITU_R_2100_HLG }
@@ -159,9 +186,10 @@ struct ColorTags: Hashable {
     /// source. ALL three keys are always provided — a partial dictionary is
     /// undefined behavior and can raise an uncatchable Objective-C exception
     /// — and every value is a REAL SDK constant resolved in one place (see
-    /// `resolved`). `displayWidth` is the source display width (SD/HD rule).
-    func writerColorProperties(displayWidth: Int) -> [String: Any] {
-        let r = resolved(isHDR: isHDR, displayWidth: displayWidth)
+    /// `resolved`). `sd` comes from the shared isSD rule on the SOURCE
+    /// display size, the same inputs attach() uses.
+    func writerColorProperties(sd: Bool) -> [String: Any] {
+        let r = resolved(isHDR: isHDR, sd: sd)
         return [
             AVVideoColorPrimariesKey: ColorCanon.avPrimaries(r.primaries),
             AVVideoTransferFunctionKey: ColorCanon.avTransfer(r.transferFunction),
@@ -257,12 +285,30 @@ struct ProbeResult: Hashable {
             audioRate = Double((try? await audio.load(.estimatedDataRate)) ?? 0)
         }
 
+        // EVERY-CONSUMER duration = asset duration MINUS the muxer anchor
+        // (SessionAnchor, the same helper the engine uses): a trimmed/edited
+        // clip whose tracks start at 1 s gets its lead trimmed at encode
+        // time, so the plan's duration must describe the OUTPUT timeline —
+        // otherwise the verifier's duration check fails on a good file.
+        var sourceDuration = CMTimeGetSeconds(durationTime)
+        if sourceDuration.isFinite, sourceDuration > 0 {
+            let videoStart = ((try? await track.load(.timeRange))?.start) ?? .zero
+            let audioStart: CMTime? = audioTracks.first.flatMap {
+                (try? await $0.load(.timeRange))?.start
+            }
+            let offset = CMTimeGetSeconds(SessionAnchor.start(
+                video: videoStart, audio: audioStart))
+            if offset.isFinite, offset > 0 {
+                sourceDuration = max(0.1, sourceDuration - offset)
+            }
+        }
+
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64 ?? 0
 
         // Caveat: `naturalSize` already reflects rotation for modern sources;
         // the decoder's appliesPreferredTrackTransform handles the rest.
         return ProbeResult(
-            duration: CMTimeGetSeconds(durationTime),
+            duration: sourceDuration,
             sourceSize: sourceSize,   // display (post-rotation) size
             nominalFPS: nominalFPS > 0 ? nominalFPS : 30,
             codecSubType: subType,
@@ -282,9 +328,10 @@ struct ProbeResult: Hashable {
 enum SampleDescription {
 
     /// True bits per component from an "hvcC" (HEVC) sample-description atom:
-    /// bitDepthLumaMinus8 is a 3-bit field in byte 17 → 8/10/12. Returns nil
-    /// when the atom is absent or unparseable (H.264, malformed data) —
-    /// callers fall back to HDR tags, then 8.
+    /// bitDepthLumaMinus8 is a 3-bit field in byte 17 → 8/10/12. minus8 == 0
+    /// is plain Main (8-bit) — it MUST be reported, not nil: the verifier's
+    /// "HDR source flattened to 8-bit" case depends on knowing the truth.
+    /// Returns nil only when the atom is absent/unparseable (H.264, bad data).
     static func depth(of fmt: CMFormatDescription) -> Int? {
         guard let atoms = CMFormatDescriptionGetExtension(
                   fmt,
@@ -294,7 +341,31 @@ enum SampleDescription {
               let data = raw as? Data,
               data.count > 17 else { return nil }
         let minus8 = Int(data[data.startIndex + 17]) & 0x7
-        return minus8 >= 1 && minus8 <= 4 ? minus8 + 8 : nil   // 10..12 bpc
+        return minus8 <= 4 ? minus8 + 8 : nil
+    }
+}
+
+/// Muxer anchor shared by the ENGINE and the PROBE (one helper — the two
+/// consumers must agree by construction): the earliest track start above
+/// zero. Any track starting at/below zero anchors everything to 0 so no
+/// sample can append "before the session". The probe subtracts this offset
+/// from its duration so plan.duration matches the OUTPUT's timeline —
+/// otherwise the verifier fails a good trimmed clip's duration check.
+enum SessionAnchor {
+    static func start(video: CMTime, audio: CMTime?) -> CMTime {
+        var anchor = CMTime.zero
+        if video.isNumeric, video.seconds.isFinite, video.seconds > 0 {
+            anchor = video
+        }
+        if let a = audio {
+            if a.isNumeric, a.seconds.isFinite, a.seconds > 0 {
+                // audio-only anchor wins when it is earlier than the video's
+                if anchor.seconds <= 0 || CMTimeCompare(a, anchor) < 0 { anchor = a }
+            } else {
+                anchor = .zero   // audio starts at/below 0 → anchor 0
+            }
+        }
+        return anchor
     }
 }
 

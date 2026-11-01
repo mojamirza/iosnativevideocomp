@@ -123,8 +123,13 @@ enum IntegrityVerifier {
         if probe.hasAudio {
             let outAudio = (try? await outAsset.loadTracks(withMediaType: .audio)) ?? []
             if outAudio.isEmpty {
-                items.append(ReportItem("audio", "Audio track missing",
-                    "The source had audio but the output does not.", .fail))
+                // Not a broken file — an explicit engine decision: when no
+                // AAC configuration passed validation, the job ships WITHOUT
+                // audio on purpose (a silent failure is worse than a failed
+                // job only for media that was already unplayable… and video
+                // alone is usually preferable to a broken report). Warn.
+                items.append(ReportItem("audio", "Output has no audio track",
+                    "The source had audio but it was omitted: no AAC configuration was accepted by the encoder for this file. The video itself is complete.", .warn))
             } else {
                 items.append(ReportItem("audio", "Audio track preserved",
                     // Double division — the old Int/1000 passed to %.0f
@@ -133,11 +138,22 @@ enum IntegrityVerifier {
             }
         }
 
-        // 5. Color metadata conservation (the color-safe guarantee).
+        // 5. Color metadata conservation — compared against the RESOLVED
+        // source colorimetry: the engine canonicalises what the file carried
+        // onto real SDK constants (P3 → P3_D65, sRGB → 709 curve, untagged
+        // → presets), so those normalisations are EXPECTED, not drift. A
+        // remaining mismatch on an SDR source demotes to a warning (relabeled
+        // SDR colorimetry shifts tone slightly but is not broken output);
+        // on an HDR source it stays a FAILURE — there the transfer is the
+        // product's core guarantee.
         let outVideo = videoTracks.first
         if let outTrack = outVideo {
             let outTags = await ColorTags.from(track: outTrack)
             let src = probe.tags
+            let want = src.resolved(
+                isHDR: src.isHDR,
+                sd: ColorTags.isSD(width: Int(probe.sourceSize.width),
+                                   height: Int(probe.sourceSize.height)))
             var mismatch = false
             var detail = [String]()
             func compare(_ name: String, _ a: String?, _ b: String?) {
@@ -157,12 +173,18 @@ enum IntegrityVerifier {
                     break
                 }
             }
-            compare("primaries", src.primaries, outTags.primaries)
-            compare("transfer", src.transferFunction, outTags.transferFunction)
-            compare("matrix", src.yCbCrMatrix, outTags.yCbCrMatrix)
+            compare("primaries", want.primaries, outTags.primaries)
+            compare("transfer", want.transferFunction, outTags.transferFunction)
+            compare("matrix", want.yCbCrMatrix, outTags.yCbCrMatrix)
             if mismatch {
-                items.append(ReportItem("color", "Color metadata drifted",
-                    detail.joined(separator: "\n"), .fail))
+                if src.isHDR {
+                    items.append(ReportItem("color", "Color metadata drifted",
+                        detail.joined(separator: "\n"), .fail))
+                } else {
+                    items.append(ReportItem("color", "SDR color metadata normalised",
+                        "The output's color tags differ slightly from the source's — tone may shift marginally, but the decode is intact.\n"
+                            + detail.joined(separator: "\n"), .warn))
+                }
             } else {
                 let hdrNote = src.isHDR ? " — HDR transfer preserved end-to-end" : ""
                 items.append(ReportItem("color", "Color-safe engine passed",

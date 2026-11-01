@@ -184,10 +184,11 @@ enum CompressionEngine {
         // ------------------------------------------------------------------
         // CODEC. H.264 is 8-bit only: feeding it the 10-bit decoded buffers
         // of an HDR source makes every append fail (or produces a mis-tagged
-        // file at best). 10-bit sources are therefore ALWAYS encoded as HEVC
-        // (the codec used to be left to auto-profile negotiation, which
-        // already selects Main10 for 10-bit pipelines; auto remains the
-        // behavior — explicit H265 profile constants aren't exported here).
+        // file at best). 10-bit sources are therefore ALWAYS encoded as HEVC.
+        // The 10-bit HEVC path requests Main10 EXPLICITLY below (the earlier
+        // claim that HEVC profile constants aren't exported turned out to be
+        // wrong — only the pixel-transfer MODE constants are macro-only);
+        // 8-bit HEVC stays on auto-profile negotiation.
         // ------------------------------------------------------------------
         let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
         let encodeCodec: VideoCodec = (wants10Bit && preset.codec == .h264) ? .hevc : preset.codec
@@ -254,15 +255,21 @@ enum CompressionEngine {
             AVVideoCompressionPropertiesKey: props,
         ]
         // Always complete — the resolver produces a full, valid triplet
-        // (never a partial dictionary; the old optional-dict path could
-        // omit color props entirely).
-        settings[AVVideoColorPropertiesKey] =
-            tags.writerColorProperties(displayWidth: Int(plan.source.sourceSize.width))
+        // (never a partial dictionary). The SD/HD decision uses the shared
+        // isSD rule on the SOURCE display size — the same inputs attach()
+        // uses, so the buffer-path and writer-path colorimetry agree by
+        // construction (max≤720 AND min≤576: 720×1280 portrait is NOT SD).
+        settings[AVVideoColorPropertiesKey] = tags.writerColorProperties(
+            sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
+                               height: Int(plan.source.sourceSize.height)))
 
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
                                             sourceFormatHint: hint)
         videoInput.expectsMediaDataInRealTime = false
+        // Pass-through path hands reader-owned sample buffers straight to
+        // VT — no defensive copy needed (documented optimization).
+        videoInput.alwaysCopiesSampleData = false
         // Preserve rotation on every path (the scale path encodes transposed
         // pre-rotation frames; the transform restores the display orientation).
         if !preferredTransform.isIdentity {
@@ -343,6 +350,9 @@ enum CompressionEngine {
                 String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
+                // IOSurface-backed buffers: zero-copy handoff into the VT
+                // encoder path (plain malloc-backed buffers get copied).
+                String(kCVPixelBufferIOSurfacePropertiesKey): [String: Any](),
             ]
             CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttrs as CFDictionary, nil, &scalePool)
         }
@@ -350,17 +360,22 @@ enum CompressionEngine {
         var audioInput: AVAssetWriterInput?
         var audioOutput: AVAssetReaderTrackOutput?
         if let audioTrack, let aSettings = audioSettings {
+            // The READER's PCM channel count must match the audio input's
+            // final fallback (mono source + stereo fallback used to read
+            // mono PCM while the writer expected stereo).
             audioOutput = try AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVLinearPCMBitDepthKey: 16,
                 AVLinearPCMIsFloatKey: false,
                 AVLinearPCMIsBigEndianKey: false,
                 AVLinearPCMIsNonInterleaved: false,
+                AVNumberOfChannelsKey: aSettings[AVNumberOfChannelsKey] ?? (audioChannels as NSNumber),
             ])
             reader.add(audioOutput!)
 
             audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
             audioInput?.expectsMediaDataInRealTime = false
+            audioInput?.alwaysCopiesSampleData = false
             writer.add(audioInput!)
         }
 
@@ -371,6 +386,7 @@ enum CompressionEngine {
                 String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
+                String(kCVPixelBufferIOSurfacePropertiesKey): [String: Any](),
             ]
             return AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput,
                                                         sourcePixelBufferAttributes: poolAttrs)
@@ -382,36 +398,30 @@ enum CompressionEngine {
         guard writer.startWriting() else {
             throw writer.error ?? CompressionError.writerFailed("startWriting returned false")
         }
-        // Session start: 0 is wrong for EDITED/TRIMMED clips, whose first
-        // PTS is often above zero — startSession(0) writes an empty lead
-        // (a silent/black gap) and can append "before the session" when the
-        // OTHER track starts earlier than the session. Anchor at the
-        // earliest track start that is actually above zero; a track that
-        // starts at/below 0 forces the anchor to 0 so nothing appends
-        // before it.
-        var sessionStart = ((try? await track.load(.timeRange))?.start) ?? .zero
-        if !(sessionStart.seconds.isFinite && sessionStart.seconds > 0) {
-            sessionStart = .zero
+        // Session start via the SHARED SessionAnchor helper (the probe
+        // subtracts the same anchor from its duration, so plan.duration
+        // describes the output timeline and the verifier's duration check
+        // cannot false-fail a trimmed clip). 0 is wrong for EDITED/TRIMMED
+        // clips, whose first PTS is often above zero — startSession(0)
+        // writes an empty lead; a track starting at/below 0 anchors to 0.
+        let videoStart = ((try? await track.load(.timeRange))?.start) ?? .zero
+        let audioStart: CMTime? = audioTrack.flatMap {
+            (try? await $0.load(.timeRange))?.start
         }
-        if let aTrack = audioTrack, let audioRange = (try? await aTrack.load(.timeRange)) {
-            let aStart = audioRange.start
-            if !(aStart.seconds.isFinite && aStart.seconds > 0) {
-                // The audio starts at/before zero — anchor the session there.
-                sessionStart = .zero
-            } else if CMTimeCompare(aStart, sessionStart) < 0 {
-                sessionStart = aStart
-            }
-        }
-        writer.startSession(atSourceTime: sessionStart)
+        writer.startSession(atSourceTime: SessionAnchor.start(
+            video: videoStart, audio: audioStart))
 
         let expected = plan.expectedFrames
         // Hard cap on SILENTLY dropped frames (buffer-allocation/transfer
         // failures, NOT the fps cap which is intentional): a handful are a
         // decodable blemish; more than 0.1% means something is genuinely
         // wrong and the job must fail instead of shipping a stuttering file.
+        // The video pipe also ABORTS EARLY at the limit — no point burning
+        // minutes on frames the job will reject anyway.
         var droppedFrames = 0
         let dropLimit = max(1, expected / 1000)
         var lastReported = 0.0
+        var lastReportAt = Date()
 
         // ------------------------------------------------------------------
         // VIDEO PIPE
@@ -466,16 +476,20 @@ enum CompressionEngine {
                         // anchors the grid). WITHOUT re-anchoring the grid
                         // drifts: after a slower stretch (variable-rate screen
                         // recordings) nextSlot lags behind and a later burst
-                        // passes entirely uncapped. A half-slot tolerance
-                        // absorbs the timestamp jitter of a source hovering
-                        // just above the cap.
+                        // passes entirely uncapped. A QUARTER-PERIOD tolerance
+                        // below the slot boundary absorbs the timestamp jitter
+                        // of a source hovering just above the cap (30.1 fps
+                        // at cap 30): without it, an early frame just past the
+                        // boundary ditches in and the cadence hitches.
                         if let cap = preset.fpsCap, cap > 0 {
                             let period = CMTime(value: 1, timescale: CMTimeScale(cap))
+                            let tol = CMTime(value: 1, timescale: CMTimeScale(cap * 4))
                             if !slotActive {
                                 slotActive = true
                                 nextSlot = CMTimeAdd(pts, period)
-                            } else if CMTimeCompare(pts, nextSlot) < 0 {
-                                // Still inside the open slot — kept cadence.
+                            } else if CMTimeCompare(pts, CMTimeSubtract(nextSlot, tol)) < 0 {
+                                // Still inside the open slot (tolerance edge
+                                // included) — kept cadence, drop the frame.
                                 continue
                             } else if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 2.0 / Double(cap) {
                                 // Grid lagged more than a full period: re-
@@ -529,17 +543,35 @@ enum CompressionEngine {
                             }
                         }
 
+                        // EARLY abort at the dropped-frame budget: once too
+                        // many frames were silently lost, fail the job now —
+                        // nothing after this will change its verdict, and the
+                        // wait-only path (testing the count after the whole
+                        // encode) wasted minutes first.
+                        if droppedFrames > dropLimit {
+                            flags.fail(CompressionError.framesDropped(droppedFrames))
+                            reader.cancelReading()
+                            resume.resumeOnce()
+                            return
+                        }
+
                         // Heartbeat on EVERY frame (cheap): the stall
                         // watchdog must re-arm continuously, not just when a
                         // throttled progress report happens to land.
                         heartbeat.beat()
                         // Progress derived from the presentation TIME, not a
                         // frame count — this stays truthful across frame-rate
-                        // caps and variable-frame-rate sources.
+                        // caps and variable-frame-rate sources. Emitted when
+                        // the percent moved ≥0.2 % OR after a full second —
+                        // fine-grained enough that the coordinator's row
+                        // watchdog sees the job is alive between big jumps.
                         let secs = CMTimeGetSeconds(pts)
                         let p = min(0.99, secs.isFinite && secs >= 0 ? secs / plan.duration : 0)
-                        if p - lastReported >= 0.005 {
+                        if p - lastReported >= 0.002
+                            || (p != lastReported
+                                && Date().timeIntervalSince(lastReportAt) >= 1.0) {
                             lastReported = p
+                            lastReportAt = Date()
                             onProgress(p)
                         }
                     }
@@ -581,6 +613,10 @@ enum CompressionEngine {
                             resume.resumeOnce()
                             return
                         }
+                        // The heart of the encode is AAC — the video pipe
+                        // may finish long before this does; the watchdog
+                        // must see this pipe alive too.
+                        heartbeat.beat()
                         if !aIn.append(sb) {
                             flags.fail(writer.error
                                 ?? CompressionError.writerFailed("audio append failed"))
@@ -613,7 +649,8 @@ enum CompressionEngine {
         if pipesDone == nil {
             // Abort everything the stalled pipes left behind.
             reader.cancelReading()
-            writer.cancelWriting()
+            if writer.status == .writing { writer.cancelWriting() }
+            if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
@@ -623,6 +660,7 @@ enum CompressionEngine {
         // and never spend a 120s finalize window on a writer that died anyway.
         if let e = flags.error {
             if writer.status == .writing { writer.cancelWriting() }
+            if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
             throw e
         }
@@ -632,15 +670,18 @@ enum CompressionEngine {
         // The hooks resume the pipes' continuations only AFTER their in-flight
         // blocks complete, so by now no sample appends can be in flight.
         if flags.cancelled {
-            writer.cancelWriting()
+            if writer.status == .writing { writer.cancelWriting() }
+            if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.cancelled
         }
 
         // Silent-drop guard: report lost frames honestly instead of shipping
-        // an output with gaps the verifier can't plainly catch.
+        // an output with gaps the verifier can't plainly catch. (Rare here —
+        // the video pipe aborts early at this same limit.)
         if droppedFrames > dropLimit {
-            writer.cancelWriting()
+            if writer.status == .writing { writer.cancelWriting() }
+            if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.framesDropped(droppedFrames)
         }
@@ -652,16 +693,20 @@ enum CompressionEngine {
                 await writer.finishWriting()
             }
             if finalizeOK == nil {
+                if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
                 try? FileManager.default.removeItem(at: output)
                 throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")
             }
         }
         guard writer.status == .completed else {
             let msg = writer.error?.localizedDescription ?? "writer did not complete"
+            if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
             throw CompressionError.writerFailed(msg)
         }
 
+        // Success path: release the pixel transfer session's resources.
+        if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
         heartbeat.beat()
         onProgress(1.0)
     }
