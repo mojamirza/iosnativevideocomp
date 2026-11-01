@@ -168,7 +168,11 @@ enum IntegrityVerifier {
                 case (nil, nil):
                     break
                 case (let x?, nil):
-                    detail.append("\(name): source \(pretty(x)), output untagged (sRGB default)")
+                    // `want` (the resolved expectation) is never nil, so an
+                    // UNTAGGED output IS a mismatch — an HDR output that lost
+                    // its tags must not report green.
+                    mismatch = true
+                    detail.append("\(name): expected \(pretty(x)), output untagged")
                 default:
                     break
                 }
@@ -187,8 +191,36 @@ enum IntegrityVerifier {
                 }
             } else {
                 let hdrNote = src.isHDR ? " — HDR transfer preserved end-to-end" : ""
-                items.append(ReportItem("color", "Color-safe engine passed",
-                    "\(src.humanLabel)\(hdrNote). " + detail.joined(separator: "; "), .pass))
+                // Silent relabelling must not look like a plain pass: note
+                // every tag the resolver remapped (EBU/sRGB → 709, untagged
+                // → presets) so the user can see the output was normalised.
+                var normalised = [String]()
+                if let p = src.primaries,
+                   p.caseInsensitiveCompare(want.primaries) != .orderedSame {
+                    normalised.append("primaries \(pretty(p)) → written as \(pretty(want.primaries))")
+                }
+                if let t = src.transferFunction,
+                   t.caseInsensitiveCompare(want.transferFunction) != .orderedSame {
+                    normalised.append("transfer \(pretty(t)) → written as \(pretty(want.transferFunction))")
+                }
+                if let m = src.yCbCrMatrix,
+                   m.caseInsensitiveCompare(want.yCbCrMatrix) != .orderedSame {
+                    normalised.append("matrix \(pretty(m)) → written as \(pretty(want.yCbCrMatrix))")
+                }
+                if !normalised.isEmpty {
+                    items.append(ReportItem("color", "Color tags normalised",
+                        "\(src.humanLabel). This file's tags don't map 1:1 to the writer's supported constants, so they were remapped to the closest match: "
+                            + normalised.joined(separator: "; "), .warn))
+                } else if src.primaries == nil && src.transferFunction == nil
+                            && src.yCbCrMatrix == nil {
+                    // Untagged source: the green pass should still say
+                    // where the output's tags came from.
+                    items.append(ReportItem("color", "Source carried no color tags",
+                        "The output was tagged with the resolved defaults (matrix \(pretty(want.yCbCrMatrix)), transfer \(pretty(want.transferFunction)), primaries \(pretty(want.primaries))).", .warn))
+                } else {
+                    items.append(ReportItem("color", "Color-safe engine passed",
+                        "\(src.humanLabel)\(hdrNote). " + detail.joined(separator: "; "), .pass))
+                }
             }
         }
 
@@ -247,6 +279,7 @@ enum IntegrityVerifier {
         if l.contains("2020") { return "Rec.2020" }
         if l.contains("601") || l.contains("170") { return "Rec.601" }
         if l.contains("2100") { return "Rec.2100 HLG" }
+        if l.contains("p3") { return "Display P3" }
         return l.isEmpty ? "default" : token
     }
 

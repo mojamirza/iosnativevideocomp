@@ -197,14 +197,24 @@ struct ColorTags: Hashable {
         ]
     }
 
+    /// Human label from the RAW tags — case-insensitive (files may carry
+    /// either case) and P3-aware (Display P3 tagged sources show as P3,
+    /// not the "Rec.709 / sRGB" catch-all).
     var humanLabel: String {
         if isHDR {
-            return (transferFunction ?? "").lowercased().contains("hlg") ? "HDR (HLG)" : "HDR (Dolby Vision/PQ)"
+            return (transferFunction ?? "").lowercased().contains("hlg")
+                ? "HDR (HLG)" : "HDR (PQ / Dolby Vision)"
         }
-        switch primaries ?? "" {
-        case let p where p.contains("2020"): return "Rec.2020 SDR"
-        case "itu_r_601_4", "smpte170m": return "SDTV (Rec.601)"
-        default: return "Rec.709 / sRGB"
+        let p = (primaries ?? "").lowercased()
+        switch p {
+        case let x where x.contains("2020"):
+            return "Rec.2020 SDR"
+        case let x where x.contains("p3"):
+            return "Display P3"
+        case let x where x.contains("601") || x.contains("170") || x.contains("smpte_c"):
+            return "SDTV (Rec.601/170)"
+        default:
+            return "Rec.709 / sRGB"
         }
     }
 }
@@ -353,20 +363,20 @@ enum SampleDescription {
 /// from its duration so plan.duration matches the OUTPUT's timeline —
 /// otherwise the verifier fails a good trimmed clip's duration check.
 enum SessionAnchor {
+    /// The muxer anchor = the MINIMUM of both track starts, each clamped to
+    /// at least zero. Earlier logic regressed: a video start of 0 was read
+    /// as "no video anchor", so an audio starting at 0.5 s became the anchor
+    /// and the video's PTS-0 frames fell before the session (trimmed) — the
+    /// probe also subtracted that phantom offset from its duration.
+    /// video 0 + audio 0.5 → 0 · video 1 + audio 0.5 → 0.5 · video 1 + audio
+    /// nil → 1.
     static func start(video: CMTime, audio: CMTime?) -> CMTime {
-        var anchor = CMTime.zero
-        if video.isNumeric, video.seconds.isFinite, video.seconds > 0 {
-            anchor = video
+        func pos(_ t: CMTime) -> CMTime {
+            (t.isNumeric && t.seconds.isFinite && t.seconds > 0) ? t : .zero
         }
-        if let a = audio {
-            if a.isNumeric, a.seconds.isFinite, a.seconds > 0 {
-                // audio-only anchor wins when it is earlier than the video's
-                if anchor.seconds <= 0 || CMTimeCompare(a, anchor) < 0 { anchor = a }
-            } else {
-                anchor = .zero   // audio starts at/below 0 → anchor 0
-            }
-        }
-        return anchor
+        let v = pos(video)
+        guard let a = audio else { return v }
+        return CMTimeMinimum(v, pos(a))
     }
 }
 

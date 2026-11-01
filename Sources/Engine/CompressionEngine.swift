@@ -67,7 +67,7 @@ enum CompressionError: LocalizedError {
         case .writerFailed(let m): return "Encode failed: \(m)"
         case .cancelled: return "Compression was cancelled."
         case .framesDropped(let n):
-            return "Fell behind while scaling — \(n) frames were lost and the output would stutter."
+            return "Buffer starvation while encoding — \(n) frames could not be allocated or transferred, so the output would stutter."
         }
     }
 }
@@ -359,20 +359,35 @@ enum CompressionEngine {
         if let audioTrack, let aSettings = audioSettings {
             // The READER's PCM channel count must match the audio input's
             // final fallback (mono source + stereo fallback used to read
-            // mono PCM while the writer expected stereo).
-            audioOutput = try AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM,
-                AVLinearPCMBitDepthKey: 16,
-                AVLinearPCMIsFloatKey: false,
-                AVLinearPCMIsBigEndianKey: false,
-                AVLinearPCMIsNonInterleaved: false,
-                AVNumberOfChannelsKey: aSettings[AVNumberOfChannelsKey] ?? (audioChannels as NSNumber),
-            ])
-            reader.add(audioOutput!)
+            // mono PCM while the writer expected stereo). The reader init
+            // can THROW for a channel request it can't produce — that must
+            // degrade to video-only, not fail the JOB.
+            do {
+                let readerChannels = (aSettings[AVNumberOfChannelsKey] as? NSNumber)
+                    ?? NSNumber(value: audioChannels)
+                audioOutput = try AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
+                    AVFormatIDKey: kAudioFormatLinearPCM,
+                    AVLinearPCMBitDepthKey: 16,
+                    AVLinearPCMIsFloatKey: false,
+                    AVLinearPCMIsBigEndianKey: false,
+                    AVLinearPCMIsNonInterleaved: false,
+                    AVNumberOfChannelsKey: readerChannels,
+                ])
+                reader.add(audioOutput!)
 
-            audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
-            audioInput?.expectsMediaDataInRealTime = false
-            writer.add(audioInput!)
+                audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
+                audioInput?.expectsMediaDataInRealTime = false
+                writer.add(audioInput!)
+            } catch {
+                // Ship the video without audio — the writer is still in the
+                // "adding inputs" phase, so simply not adding the audio
+                // input keeps finishWriting() from waiting on a starving
+                // track.
+                NSLog("VidCompress: audio reader rejected settings (%@) — shipping video without audio",
+                      error.localizedDescription)
+                audioInput = nil
+                audioOutput = nil
+            }
         }
 
         // Pixel-buffer adaptor used only on the scaling path: its pool produces
@@ -405,8 +420,12 @@ enum CompressionEngine {
         if let aTrack = audioTrack {
             audioStart = (try? await aTrack.load(.timeRange))?.start
         }
-        writer.startSession(atSourceTime: SessionAnchor.start(
-            video: videoStart, audio: audioStart))
+        // ONE anchor, computed once and reused: the session AND the progress
+        // math (raw pts would otherwise run ahead on anchored/trimmed clips,
+        // reaching 99% before the encode finishes).
+        let sessionStart = SessionAnchor.start(video: videoStart, audio: audioStart)
+        let sessionStartSeconds = CMTimeGetSeconds(sessionStart)
+        writer.startSession(atSourceTime: sessionStart)
 
         let expected = plan.expectedFrames
         // Hard cap on SILENTLY dropped frames (buffer-allocation/transfer
@@ -429,6 +448,21 @@ enum CompressionEngine {
                 let queue = DispatchQueue(label: "vidcompress.video.pipe")
                 var nextSlot = CMTime.zero
                 var slotActive = false
+
+                // Count a silently lost frame and ABORT the encode the
+                // moment the budget is met. The check must live AT the drop
+                // sites — a whole-file failure (every allocation/transfer
+                // fails) only `continue`s and would otherwise drop the
+                // entire video with no heartbeat, letting the 120 s stall
+                // watchdog fire a misleading error.
+                func noteDrop() -> Bool {
+                    droppedFrames += 1
+                    guard droppedFrames > dropLimit else { return false }
+                    flags.fail(CompressionError.framesDropped(droppedFrames))
+                    reader.cancelReading()
+                    resume.resumeOnce()
+                    return true
+                }
 
                 // Cancel + error hooks: stop the reader, then resume THROUGH
                 // this pipe's serial queue so any in-flight block completes
@@ -500,13 +534,13 @@ enum CompressionEngine {
 
                         if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
                             guard let transfer = transferSession else {
-                                droppedFrames += 1
+                                if noteDrop() { return }
                                 continue
                             }
                             guard let dst = Self.nextPoolBuffer(
                                     scalePool, width: encodeW, height: encodeH,
                                     format: decodeFormat) else {
-                                droppedFrames += 1
+                                if noteDrop() { return }
                                 continue
                             }
                             // COLOR-SAFE: copy the source's full attachment
@@ -516,7 +550,7 @@ enum CompressionEngine {
                             // the exact source colorimetry.
                             ColorTags.attach(to: dst, tags: tags, from: src)
                             if VTPixelTransferSessionTransferImage(transfer, from: src, to: dst) != noErr {
-                                droppedFrames += 1
+                                if noteDrop() { return }
                                 continue
                             }
                             // Tagging happens pre-transfer (above); nothing to
@@ -540,30 +574,18 @@ enum CompressionEngine {
                             }
                         }
 
-                        // EARLY abort at the dropped-frame budget: once too
-                        // many frames were silently lost, fail the job now —
-                        // nothing after this will change its verdict, and the
-                        // wait-only path (testing the count after the whole
-                        // encode) wasted minutes first.
-                        if droppedFrames > dropLimit {
-                            flags.fail(CompressionError.framesDropped(droppedFrames))
-                            reader.cancelReading()
-                            resume.resumeOnce()
-                            return
-                        }
-
                         // Heartbeat on EVERY frame (cheap): the stall
                         // watchdog must re-arm continuously, not just when a
                         // throttled progress report happens to land.
                         heartbeat.beat()
-                        // Progress derived from the presentation TIME, not a
-                        // frame count — this stays truthful across frame-rate
-                        // caps and variable-frame-rate sources. Emitted when
-                        // the percent moved ≥0.2 % OR after a full second —
-                        // fine-grained enough that the coordinator's row
-                        // watchdog sees the job is alive between big jumps.
+                        // Progress derived from the anchored presentation time
+                        // (raw source pts would run AHEAD on clips whose
+                        // tracks start late — 99% before the encode ends).
                         let secs = CMTimeGetSeconds(pts)
-                        let p = min(0.99, secs.isFinite && secs >= 0 ? secs / plan.duration : 0)
+                        let anchored = secs - sessionStartSeconds
+                        let p = min(0.99, secs.isFinite
+                            ? max(0, anchored.isFinite ? anchored / plan.duration : 0)
+                            : 0)
                         if p - lastReported >= 0.002
                             || (p != lastReported
                                 && Date().timeIntervalSince(lastReportAt) >= 1.0) {
