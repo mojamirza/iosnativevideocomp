@@ -137,20 +137,24 @@ final class JobCoordinator: ObservableObject {
         cancelFlags[jobID] = flags
 
         let fm = FileManager.default
-        let outDir = Self.outputsDirectory()
-        try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
-
-        // ALWAYS .mp4: the muxed container is MP4 (AVAssetWriter), so the
-        // extension follows the WRITER, not the source — a .mov source got a
-        // .mov-extensioned file carrying an MP4 payload.
+        // Working scratch (app-owned, invisible in Files): the encode AND the
+        // verification run HERE; the file is promoted to Documents only after
+        // a passing verdict. A crash/kill mid-write therefore leaves its
+        // partial file where the user cannot see it, and the sweep erases it
+        // on the next launch.
+        let workDir = Self.workingDirectory()
+        try? fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let workURL = workDir.appendingPathComponent("\(jobID.uuidString).mp4")
+        // A retry (or an earlier interrupted attempt) reuses the jobID — a
+        // stale scratch file must not survive into this run.
+        try? fm.removeItem(at: workURL)
+        // ALWAYS .mp4 — the muxed container is MP4 (AVAssetWriter), so the
+        // extension follows the WRITER, not the source.
         let base = (job.sourceName as NSString).deletingPathExtension
-        let output = Self.uniqueOutputURL(in: outDir,
-                                          base: base,
-                                          stamp: presetStamp(job.preset))
-        // NO delete-and-reuse: the name below is proven unique on disk, so a
-        // queued twin job (or anything else) can never be overwritten. Two
-        // same-name-same-preset jobs used to rm each other's just-written
-        // output here.
+        // No delete-and-reuse of PUBLIC names anywhere: the public name is
+        // chosen by uniqueOutputURL() only at promotion time, proven unique
+        // on disk, so a queued twin job can never be overwritten.
+        let output = workURL
 
         // analyzing
         setJob(jobID) { $0.state = .analyzing }
@@ -230,10 +234,33 @@ final class JobCoordinator: ObservableObject {
             // verified" instead of a green seal.
             let encodeOK = report.status != .failed
 
+            // SUCCESS-ONLY promotion: rename the verified file into Documents
+            // under its collision-proof public name. Same volume → this is a
+            // cheap rename, never a copy. A failing verdict (or an engine
+            // error) leaves the file in the scratch folder — invisible to the
+            // user, gone at the next sweep.
+            var finalOutput = output
+            if encodeOK {
+                let outDir = Self.outputsDirectory()
+                try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
+                let final = Self.uniqueOutputURL(in: outDir, base: base,
+                                                 stamp: presetStamp(job.preset))
+                do {
+                    try fm.moveItem(at: output, to: final)
+                    finalOutput = final
+                } catch {
+                    // Rare (disk pressure): better a finished encode whose
+                    // file sits in the invisible scratch folder than a job
+                    // that threw away its verified output.
+                    NSLog("VidCompress: output promotion to Documents failed (%@) — file kept in scratch",
+                          error.localizedDescription)
+                }
+            }
+
             setJob(jobID) {
                 $0.state = encodeOK ? .done : .failed
                 $0.report = report
-                $0.outputURL = output
+                $0.outputURL = finalOutput
                 if report.status == .failed {
                     $0.errorMessage = "Output integrity report failed — see details."
                 }
@@ -243,14 +270,14 @@ final class JobCoordinator: ObservableObject {
             // retryable failed row).
             if flags.cancelled {
                 if systemInterrupted.contains(jobID) {
-                    markInterrupted(jobID: jobID, output: output)
+                    markInterrupted(jobID: jobID, output: finalOutput)
                 } else {
                     removeRow(jobID: jobID)
                 }
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 return
             }
-            saveRecord(jobID: jobID, outputName: output.lastPathComponent,
+            saveRecord(jobID: jobID, outputName: finalOutput.lastPathComponent,
                        report: reportData, state: encodeOK ? "done" : "failed")
             // Storage management: a finished job doesn't need our copy of the
             // source anymore — the original still lives in Photos/Files.
@@ -352,6 +379,14 @@ final class JobCoordinator: ObservableObject {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
               [JobState.failed, .cancelled].contains(jobs[idx].state),
               FileManager.default.fileExists(atPath: jobs[idx].sourceURL.path) else { return }
+        // A failed run keeps its output (report rows can inspect it). This
+        // fresh attempt REPLACES it: remove the old file up front so Retry
+        // can't stack "name (2)" files beside a file the user already
+        // rejected — and can't ever resurrect a bad verdict's artifact.
+        if let url = jobs[idx].outputURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        jobs[idx].outputURL = nil
         jobs[idx].state = .queued
         jobs[idx].progress = 0
         jobs[idx].errorMessage = nil
@@ -433,33 +468,60 @@ final class JobCoordinator: ObservableObject {
         try? FileManager.default.removeItem(at: job.sourceURL)
     }
 
-    /// Storage sweep at launch: removes files in Caches/Imports/ that no
-    /// remaining job references — crash leftovers of import copies.
+    private static var swept = false
+
+    /// Storage sweep at launch: removes orphaned files in Caches/Imports/
+    /// (import copies no job needs) and Caches/Working/ (scratch files of
+    /// crashed attempts). Outputs in Documents are NEVER swept — files there
+    /// that we "don't know about" are the user's (renamed outputs, files
+    /// they copied in) and were the data-loss bug.
     ///
-    /// BOUNDARY (data-loss fix): ONLY the Imports folder is swept. Documents
-    /// holds the user's outputs, where every file the app "doesn't know
-    /// about" used to be deleted: an output renamed in Files, a file the user
-    /// copied in themselves, Inbox staging. None of those carry a job
-    /// reference, and sweeping them silently destroyed user data. Imports —
-    /// under Caches, invisible to the Files app — is app-owned by
-    /// construction, so an unreferenced file there is a true orphan.
+    /// - Runs AT MOST ONCE PER PROCESS: loadHistory() can re-fire mid-session
+    ///   (.task), and a re-entrant sweep would delete import copies the user
+    ///   JUST picked, whose job row doesn't exist yet.
+    /// - Skips files modified within the last hour for the same reason: a
+    ///   fresh import may have no job for another moment.
+    /// - Directory detection uses resourceValues(.isDirectoryKey) —
+    ///   contentsOfDirectory results don't always carry a reliable
+    ///   hasDirectoryPath hint.
     func cleanupOrphans() {
+        guard !Self.swept else { return }
+        Self.swept = true
+
         let fm = FileManager.default
-        var keep = Set<String>()
+        var keepSources = Set<String>()
         for job in jobs where job.state == .failed ||
             [.queued, .analyzing, .compressing, .verifying].contains(job.state) {
-            keep.insert(job.sourceURL.standardizedFileURL.path)
+            keepSources.insert(job.sourceURL.standardizedFileURL.path)
         }
-        let imports = Self.importsDirectory()
-        guard let files = try? fm.contentsOfDirectory(at: imports, includingPropertiesForKeys: nil)
-        else { return }
-        for file in files {
-            // Directories (e.g. system Inbox staging inside Imports) are
-            // never swept — only plain import copies are orphan candidates.
-            guard !file.hasDirectoryPath,
-                  !keep.contains(file.standardizedFileURL.path) else { continue }
-            try? fm.removeItem(at: file)
+        // Working scratch: in-progress attempts claim \(jobID).mp4; terminal
+        // jobs' scratch files are leftovers and disappear.
+        var keepWork = Set<String>()
+        for job in jobs where [.queued, .analyzing, .compressing, .verifying].contains(job.state) {
+            keepWork.insert(Self.workingDirectory()
+                .appendingPathComponent("\(job.id.uuidString).mp4")
+                .standardizedFileURL.path)
         }
+
+        let cutoff = Date().addingTimeInterval(-3600)
+        func sweep(_ dir: URL, keep: Set<String>) {
+            guard let files = try? fm.contentsOfDirectory(
+                      at: dir,
+                      includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])
+            else { return }
+            for file in files {
+                guard let vals = try? file.resourceValues(
+                          forKeys: [.isDirectoryKey, .contentModificationDateKey])
+                else { continue }
+                if vals.isDirectory == true { continue }        // Inbox staging etc.
+                if let mod = vals.contentModificationDate, mod > cutoff { continue }
+                if !keep.contains(file.standardizedFileURL.path) {
+                    try? fm.removeItem(at: file)
+                }
+            }
+        }
+        sweep(Self.importsDirectory(), keep: keepSources)
+        sweep(Self.workingDirectory(), keep: keepWork)
     }
 
     // MARK: SwiftData history
@@ -652,10 +714,18 @@ final class JobCoordinator: ObservableObject {
         let cleaned = words.replacingOccurrences(of: "[^a-z0-9-]", with: "",
                                                  options: .regularExpression)
         // Non-Latin preset names (Arabic, Persian, Chinese, …) strip to an
-        // empty stamp here — without a fallback EVERY such preset shared one
-        // stamp and their outputs collided (previously: clobbered each other
-        // via the delete-and-reuse the unique output name replaced).
-        return cleaned.isEmpty ? "preset" : cleaned
+        // empty stamp here. The fallback is built from the preset's VALUES
+        // so the user can still tell which preset produced which file
+        // (resolution + bitrate appear right in the name) instead of a
+        // useless pile of video_preset.mp4, video_preset (2).mp4, …
+        if cleaned.isEmpty {
+            let fallback = "\(preset.resolution.rawValue)-\(String(format: "%.1f", preset.fixedBitrateMbps))mbps"
+                .lowercased()
+                .replacingOccurrences(of: "[^a-z0-9-]", with: "-",
+                                      options: .regularExpression)
+            return fallback.isEmpty ? "preset" : fallback
+        }
+        return cleaned
     }
 
     /// First output path not taken on disk: `name_stamp.mp4`, then
@@ -696,6 +766,16 @@ final class JobCoordinator: ObservableObject {
     /// the original library selection anyway.)
     static nonisolated func importsDirectory() -> URL {
         cachesDirectory().appendingPathComponent("Imports", isDirectory: true)
+    }
+
+    /// Scratch space for IN-PROGRESS encodes — Caches/Working. A run encodes
+    /// AND verifies its file here and renames it into Documents only on
+    /// SUCCESS, so a crash or kill mid-write leaves partial output where the
+    /// user can never see it (the launch sweep erases leftovers of dead
+    /// attempts). Same volume as Documents → the success move is a cheap
+    /// rename, not a copy.
+    static nonisolated func workingDirectory() -> URL {
+        cachesDirectory().appendingPathComponent("Working", isDirectory: true)
     }
 
     /// One-time move from the old layout (Documents/Compressed + Documents/Imports)
