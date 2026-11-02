@@ -89,13 +89,15 @@ struct SetupFlowView: View {
                 }
             }
             .sheet(isPresented: $showEditor) {
-                PresetEditorView(contextProbe: singleProbe) { newPreset in
+                // Batch setup passes NO probe: Fit would solve for video 1's
+                // duration and paint every file with that number.
+                PresetEditorView(contextProbe: isBatch ? nil : singleProbe) { newPreset in
                     savePreset(newPreset)
                 }
             }
             .sheet(item: $editingPreset) { preset in
                 PresetEditorView(existing: preset,
-                                 contextProbe: singleProbe) { updated in
+                                 contextProbe: isBatch ? nil : singleProbe) { updated in
                     savePreset(updated)
                 }
             }

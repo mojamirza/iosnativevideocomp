@@ -60,6 +60,9 @@ struct PresetEditorView: View {
     @State private var fixedMbps: Double
     @State private var bitrateText: String
     @State private var fitUnderText: String = ""
+    /// Inline feedback for Fit failures (bad target, too small for the
+    /// duration): the prominent button must never do nothing silently.
+    @State private var fitMessage: String?
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
@@ -134,24 +137,58 @@ struct PresetEditorView: View {
         return Int64(est.estimatedSizeMB() * 1_048_576)
     }
 
-    /// "Fit under X MB": exact video bitrate that keeps video + audio (at the
-    /// current audio setting, over the source duration) under the target.
-    /// Dismisses the keyboard FIRST so the tap that lands here can't be
-    /// eaten by the responder change (the swallowed-first-tap bug).
+    /// "Fit under X MB": exact fixed video bitrate that keeps video + audio —
+    /// at the current audio setting, over the source duration — under the
+    /// TARGET, with two honest corrections: an ~8 % headroom factor because
+    /// VideoToolbox's average-bitrate mode overshoots and the container adds
+    /// overhead (targeting 100 % of the cap usually produces an OVER-limit
+    /// file), and audio that simply doesn't exist is not budgeted. Dismisses
+    /// the keyboard FIRST so the tap that lands here can't be eaten by the
+    /// responder change. Any failure shows a message — the prominent button
+    /// must never silently do nothing.
     private func applyFit() {
         fitMBFocused = false
         bitrateFocused = false
         guard let probe = contextProbe, probe.duration > 0.5,
-              let mb = Double(fitUnderText.replacingOccurrences(of: ",", with: ".")),
-              mb >= 1, mb <= 200_000 else { return }
-        let totalMbits = mb * 8
-        let audioMbits = Double(audioKbps) * probe.duration / 1000
-        let videoMBits = max(1, totalMbits - audioMbits)
-        let videoMbps = videoMBits / probe.duration
-        let clamped = min(40, max(0.1, videoMbps))
+              let mb = Double(normalizedDecimal(fitUnderText)),
+              mb >= 1, mb <= 200_000 else {
+            fitMessage = "Enter a target of at least 1 MB."
+            return
+        }
+        // INPUT is normalised digits (+ decimal separators) — Persian/Arabic
+        // digits and "٫"/"," survive Double() only through normalisedDecimal.
+        let audioMbits = probe.hasAudio ? audioKbps * probe.duration / 1000 : 0
+        let videoMbps = (mb * 8 * 0.92 - audioMbits) / probe.duration
+        guard videoMbps >= 0.1 else {
+            fitMessage = "That target is too small for this video's length."
+            return
+        }
+        fitMessage = nil
+        let clamped = min(40, videoMbps)
         fixedMbps = clamped
         bitrateText = String(format: "%.1f", clamped)
         sliderPos = Self.pos(fromMbps: clamped)
+    }
+
+    /// Decimal normaliser for typed numbers: folds Latin, Eastern-Arabic and
+    /// Persian-Indic digits to ASCII and "٫"/"," to "." so Double() cannot
+    /// silently fail on an international keyboard.
+    private func normalizedDecimal(_ s: String) -> String {
+        var out = ""
+        for ch in s {
+            if let d = ch.wholeNumberValue { out.append(String(d)) }
+            else if ",٫.".contains(ch) { out.append(".") }
+        }
+        return out
+    }
+
+    /// The readout beside the slider is the field: while the text is not a
+    /// usable bitrate (cleared, mistyped, out of 0.1…40), `fixedMbps` still
+    /// holds the last good value — the UI must SAY so and Save must refuse,
+    /// otherwise an invalid edit silently saves the old number.
+    private var bitrateIsValid: Bool {
+        guard let v = Double(normalizedDecimal(bitrateText)) else { return false }
+        return v >= 0.1 && v <= 40
     }
 
     var body: some View {
@@ -167,35 +204,44 @@ struct PresetEditorView: View {
                     }
                 }
 
-                // TARGET SIZE — its own section ABOVE the bitrate. The Fit
-                // helper never crowds the slider row, and the semantics are
-                // stated up front: type a size goal, Fit solves the bitrate.
-                Section("Target size (optional)") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Know the file size you need — messaging or attachment limits? Type it in MB and tap Fit: the bitrate below is solved so video + audio land under that size. The output stays a fixed bitrate — re-tap Fit after changing resolution or audio.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: 10) {
-                            TextField("Target size", text: $fitUnderText)
-                                .focused($fitMBFocused)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .font(.body.monospacedDigit())
-                            Text("MB")
+                // TARGET SIZE — its own section ABOVE the bitrate, and only
+                // when a real probe powers it. Batch setup (or "still
+                // analysing") hides it: inside a batch, fitting against ONE
+                // video's duration and applying the result to every file
+                // would land most of them on the wrong side of the target.
+                if contextProbe != nil {
+                    Section("Target size (optional)") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Know the file size you need — messaging or attachment limits? Type it in MB and tap Fit: the bitrate below is solved to land UNDER that size (an ~8% headroom covers encoder drift and container overhead; audio that doesn't exist isn't budgeted). The output stays a fixed bitrate — re-tap Fit after changing resolution or audio.")
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
-                            Spacer()
-                            Button {
-                                applyFit()
-                            } label: {
-                                // No icon: the artwork vanished from the filled
-                                // (blue) state on device — a plain bold label
-                                // reads cleaner anyway.
-                                Text("Fit bitrate")
-                                    .font(.headline)
-                                    .padding(.vertical, 2)
+                            HStack(spacing: 10) {
+                                TextField("Target size", text: $fitUnderText)
+                                    .focused($fitMBFocused)
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .font(.body.monospacedDigit())
+                                Text("MB")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button {
+                                    applyFit()
+                                } label: {
+                                    // No icon: the artwork vanished from the filled
+                                    // (blue) state on device — a plain bold label
+                                    // reads cleaner anyway.
+                                    Text("Fit bitrate")
+                                        .font(.headline)
+                                        .padding(.vertical, 2)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(fitUnderText.isEmpty)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(fitUnderText.isEmpty)
+                            if let msg = fitMessage {
+                                Text(msg)
+                                    .font(.footnote)
+                                    .foregroundStyle(.red)
+                            }
                         }
                     }
                 }
@@ -215,7 +261,7 @@ struct PresetEditorView: View {
                                     // Only rewrite the text field when the
                                     // change came from the slider — never
                                     // clobber what the user is typing.
-                                    let typed = Double(bitrateText.replacingOccurrences(of: ",", with: ".")) ?? -1
+                                    let typed = Double(normalizedDecimal(bitrateText)) ?? -1
                                     if abs(typed - mbps) > 0.05 {
                                         bitrateText = String(format: "%.1f", mbps)
                                     }
@@ -241,7 +287,7 @@ struct PresetEditorView: View {
                                         .frame(height: 1)
                                 }
                                 .onChange(of: bitrateText) { _, t in
-                                    if let v = Double(t.replacingOccurrences(of: ",", with: ".")),
+                                    if let v = Double(normalizedDecimal(t)),
                                        v >= 0.1, v <= 40 {
                                         fixedMbps = v
                                         sliderPos = Self.pos(fromMbps: v)
@@ -251,6 +297,14 @@ struct PresetEditorView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .fixedSize()
+                        }
+                        // Invalid edit feedback: while the text can't parse
+                        // (or is out of range), the readout shows nothing but
+                        // the LAST good value still drives Save — say so here.
+                        if !bitrateIsValid {
+                            Text("Out of range (0.1–40) — still using \(String(format: "%.1f", fixedMbps)) Mbps. Save is disabled while the value is invalid.")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
                         }
                         // QUALITY hint: rate the chosen bitrate against the
                         // source resolution + fps BEFORE committing.
@@ -327,6 +381,10 @@ struct PresetEditorView: View {
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
+                    // An invalid typed bitrate (cleared or out of range)
+                    // leaves the last good `fixedMbps` in place — refuse to
+                    // save until the text is usable again.
+                    .disabled(!bitrateIsValid)
                 }
                 // Keyboard accessory: the number pads have no return key, so
                 // there was no way to dismiss the keyboard except tapping —
