@@ -359,32 +359,51 @@ enum CompressionEngine {
         if let audioTrack, let aSettings = audioSettings {
             // The READER's PCM channel count must match the audio input's
             // final fallback (mono source + stereo fallback used to read
-            // mono PCM while the writer expected stereo). The reader init
-            // can THROW for a channel request it can't produce — that must
-            // degrade to video-only, not fail the JOB.
-            do {
-                let readerChannels = (aSettings[AVNumberOfChannelsKey] as? NSNumber)
-                    ?? NSNumber(value: audioChannels)
-                audioOutput = try AVAssetReaderTrackOutput(track: audioTrack, outputSettings: [
-                    AVFormatIDKey: kAudioFormatLinearPCM,
-                    AVLinearPCMBitDepthKey: 16,
-                    AVLinearPCMIsFloatKey: false,
-                    AVLinearPCMIsBigEndianKey: false,
-                    AVLinearPCMIsNonInterleaved: false,
-                    AVNumberOfChannelsKey: readerChannels,
-                ])
-                reader.add(audioOutput!)
+            // mono PCM while the writer expected stereo).
+            //
+            // SAFETY: init(track:outputSettings:) is NOT a throwing
+            // initializer in Swift — a settings failure surfaces as an
+            // Objective-C exception, which Swift CANNOT catch. The do/catch
+            // here was dead weight (compile-warning `try`, never-running
+            // `catch`) in front of a potential crash. The SAFE gate is
+            // `canAdd`, checked below BEFORE anything is attached to the
+            // reader/writer; a rejection ships video-only.
+            let readerChannels = (aSettings[AVNumberOfChannelsKey] as? NSNumber)?.intValue
+                ?? audioChannels
+            var readerSettings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+                AVNumberOfChannelsKey: readerChannels,
+            ]
+            if readerChannels == 2 {
+                // Explicit stereo layout: downmixing a multichannel (5.1)
+                // source to 2ch is NOT guaranteed to be honoured without one.
+                var layout = AudioChannelLayout()
+                layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+                readerSettings[AVChannelLayoutKey] = Data(
+                    bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+            }
 
-                audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: aSettings)
-                audioInput?.expectsMediaDataInRealTime = false
-                writer.add(audioInput!)
-            } catch {
+            let candidateOutput = AVAssetReaderTrackOutput(
+                track: audioTrack, outputSettings: readerSettings)
+            let candidateInput = AVAssetWriterInput(mediaType: .audio,
+                                                    outputSettings: aSettings)
+            candidateInput.expectsMediaDataInRealTime = false
+
+            if reader.canAdd(candidateOutput) && writer.canAdd(candidateInput) {
+                reader.add(candidateOutput)
+                writer.add(candidateInput)
+                audioInput = candidateInput
+                audioOutput = candidateOutput
+            } else {
                 // Ship the video without audio — the writer is still in the
                 // "adding inputs" phase, so simply not adding the audio
                 // input keeps finishWriting() from waiting on a starving
                 // track.
-                NSLog("VidCompress: audio reader rejected settings (%@) — shipping video without audio",
-                      error.localizedDescription)
+                NSLog("VidCompress: audio pipeline rejected the settings — shipping video without audio")
                 audioInput = nil
                 audioOutput = nil
             }

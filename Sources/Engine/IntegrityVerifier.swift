@@ -129,7 +129,7 @@ enum IntegrityVerifier {
                 // job only for media that was already unplayable… and video
                 // alone is usually preferable to a broken report). Warn.
                 items.append(ReportItem("audio", "Output has no audio track",
-                    "The source had audio but it was omitted: no AAC configuration was accepted by the encoder for this file. The video itself is complete.", .warn))
+                    "The source had audio but it was omitted: the audio pipeline (channel-layout request or AAC encoder settings) rejected the configuration for this file. The video itself is complete.", .warn))
             } else {
                 items.append(ReportItem("audio", "Audio track preserved",
                     // Double division — the old Int/1000 passed to %.0f
@@ -208,15 +208,28 @@ enum IntegrityVerifier {
                     normalised.append("matrix \(pretty(m)) → written as \(pretty(want.yCbCrMatrix))")
                 }
                 if !normalised.isEmpty {
+                    // Severity reflects VISUAL impact: a remapped matrix
+                    // (e.g. carried 601 → 709) is metadata bookkeeping with
+                    // no meaningful tone change, while primaries/transfer
+                    // remaps do shift what the player renders — those stay
+                    // warnings. Everything else is a verified file.
+                    let visibleChange =
+                        (src.primaries != nil &&
+                         src.primaries!.caseInsensitiveCompare(want.primaries) != .orderedSame)
+                        || (src.transferFunction != nil &&
+                            src.transferFunction!.caseInsensitiveCompare(want.transferFunction) != .orderedSame)
                     items.append(ReportItem("color", "Color tags normalised",
                         "\(src.humanLabel). This file's tags don't map 1:1 to the writer's supported constants, so they were remapped to the closest match: "
-                            + normalised.joined(separator: "; "), .warn))
+                            + normalised.joined(separator: "; "),
+                        visibleChange ? .warn : .pass))
                 } else if src.primaries == nil && src.transferFunction == nil
                             && src.yCbCrMatrix == nil {
-                    // Untagged source: the green pass should still say
-                    // where the output's tags came from.
+                    // Untagged source: still a VERIFIED file — the note only
+                    // documents where the output's tags came from. (.warn here
+                    // pushed every untagged screen recording into the "Not
+                    // fully verified" banner forever.)
                     items.append(ReportItem("color", "Source carried no color tags",
-                        "The output was tagged with the resolved defaults (matrix \(pretty(want.yCbCrMatrix)), transfer \(pretty(want.transferFunction)), primaries \(pretty(want.primaries))).", .warn))
+                        "Nothing was wrong: the source file carried no color tags, so the output was tagged with the resolved defaults (matrix \(pretty(want.yCbCrMatrix)), transfer \(pretty(want.transferFunction)), primaries \(pretty(want.primaries))).", .pass))
                 } else {
                     items.append(ReportItem("color", "Color-safe engine passed",
                         "\(src.humanLabel)\(hdrNote). " + detail.joined(separator: "; "), .pass))
