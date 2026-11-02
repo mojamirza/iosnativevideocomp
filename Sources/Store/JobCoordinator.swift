@@ -140,11 +140,17 @@ final class JobCoordinator: ObservableObject {
         let outDir = Self.outputsDirectory()
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
 
+        // ALWAYS .mp4: the muxed container is MP4 (AVAssetWriter), so the
+        // extension follows the WRITER, not the source — a .mov source got a
+        // .mov-extensioned file carrying an MP4 payload.
         let base = (job.sourceName as NSString).deletingPathExtension
-        var ext = (job.sourceName as NSString).pathExtension
-        if ext.isEmpty { ext = "mp4" }
-        let output = outDir.appendingPathComponent("\(base)_\(presetStamp(job.preset)).\(ext)")
-        try? fm.removeItem(at: output)
+        let output = Self.uniqueOutputURL(in: outDir,
+                                          base: base,
+                                          stamp: presetStamp(job.preset))
+        // NO delete-and-reuse: the name below is proven unique on disk, so a
+        // queued twin job (or anything else) can never be overwritten. Two
+        // same-name-same-preset jobs used to rm each other's just-written
+        // output here.
 
         // analyzing
         setJob(jobID) { $0.state = .analyzing }
@@ -168,28 +174,15 @@ final class JobCoordinator: ObservableObject {
             }
             bgSubtitle("Encoding \(job.sourceName)…")
 
-            // Backstop for the whole encode: STALL-based, not wall-clock — it
-            // only fires when the row shows NO progress for 20 s while
-            // compressing. A suspend→resume cycle resumes progress, so the
-            // deadline re-arms instead of executing a healthy encode. If
-            // anything wedges the WORKER, this fails the row and revives the
-            // queue — the queue can never stay dead.
-            Task { [weak self] in
-                var lastProgress: Double = -1
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 20_000_000_000)
-                    guard let self,
-                          let idx = self.jobs.firstIndex(where: { $0.id == jobID }),
-                          self.jobs[idx].state == .compressing else { return }
-                    let p = self.jobs[idx].progress
-                    if p != lastProgress {
-                        lastProgress = p
-                        continue
-                    }
-                    self.forceCompressTerminal(jobID: jobID)
-                    return
-                }
-            }
+            // NOTE: there is deliberately NO coordinator-side encode watchdog.
+            // The earlier 20 s progress-stall backstop failed slow or
+            // app-suspended jobs WITHOUT stopping the engine, dropped the
+            // cancel flags, and revived a second worker — two encodes could
+            // then run at once and the abandoned one overwrote the failed
+            // state when it later finished. The engine owns stall/cancel
+            // detection (120 s heartbeat watchdog); a system revocation is
+            // handled by cancelActiveForBackgroundExpiry(), which DOES stop
+            // the engine before marking the row.
 
             try await CompressionEngine.compress(
                 source: job.sourceURL,
@@ -309,25 +302,11 @@ final class JobCoordinator: ObservableObject {
                    errorText: "Interrupted by iOS in the background.")
     }
 
-    /// Watchdog backstop for the ENCODE phase: only acts if the job is still
-    /// in .compressing (the engine's own watchdog fires earlier). Fails the
-    /// row and revives the queue.
-    private func forceCompressTerminal(jobID: UUID) {
-        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
-              jobs[idx].state == .compressing else { return }
-        setJob(jobID) {
-            $0.state = .failed
-            $0.errorMessage = "Encoding was interrupted (app closed or suspended) — tap Retry."
-        }
-        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
-                   errorText: "Encoding was interrupted (app closed or suspended).")
-        cancelFlags.removeValue(forKey: jobID)
-        reviveWorker()
-    }
-
     /// Watchdog backstop for the VERIFY phase: only acts if the job is STILL
     /// in .verifying (the normal path finishes in ≤60 s and has already moved
-    /// the row on).
+    /// the row on). Unlike the deleted compress watchdog, verification is
+    /// read-only (no live engine running), so forcing the row terminal here
+    /// cannot leave a second encode running.
     private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: Date) {
         guard Date().timeIntervalSince(startedAt) >= 74 else { return }
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
@@ -454,27 +433,32 @@ final class JobCoordinator: ObservableObject {
         try? FileManager.default.removeItem(at: job.sourceURL)
     }
 
-    /// Storage sweep at launch: removes any file in Imports/ or Compressed/
-    /// that no remaining job references — crash leftovers and artifacts from
-    /// older app versions. Sources are kept only while a job could still be
-    /// retried (failed/active); outputs are kept while a record shows them.
+    /// Storage sweep at launch: removes files in Caches/Imports/ that no
+    /// remaining job references — crash leftovers of import copies.
+    ///
+    /// BOUNDARY (data-loss fix): ONLY the Imports folder is swept. Documents
+    /// holds the user's outputs, where every file the app "doesn't know
+    /// about" used to be deleted: an output renamed in Files, a file the user
+    /// copied in themselves, Inbox staging. None of those carry a job
+    /// reference, and sweeping them silently destroyed user data. Imports —
+    /// under Caches, invisible to the Files app — is app-owned by
+    /// construction, so an unreferenced file there is a true orphan.
     func cleanupOrphans() {
         let fm = FileManager.default
         var keep = Set<String>()
-        for job in jobs {
-            if job.state == .failed ||
-               [.queued, .analyzing, .compressing, .verifying].contains(job.state) {
-                keep.insert(job.sourceURL.standardizedFileURL.path)
-            }
-            if let out = job.outputURL {
-                keep.insert(out.standardizedFileURL.path)
-            }
+        for job in jobs where job.state == .failed ||
+            [.queued, .analyzing, .compressing, .verifying].contains(job.state) {
+            keep.insert(job.sourceURL.standardizedFileURL.path)
         }
-        for dir in [Self.importsDirectory(), Self.outputsDirectory()] {
-            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { continue }
-            for file in files where !keep.contains(file.standardizedFileURL.path) {
-                try? fm.removeItem(at: file)
-            }
+        let imports = Self.importsDirectory()
+        guard let files = try? fm.contentsOfDirectory(at: imports, includingPropertiesForKeys: nil)
+        else { return }
+        for file in files {
+            // Directories (e.g. system Inbox staging inside Imports) are
+            // never swept — only plain import copies are orphan candidates.
+            guard !file.hasDirectoryPath,
+                  !keep.contains(file.standardizedFileURL.path) else { continue }
+            try? fm.removeItem(at: file)
         }
     }
 
@@ -537,19 +521,24 @@ final class JobCoordinator: ObservableObject {
             let records = try context.fetch(descriptor)
             // Dedupe robustness: a double-saved record would produce a
             // duplicate row forever (records sort newest-first, so the FIRST
-            // occurrence is the newest one). A SwiftData @Attribute(.unique)
-            // constraint was deliberately avoided — adding it to an EXISTING
-            // store fails schema migration when duplicates are present.
+            // occurrence is the newest one and is KEPT; later occurrences
+            // are deleted). The first pass collects survivors into `kept` —
+            // the old version skipped every jobID that had a duplicate,
+            // which hid even the surviving record from history. A SwiftData
+            // @Attribute(.unique) constraint was deliberately avoided —
+            // adding it to an EXISTING store fails schema migration when
+            // duplicates are present.
             var seenJobIDs = Set<UUID>()
-            var duplicateIDs = Set<UUID>()
+            var kept: [JobRecord] = []
             for r in records {
-                if !seenJobIDs.insert(r.jobID).inserted {
+                if seenJobIDs.insert(r.jobID).inserted {
+                    kept.append(r)
+                } else {
                     context.delete(r)
-                    duplicateIDs.insert(r.jobID)
                 }
             }
-            if !duplicateIDs.isEmpty { try? context.save() }
-            for r in records where !duplicateIDs.contains(r.jobID) {
+            if kept.count < records.count { try? context.save() }
+            for r in kept {
                 guard let state = JobState(rawValue: r.stateRaw) else { continue }
                 guard state != .queued, state != .analyzing,
                       state != .compressing, state != .verifying else { continue }
@@ -660,7 +649,30 @@ final class JobCoordinator: ObservableObject {
         let raw = preset.name.lowercased()
         let words = raw.split(separator: " ", omittingEmptySubsequences: true)
             .prefix(2).joined(separator: "-")
-        return words.replacingOccurrences(of: "[^a-z0-9-]", with: "", options: .regularExpression)
+        let cleaned = words.replacingOccurrences(of: "[^a-z0-9-]", with: "",
+                                                 options: .regularExpression)
+        // Non-Latin preset names (Arabic, Persian, Chinese, …) strip to an
+        // empty stamp here — without a fallback EVERY such preset shared one
+        // stamp and their outputs collided (previously: clobbered each other
+        // via the delete-and-reuse the unique output name replaced).
+        return cleaned.isEmpty ? "preset" : cleaned
+    }
+
+    /// First output path not taken on disk: `name_stamp.mp4`, then
+    /// `name_stamp (2).mp4`, `(3)`, … The name is COLLISION-PROOF exactly
+    /// like renameOutput — no output is ever overwritten, so two jobs with
+    /// the same source + preset (or a hyphenated name bisecting into another
+    /// job's base) can never destroy each other's files.
+    static func uniqueOutputURL(in dir: URL, base: String, stamp: String) -> URL {
+        let fm = FileManager.default
+        let stem = "\(base)_\(stamp)"
+        var url = dir.appendingPathComponent("\(stem).mp4")
+        var bump = 1
+        while fm.fileExists(atPath: url.path) {
+            bump += 1
+            url = dir.appendingPathComponent("\(stem) (\(bump)).mp4")
+        }
+        return url
     }
 
     static nonisolated func documentsDirectory() -> URL {
