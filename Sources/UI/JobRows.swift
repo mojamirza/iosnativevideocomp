@@ -492,6 +492,14 @@ struct JobRowView: View {
                FileManager.default.fileExists(atPath: job.sourceURL.path) {
                 Button("Retry") { coordinator.retry(jobID: job.id) }
             }
+            if job.state == .failed,
+               let out = job.outputURL,
+               FileManager.default.fileExists(atPath: out.path) {
+                // A verifier false positive must not cost the user a finished
+                // encode: promote the (scratch) file to Documents and flip
+                // the row to Done. The report stays attached.
+                Button("Keep anyway") { coordinator.keepFailedOutput(jobID: job.id) }
+            }
             Divider()
             Button("Remove from list…", role: .destructive) { confirmingDelete = true }
         } label: {

@@ -148,12 +148,10 @@ final class JobCoordinator: ObservableObject {
         // A retry (or an earlier interrupted attempt) reuses the jobID — a
         // stale scratch file must not survive into this run.
         try? fm.removeItem(at: workURL)
-        // ALWAYS .mp4 — the muxed container is MP4 (AVAssetWriter), so the
-        // extension follows the WRITER, not the source.
-        let base = (job.sourceName as NSString).deletingPathExtension
-        // No delete-and-reuse of PUBLIC names anywhere: the public name is
-        // chosen by uniqueOutputURL() only at promotion time, proven unique
-        // on disk, so a queued twin job can never be overwritten.
+        // The public name — and its forced .mp4 extension (the muxed
+        // container is MP4 regardless of the source) — is chosen by promote()
+        // at SUCCESS time only, collision-proof on disk: a queued twin job
+        // can never be overwritten.
         let output = workURL
 
         // analyzing
@@ -227,6 +225,17 @@ final class JobCoordinator: ObservableObject {
                 plan: plan,
                 encodeSeconds: Date().timeIntervalSince(encodeStart)
             )
+            // Late wake-up guard: if forceVerifyTerminal fired while run()
+            // was wedged (the very case that function exists for), the row
+            // was already finalised AND the file promoted out of scratch.
+            // Continuing here would either fail to move a no-longer-existing
+            // file or overwrite the good row with a stale result — simply
+            // discard the scratch and yield.
+            guard jobs.first(where: { $0.id == jobID })?.state == .verifying else {
+                try? fm.removeItem(at: output)
+                return
+            }
+
             let reportData = try? JSONEncoder().encode(report)
             // Three-state verdict: a FAILED report fails the job; a WARN-only
             // report (timed-out verification, inconclusive decode) still
@@ -234,55 +243,72 @@ final class JobCoordinator: ObservableObject {
             // verified" instead of a green seal.
             let encodeOK = report.status != .failed
 
-            // SUCCESS-ONLY promotion: rename the verified file into Documents
-            // under its collision-proof public name. Same volume → this is a
-            // cheap rename, never a copy. A failing verdict (or an engine
-            // error) leaves the file in the scratch folder — invisible to the
-            // user, gone at the next sweep.
-            var finalOutput = output
+            // SUCCESS-ONLY promotion (shared helper): rename the verified
+            // file into Documents under its collision-proof public name.
+            // A failing move is a REAL failure — a "done" row whose file
+            // stayed in scratch would be erased by the next sweep while the
+            // record keeps showing outputFileName — so it marks the row
+            // failed instead.
             if encodeOK {
-                let outDir = Self.outputsDirectory()
-                try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
-                let final = Self.uniqueOutputURL(in: outDir, base: base,
-                                                 stamp: presetStamp(job.preset))
-                do {
-                    try fm.moveItem(at: output, to: final)
-                    finalOutput = final
-                } catch {
-                    // Rare (disk pressure): better a finished encode whose
-                    // file sits in the invisible scratch folder than a job
-                    // that threw away its verified output.
-                    NSLog("VidCompress: output promotion to Documents failed (%@) — file kept in scratch",
-                          error.localizedDescription)
+                guard let promoted = promote(output,
+                                             sourceName: job.sourceName,
+                                             preset: job.preset) else {
+                    let msg = "Couldn't save the file to Files — free up storage and tap Retry."
+                    setJob(jobID) {
+                        $0.state = .failed
+                        $0.errorMessage = msg
+                    }
+                    saveRecord(jobID: jobID, outputName: nil, report: nil,
+                               state: "failed", errorText: msg)
+                    cancelFlags.removeValue(forKey: jobID)
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    return
                 }
-            }
-
-            setJob(jobID) {
-                $0.state = encodeOK ? .done : .failed
-                $0.report = report
-                $0.outputURL = finalOutput
-                if report.status == .failed {
-                    $0.errorMessage = "Output integrity report failed — see details."
+                setJob(jobID) {
+                    $0.state = .done
+                    $0.report = report
+                    $0.outputURL = promoted
                 }
-            }
-            // A cancel that landed during verification: honour it — remove
-            // the row entirely, unless iOS interrupted us (then keep a
-            // retryable failed row).
-            if flags.cancelled {
-                if systemInterrupted.contains(jobID) {
-                    markInterrupted(jobID: jobID, output: finalOutput)
-                } else {
-                    removeRow(jobID: jobID)
+                // A cancel that landed during verification: honour it — remove
+                // the row entirely, unless iOS interrupted us (then keep a
+                // retryable failed row).
+                if flags.cancelled {
+                    if systemInterrupted.contains(jobID) {
+                        markInterrupted(jobID: jobID, output: promoted)
+                    } else {
+                        removeRow(jobID: jobID)
+                    }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    return
                 }
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                return
-            }
-            saveRecord(jobID: jobID, outputName: finalOutput.lastPathComponent,
-                       report: reportData, state: encodeOK ? "done" : "failed")
-            // Storage management: a finished job doesn't need our copy of the
-            // source anymore — the original still lives in Photos/Files.
-            if encodeOK {
+                saveRecord(jobID: jobID, outputName: promoted.lastPathComponent,
+                           report: reportData, state: "done")
+                // Storage management: a finished job doesn't need our copy of
+                // the source anymore — the original still lives in Photos/Files.
                 deleteSourceImport(job)
+            } else {
+                // HARD integrity failure: the row keeps its scratch file for
+                // INSPECTION (the report is attached; "Keep anyway" promotes
+                // it to Documents as a manual verdict override), but no
+                // record outputName — the next launch's sweep legitimately
+                // erases scratch, and no record may point there.
+                setJob(jobID) {
+                    $0.state = .failed
+                    $0.report = report
+                    $0.outputURL = output
+                    $0.errorMessage = "Output integrity report failed — see details. Keep the file anyway from the ⋯ menu if it plays fine."
+                }
+                if flags.cancelled {
+                    if systemInterrupted.contains(jobID) {
+                        markInterrupted(jobID: jobID, output: output)
+                    } else {
+                        removeRow(jobID: jobID)
+                    }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    return
+                }
+                saveRecord(jobID: jobID, outputName: nil,
+                           report: reportData, state: "failed")
             }
 
         } catch is CancellationError {
@@ -347,10 +373,16 @@ final class JobCoordinator: ObservableObject {
             outputBitrateMbps: nil,
             encodeSeconds: encodeSeconds,
             outputDuration: nil)
+        // Promote exactly like a normal success: without this the verified
+        // file is STRANDED in scratch — the record would carry the scratch
+        // name ("<jobID>.mp4"), loadHistory would find no such file in
+        // Documents ("File removed"), and the sweep would erase it.
+        let final = promote(output, sourceName: jobs[idx].sourceName,
+                            preset: jobs[idx].preset) ?? output
         jobs[idx].state = .done
         jobs[idx].report = report
-        jobs[idx].outputURL = output
-        saveRecord(jobID: jobID, outputName: output.lastPathComponent,
+        jobs[idx].outputURL = final
+        saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                    report: try? JSONEncoder().encode(report), state: "done")
         cancelFlags.removeValue(forKey: jobID)
         // The worker task is wedged (that's why we're here) — retire it and
@@ -420,6 +452,32 @@ final class JobCoordinator: ObservableObject {
         }
     }
 
+    /// "Keep anyway" on a failed-integrity row: the verifier is software and
+    /// can produce a false positive (a duration/Sdr-drift mismatch on a
+    /// genuinely good encode), but the encode itself is real work the user
+    /// must not lose to it. Promotes the scratch file to Documents under a
+    /// collision-proof public name and moves the row to Done so Save/Share
+    /// work — the report stays attached, still showing what the verifier
+    /// found.
+    func keepFailedOutput(jobID: UUID) {
+        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[idx].state == .failed,
+              let work = jobs[idx].outputURL else { return }
+        guard let final = promote(work, sourceName: jobs[idx].sourceName,
+                                  preset: jobs[idx].preset) else { return }
+        let report = jobs[idx].report
+        let name = jobs[idx].sourceName
+        let preset = jobs[idx].preset
+        jobs[idx].state = .done
+        jobs[idx].outputURL = final
+        jobs[idx].errorMessage = nil
+        saveRecord(jobID: jobID, outputName: final.lastPathComponent,
+                   report: try? JSONEncoder().encode(report), state: "done")
+        // Same storage rule as a normal success: our import copy of the
+        // source is no longer needed.
+        deleteSourceImport(jobs[idx])
+    }
+
     /// Retires a wedged worker task and starts a fresh one, so the queue can
     /// never be dead-locked by a stuck job.
     private func reviveWorker() {
@@ -479,8 +537,10 @@ final class JobCoordinator: ObservableObject {
     /// - Runs AT MOST ONCE PER PROCESS: loadHistory() can re-fire mid-session
     ///   (.task), and a re-entrant sweep would delete import copies the user
     ///   JUST picked, whose job row doesn't exist yet.
-    /// - Skips files modified within the last hour for the same reason: a
-    ///   fresh import may have no job for another moment.
+    /// - Skips files that LANDED within the last hour (checked via
+    ///   .addedToDirectoryDateKey): copyItem PRESERVES the source's
+    ///   modification date, so a fresh copy of an old video looks old by
+    ///   mtime and a modification-date cutoff would not protect it.
     /// - Directory detection uses resourceValues(.isDirectoryKey) —
     ///   contentsOfDirectory results don't always carry a reliable
     ///   hasDirectoryPath hint.
@@ -507,14 +567,14 @@ final class JobCoordinator: ObservableObject {
         func sweep(_ dir: URL, keep: Set<String>) {
             guard let files = try? fm.contentsOfDirectory(
                       at: dir,
-                      includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])
+                      includingPropertiesForKeys: [.isDirectoryKey, .addedToDirectoryDateKey])
             else { return }
             for file in files {
                 guard let vals = try? file.resourceValues(
-                          forKeys: [.isDirectoryKey, .contentModificationDateKey])
+                          forKeys: [.isDirectoryKey, .addedToDirectoryDateKey])
                 else { continue }
                 if vals.isDirectory == true { continue }        // Inbox staging etc.
-                if let mod = vals.contentModificationDate, mod > cutoff { continue }
+                if let added = vals.addedToDirectoryDate, added > cutoff { continue }
                 if !keep.contains(file.standardizedFileURL.path) {
                     try? fm.removeItem(at: file)
                 }
@@ -743,6 +803,28 @@ final class JobCoordinator: ObservableObject {
             url = dir.appendingPathComponent("\(stem) (\(bump)).mp4")
         }
         return url
+    }
+
+    /// Shared SUCCESS-ONLY promotion: move a verified scratch file into
+    /// Documents under its collision-proof public name (same volume → a
+    /// cheap rename). Returns nil when the move fails — callers must treat
+    /// that as a failure, not a "done with the file in scratch" (the sweep
+    /// erases scratch and the record would lie about it).
+    private func promote(_ work: URL, sourceName: String, preset: Preset) -> URL? {
+        let fm = FileManager.default
+        let outDir = Self.outputsDirectory()
+        try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
+        // NAME_MAX safety: a long source name can push the base+stamp file
+        // name past the 255-byte path-component limit and make the move
+        // fail; trim the base so the full name always fits.
+        let base = String((sourceName as NSString).deletingPathExtension.prefix(100))
+        let final = Self.uniqueOutputURL(in: outDir, base: base, stamp: presetStamp(preset))
+        do {
+            try fm.moveItem(at: work, to: final)
+            return final
+        } catch {
+            return nil
+        }
     }
 
     static nonisolated func documentsDirectory() -> URL {
