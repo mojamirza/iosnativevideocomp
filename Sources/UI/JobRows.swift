@@ -15,6 +15,20 @@ struct JobRowView: View {
     @State private var showingRename = false
     @State private var renameText = ""
     @State private var saveNotice: String?
+    // Existence cache: `FileManager.fileExists` ran inside body (render
+    // paths) — synchronous disk I/O on EVERY frame the LazyVStack re-rendered
+    // the row. Refreshed on appear and on state change instead.
+    @State private var outputExists = false
+    @State private var sourceExists = false
+
+    private func refreshExistence() {
+        if let out = job.outputURL {
+            outputExists = FileManager.default.fileExists(atPath: out.path)
+        } else {
+            outputExists = false
+        }
+        sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
+    }
 
     /// Haptic on terminal transitions: success vs. failure feel different.
     private var stateTrigger: JobCoordinator.JobState? {
@@ -139,6 +153,13 @@ struct JobRowView: View {
         .sensoryFeedback(.error, trigger: stateTrigger) { _, newValue in
             newValue == .failed
         }
+        // Existence cache refresh: files can vanish (Files-app deletions) or
+        // appear (Keep-anyway promotion) between renders without rebuilding
+        // identity.
+        .onAppear(perform: refreshExistence)
+        .onChange(of: job.state) { _, _ in
+            refreshExistence()
+        }
     }
 
     private var titleBlock: some View {
@@ -190,7 +211,7 @@ struct JobRowView: View {
         case .analyzing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Analysing frames with Core Image…")
+                Text("Analysing source…")
                     .font(.caption2)
             }
             .foregroundStyle(.tertiary)
@@ -422,8 +443,7 @@ struct JobRowView: View {
                 // The next actions people actually take — share it or put
                 // it in Photos — live right on the row; Rename, Report and
                 // Remove stay in the menu.
-                if let out = job.outputURL,
-                   FileManager.default.fileExists(atPath: out.path) {
+                if let out = job.outputURL, outputExists {
                     Button {
                         saveToPhotos(out)
                     } label: {
@@ -463,7 +483,7 @@ struct JobRowView: View {
                 // The app folder is user-visible in Files — the output can be
                 // deleted out from under a row at any time. Dead actions are
                 // replaced with an honest "file removed" entry.
-                if FileManager.default.fileExists(atPath: out.path) {
+                if outputExists {
                     ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
                     // One click → straight into the photo library. The icon
                     // matches the native "Save Video" action.
@@ -489,12 +509,12 @@ struct JobRowView: View {
             if [.failed, .cancelled].contains(job.state),
                // Sources of finished jobs are deleted (storage management) —
                // offer Retry only while the source still exists.
-               FileManager.default.fileExists(atPath: job.sourceURL.path) {
+               sourceExists {
                 Button("Retry") { coordinator.retry(jobID: job.id) }
             }
             if job.state == .failed,
                let out = job.outputURL,
-               FileManager.default.fileExists(atPath: out.path) {
+               outputExists {
                 // A verifier false positive must not cost the user a finished
                 // encode: promote the (scratch) file to Documents and flip
                 // the row to Done. The report stays attached.
@@ -618,6 +638,11 @@ struct ReportSheet: View {
     /// Issues (failures + warnings) in report order — shown expanded.
     private var issueItems: [ReportItem] {
         report.items.filter { $0.severity != .pass }
+    }
+    /// HARD failures only — the headline "N checks failed" previously counted
+    /// warnings into it, which read as if the file was broken.
+    private var failedItems: [ReportItem] {
+        report.items.filter { $0.severity == .fail }
     }
     private var passItems: [ReportItem] {
         report.items.filter { $0.severity == .pass }
@@ -753,7 +778,7 @@ struct ReportSheet: View {
                     Text("\(passItems.count) of \(report.items.count) checks passed").font(.headline)
                 case .failed:
                     Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                    Text("\(issueItems.count) checks failed").font(.headline)
+                    Text("\(failedItems.count) checks failed").font(.headline)
                 }
             }
             LazyVGrid(columns: cols, spacing: 10) {
@@ -805,23 +830,38 @@ private struct OutputPlayerSheet: View {
 
     let job: JobCoordinator.Job
 
-    @State private var player = AVPlayer()
+    // LAZY: the old eager `AVPlayer()` initialised a full player (plus its
+    // CoreAudio/CMA timeouts) on every row the sheet was CREATED from, even
+    // before `onAppear` decided which file even exists. Built on first load.
+    @State private var player: AVPlayer?
     @State private var side: Side = .output
     @State private var sourceExists = false
     @State private var outputExists = false
     @State private var didLoad = false
+    /// Display aspect of the CURRENT video (transform-applied). Nil until
+    /// measured — the fixed 16/9 letterboxed portrait phone videos and 4:3
+    /// clips badly.
+    @State private var aspect: CGFloat?
 
     enum Side: Hashable { case output, source }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                VideoPlayer(player: player)
-                    .aspectRatio(16 / 9, contentMode: .fit)
-                    .background(Color.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal, 16)
-                    .accessibilityLabel("Video preview")
+                if let player {
+                    VideoPlayer(player: player)
+                        .aspectRatio(aspect ?? 16.0 / 9.0, contentMode: .fit)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 16)
+                        .accessibilityLabel("Video preview")
+                } else {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.black)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .padding(.horizontal, 16)
+                        .overlay { ProgressView().tint(.white) }
+                }
 
                 // Compare toggle ONLY when both the output and the source
                 // still exist (done jobs delete the source import).
@@ -853,6 +893,7 @@ private struct OutputPlayerSheet: View {
                 }
             }
             .onAppear(perform: load)
+            .onDisappear(perform: teardown)
             // Source↔Output comparison keeps the same playback position.
             .onChange(of: side) { _, newSide in
                 swapSide(new: newSide)
@@ -876,9 +917,43 @@ private struct OutputPlayerSheet: View {
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
         // Default to the output; fall back to the source if it's gone.
         side = outputExists ? .output : .source
+        // Audio session: VideoPlayer does not configure one itself, and with
+        // the default .ambient category playback can be silenced by the
+        // ringer switch and respects nothing else on the device.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        try? AVAudioSession.sharedInstance().setActive(true)
         let next = playerItem(for: side)
-        player.replaceCurrentItem(with: next)
-        player.play()
+        let newPlayer = AVPlayer()
+        newPlayer.replaceCurrentItem(with: next)
+        player = newPlayer
+        newPlayer.play()
+        measureAspect(for: newPlayer.currentItem)
+    }
+
+    /// Measure the video's DISPLAY aspect (naturalSize with its track
+    /// transform applied — portrait 4K stored as 3840×2160 is genuinely
+    /// 9:16 on screen) instead of forcing every clip into 16:9.
+    private func measureAspect(for item: AVPlayerItem?) {
+        guard let track = item?.asset
+            .tracks(withMediaType: .video).first else { return }
+        Task { @MainActor in
+            let size: CGSize? = try? await track.load(.naturalSize)
+            let transform: CGAffineTransform? = try? await track.load(.preferredTransform)
+            guard let size, size.width > 0, size.height > 0 else { return }
+            let applied = size.applying(transform ?? .identity)
+            let w = abs(applied.width), h = abs(applied.height)
+            if w > 0, h > 0 { aspect = w / h }
+        }
+    }
+
+    /// Tear down the player and its audio session — a sheet that merely
+    /// disappears previously left the session active, muting other audio.
+    private func teardown() {
+        guard let player else { return }
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        try? AVAudioSession.sharedInstance().setActive(false,
+                                                        options: .notifyOthersOnDeactivation)
     }
 
     private func playerItem(for side: Side) -> AVPlayerItem? {
@@ -897,6 +972,7 @@ private struct OutputPlayerSheet: View {
     /// Swapping to compare preserves the playback position and continues
     /// playback — the two videos stay in lock-step on the same frame.
     private func swapSide(new: Side) {
+        guard let player else { return }
         let time = player.currentTime()
         let wasPlaying = player.rate > 0
         let next = playerItem(for: new)
@@ -907,5 +983,6 @@ private struct OutputPlayerSheet: View {
             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         if wasPlaying { player.play() }
+        measureAspect(for: next)
     }
 }

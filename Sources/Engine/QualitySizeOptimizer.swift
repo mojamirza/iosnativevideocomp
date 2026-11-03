@@ -23,6 +23,14 @@ struct OptimizerPlan: Hashable {
     func estimatedSizeMB() -> Double {
         Double(totalBitrate) / 8.0 * duration / 1_000_000.0
     }
+
+    /// EXACT estimated output size in BYTES, computed once from the bitrate
+    /// math (bits/s ÷ 8 × s). The UI previously went through
+    /// `estimatedSizeMB()` — which returns DECIMAL megabytes — and then
+    /// multiplied by 1_048_576, inflating every estimate by ≈4.9 %.
+    var estimatedBytes: Int64 {
+        Int64(Double(totalBitrate) / 8.0 * duration)
+    }
 }
 
 /// Turns a preset + probed source into a concrete encoder plan. Deliberately

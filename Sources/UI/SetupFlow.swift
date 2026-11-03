@@ -115,16 +115,19 @@ struct SetupFlowView: View {
         if isBatch {
             return totalBatchOutBytes(for: selectedPreset!)
         }
-        return estimate.map { Int64($0.estimatedSizeMB() * 1_048_576) }
+        return estimate.map { $0.estimatedBytes }
     }
 
     /// True when the estimate leaves almost nothing saved — say so BEFORE
     /// the user commits instead of shipping a disappointing report.
     private var littleToGain: Bool {
-        guard let out = estimateBytes, let preset = selectedPreset else { return false }
+        guard let out = estimateBytes, selectedPreset != nil else { return false }
         let input = isBatch ? totalInBytes : (singleProbe?.fileSize ?? 0)
         guard input > 0 else { return false }
-        return Double(out) >= Double(input) * 0.85 && preset.resolution != .keep
+        // .keep previously excluded itself — but a keep-resolution encode at
+        // a low bitrate still gains nothing if the output approaches the
+        // input size; the warning must fire there too.
+        return Double(out) >= Double(input) * 0.85
     }
 
     private var bottomBar: some View {
@@ -251,7 +254,13 @@ struct SetupFlowView: View {
     }
 
     /// The single source's probe (nil for batches or while analysing).
-    private var singleProbe: ProbeResult? { probes.first ?? nil }
+    /// Previously `probes.first ?? nil` — in a batch it handed VIDEO 1's
+    /// probe to everything that read it (preset rows then showed one video's
+    /// estimate next to the batch total). A batch has NO single probe.
+    private var singleProbe: ProbeResult? {
+        guard !isBatch else { return nil }
+        return probes.compactMap { $0 }.first ?? nil
+    }
 
     /// Per-video rows for a batch: thumbnail, name, size, duration.
     private var batchList: some View {
@@ -435,7 +444,7 @@ struct SetupFlowView: View {
         var valid = 0
         var total: Int64 = 0
         for p in probes where p != nil {
-            total += Int64(QualitySizeOptimizer.plan(preset: preset, probe: p!).estimatedSizeMB() * 1_048_576)
+            total += QualitySizeOptimizer.plan(preset: preset, probe: p!).estimatedBytes
             valid += 1
         }
         return valid > 0 ? total : nil
@@ -572,7 +581,10 @@ private struct PresetRow: View {
                     }
                 } else if let totalBytes = batchTotalBytes {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(String(format: "≈ %.0f MB total", Double(totalBytes) / 1_048_576))
+                        // Decimal MB (matching ByteCountFormatter), not MiB —
+                        // the old ÷ 1_048_576 displayed a different unit than
+                        // every other size in the UI.
+                        Text(String(format: "≈ %.0f MB total", Double(totalBytes) / 1_000_000))
                             .font(.callout.weight(.bold).monospacedDigit())
                             .foregroundStyle(.tint)
                         Text(String(format: "%.1f Mbps", Double(preset.fixedBitrateMbps)))

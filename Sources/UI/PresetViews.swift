@@ -101,16 +101,20 @@ struct PresetEditorView: View {
         0.1 * pow(400, min(1, max(0, t)))
     }
 
-    /// Plain-language quality rating from bits-per-pixel-second against the
-    /// probed resolution + frame rate. bpp ≈ bitrate/(W·H·fps); the ranges
-    /// come from common HEVC experience (0.06 ≈ 4 Mbps 1080p30).
+    /// Plain-language quality rating from bits-per-pixel-second. Rates the
+    /// PLANNED OUTPUT resolution/fps — rating the source's pixels told the
+    /// user "Good for 3840×2160" while the preset was compressing to 1080p.
+    /// bpp ≈ bitrate/(W·H·fps); the ranges come from common HEVC experience
+    /// (0.06 ≈ 4 Mbps 1080p30).
     private func qualityHint() -> (label: String, color: Color)? {
         guard let probe = contextProbe else { return nil }
-        let w = max(1, Double(probe.sourceSize.width))
-        let h = max(1, Double(probe.sourceSize.height))
-        let fps = max(1, Double(probe.nominalFPS))
-        let bpp = fixedMbps * 1_000_000 / (w * h * fps)
-        let res = "\(Int(probe.sourceSize.width))×\(Int(probe.sourceSize.height))"
+        let out = resolution.outputSize(for: probe.sourceSize)
+        let w = max(1, Double(out.width))
+        let h = max(1, Double(out.height))
+        var fps = probe.nominalFPS > 0 ? Double(probe.nominalFPS) : 30.0
+        if fpsCapEnabled { fps = min(fps, Double(fpsCap)) }
+        let bpp = fixedMbps * 1_000_000 / (w * h * max(1, fps))
+        let res = "\(Int(out.width))×\(Int(out.height))"
         switch bpp {
         case ..<0.045:
             return ("Low for \(res) — expect blockiness on busy motion",
@@ -134,7 +138,9 @@ struct PresetEditorView: View {
             audioBitrateKbps: Int(audioKbps),
             isUserDefined: true)
         let est = QualitySizeOptimizer.plan(preset: draft, probe: probe)
-        return Int64(est.estimatedSizeMB() * 1_048_576)
+        // estimatedBytes does the bit-math once — the old MB × 1_048_576
+        // chain inflated the estimate ≈4.9 %.
+        return est.estimatedBytes
     }
 
     /// "Fit under X MB": exact fixed video bitrate that keeps video + audio —
@@ -307,7 +313,7 @@ struct PresetEditorView: View {
                                 .foregroundStyle(.red)
                         }
                         // QUALITY hint: rate the chosen bitrate against the
-                        // source resolution + fps BEFORE committing.
+                        // PLANNED OUTPUT resolution + fps BEFORE committing.
                         if let hint = qualityHint() {
                             Label(hint.label, systemImage: "gauge.with.needle")
                                 .font(.footnote)

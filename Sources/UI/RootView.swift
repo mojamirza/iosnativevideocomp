@@ -75,7 +75,11 @@ struct RootView: View {
                     // by the menu's dismissal). The empty-state pickers — which
                     // work on device — are direct, so the toolbar matches that
                     // proven shape.
-                    PhotosPicker(selection: $photoItems, matching: .videos) {
+                    // preferredItemEncoding: .current — without it the picker
+                    // may hand back a TRANSCODED HDR→SDR movie; the engine
+                    // must see the original pixels to keep the color tags.
+                    PhotosPicker(selection: $photoItems, matching: .videos,
+                                 preferredItemEncoding: .current) {
                         Image(systemName: "photo.on.rectangle.angled")
                     }
                     .accessibilityLabel("Import from Photos")
@@ -278,7 +282,11 @@ private struct EmptyState: View {
                 .padding(.horizontal, 40)
             // Real entry points, not just directions.
             HStack(spacing: 12) {
-                PhotosPicker(selection: $photoItems, matching: .videos) {
+                // .current encoding: deliver the ORIGINAL pixels — the
+                // default may transcode an HDR clip to SDR before the
+                // color-safe engine ever sees it.
+                PhotosPicker(selection: $photoItems, matching: .videos,
+                             preferredItemEncoding: .current) {
                     Label("Photos", systemImage: "photo.on.rectangle.angled")
                         .font(.callout.weight(.semibold))
                         .frame(minWidth: 110)
