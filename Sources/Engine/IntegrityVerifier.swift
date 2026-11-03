@@ -47,7 +47,11 @@ enum IntegrityVerifier {
 
         if let outTrack = videoTracks.first {
             let t = try? await outAsset.load(.duration)
-            outDuration = t.map { CMTimeGetSeconds($0) } ?? 0
+            // Int(NaN) TRAPS — an indefinite duration (broken output) would
+            // put NaN into the report and the sheet would crash exactly when
+            // something went wrong. Non-finite becomes 0 / nil, never NaN.
+            outDuration = t.map { CMTimeGetSeconds($0) }
+                .map { $0.isFinite ? $0 : 0 } ?? 0
             let fps: Float = (try? await outTrack.load(.nominalFrameRate)) ?? 0
             // Report the ACTUAL output DISPLAY geometry: naturalSize is
             // pre-rotation (stored); apply the output track's transform —

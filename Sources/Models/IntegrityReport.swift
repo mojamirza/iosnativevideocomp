@@ -74,9 +74,11 @@ struct IntegrityReport: Codable, Hashable {
         self.items = items
         self.inBytes = inBytes
         self.outBytes = outBytes
-        self.outputBitrateMbps = outputBitrateMbps
+        // NaN never enters a report: Int(NaN) traps in the row UI. Non-finite
+        // values are stored as nil ("—" in the sheet), like "unknown".
+        self.outputBitrateMbps = outputBitrateMbps.flatMap { $0.isFinite ? $0 : nil }
         self.encodeSeconds = encodeSeconds
-        self.outputDuration = outputDuration
+        self.outputDuration = outputDuration.flatMap { $0.isFinite ? $0 : nil }
     }
 
     // Lenient decode: every field optional + defaults; schemaVersion 0 for

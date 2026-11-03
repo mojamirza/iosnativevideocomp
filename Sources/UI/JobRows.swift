@@ -723,9 +723,12 @@ struct ReportSheet: View {
     private var summaryCard: some View {
         let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
         // Nil stats (verification timed out) display as "—", never "0".
-        let durationText = report.outputDuration.map {
-            String(format: "%d:%02d", Int($0) / 60, Int($0) % 60)
-        } ?? "—"
+        // .filter { isFinite } end-guards Int(NaN) — which TRAPS — for any
+        // report decoded before the init-side clamp existed.
+        let durationText = report.outputDuration
+            .filter { $0.isFinite }
+            .map { String(format: "%d:%02d", Int($0) / 60, Int($0) % 60) }
+            ?? "—"
         let bitrateText = report.outputBitrateMbps.map { String(format: "%.1f Mbps", $0) } ?? "—"
         let savedText = report.grew
             ? String(format: "+%.0f%%", abs(report.savingsPercent))     // output grew

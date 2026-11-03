@@ -40,6 +40,12 @@ final class JobCoordinator: ObservableObject {
     /// They become FAILED rows (source kept, Retry available) instead of
     /// silently vanishing.
     private var systemInterrupted = Set<UUID>()
+    /// One-shot UI flag: the system REFUSED the BG continued-processing
+    /// submission — after a Sideloadly re-sign the bundle ID may no longer
+    /// match the task identifier, and submission then fails silently.
+    /// Foreground compression is unaffected.
+    @Published var backgroundSubmissionDenied = false
+    private var submitDenialNoticed = false
     private var modelContext: ModelContext?
 
     init(modelContext: ModelContext? = nil) {
@@ -92,7 +98,14 @@ final class JobCoordinator: ObservableObject {
                 let subtitle = current?.sourceName
                     ?? jobs.first(where: { $0.state == .queued })?.sourceName
                     ?? "videos"
-                _ = BackgroundCompress.submit(subtitle: subtitle)
+                if !BackgroundCompress.submit(subtitle: subtitle), !submitDenialNoticed {
+                    // The refusal previously vanished: background
+                    // continuation silently lost for the whole session
+                    // (bundle-ID/task-identifier mismatch after a re-sign
+                    // is a classic cause). One-time notice instead.
+                    submitDenialNoticed = true
+                    backgroundSubmissionDenied = true
+                }
             }
         }
     }

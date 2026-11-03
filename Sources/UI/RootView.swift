@@ -37,7 +37,11 @@ struct RootView: View {
                         sectionHeader("In progress", icon: "hourglass", count: active.count)
                         ForEach(active) { job in
                             JobRowView(job: job)
-                                .id("\(job.id)-\(job.state.rawValue)")   // re-create on state change
+                                // STABLE identity: ".id(job.id + state)" rebuilt every row on
+                                // each state change — the completion haptics never fired
+                                // (observer re-created around the event) and any open
+                                // dialog/sheet inside a row closed. State is a plain value
+                                // read; identity must stay constant per job.
                                 .padding(.horizontal)
                         }
                     }
@@ -46,7 +50,6 @@ struct RootView: View {
                         sectionHeader("History", icon: "clock", count: finished.count)
                         ForEach(finished) { job in
                             JobRowView(job: job)
-                                .id("\(job.id)-\(job.state.rawValue)")
                                 .padding(.horizontal)
                         }
                     }
@@ -111,7 +114,10 @@ struct RootView: View {
                     Task {
                         var picked: [PickedVideo] = []
                         for url in urls {
-                            if let copy = SecurityScoped(url: url).importCopy() {
+                            // The multi-GB copy runs OFF the main actor —
+                            // inline on MainActor it froze the UI for the
+                            // entire copy duration.
+                            if let copy = await ImportHelpers.copyOffMain(url) {
                                 let thumb = await Thumbnails.make(url: copy)
                                 picked.append(PickedVideo(url: copy, thumbnail: thumb))
                             }
@@ -131,6 +137,17 @@ struct RootView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(importError ?? "")
+            }
+            // One-time notice: the system refused background continuation for
+            // this install (re-signed bundle IDs are the usual cause). The
+            // queue still works — in the foreground only.
+            .alert("Background compression unavailable",
+                   isPresented: Binding(
+                       get: { coordinator.backgroundSubmissionDenied },
+                       set: { if !$0 { coordinator.backgroundSubmissionDenied = false } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("The system refused background processing for this install — this can happen after the app was re-signed. Compression still works normally; just keep the app open in the foreground until the queue finishes.")
             }
             .sheet(isPresented: $showingSetup) {
                 SetupFlowView(videos: importedVideos,
@@ -276,7 +293,9 @@ enum ImportHelpers {
         // system exports the movie to a temp file). Often unavailable for
         // library assets, so failure here just falls through.
         if let url = try? await item.loadTransferable(type: URL.self) {
-            if let copy = SecurityScoped(url: url).importCopy() { return copy }
+            // The physical copy runs OFF the main actor — a multi-GB copy
+            // inline on MainActor freezes the UI for its whole duration.
+            if let copy = await copyOffMain(url) { return copy }
             return url
         }
         // Fallback: FileRepresentation streaming — the system hands us a temp
@@ -285,17 +304,19 @@ enum ImportHelpers {
         if let video = try? await item.loadTransferable(type: ImportedVideo.self) {
             return video.url
         }
-        // Last resort (exotic providers only): in-memory load. Memory-heavy
-        // for very large videos, but guarantees imports keep working.
-        if let data = try? await item.loadTransferable(type: Data.self) {
-            let dir = JobCoordinator.importsDirectory()
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "mov"
-            let dest = dir.appendingPathComponent("IMG-\(UUID().uuidString).\(ext)")
-            try data.write(to: dest)
-            return dest
-        }
+        // The old in-memory `Data` fallback is GONE: a library video that
+        // still hit it loaded the WHOLE multi-GB movie into RAM and
+        // OOM-crashed the app. An exotic provider that can't hand us a file
+        // now gets an honest error alert instead of a crash.
         throw ImportError.notImportable
+    }
+
+    /// Security-scoped access + directory transfer, entirely OFF the main
+    /// actor: multi-GB copies otherwise stall the UI for their duration.
+    static func copyOffMain(_ url: URL) async -> URL? {
+        await Task.detached {
+            SecurityScoped(url: url).importCopy()
+        }.value
     }
 }
 
