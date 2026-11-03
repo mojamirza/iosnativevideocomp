@@ -207,7 +207,10 @@ final class JobCoordinator: ObservableObject {
                 flags: flags
             ) { [weak self] progress in
                 Task { @MainActor in
-                    self?.setJob(jobID) { $0.progress = progress }
+                    // Monotonic: a stale engine emission (an earlier
+                    // attempt, a re-anchored VFR source) must never drag
+                    // the row backward mid-encode.
+                    self?.setJob(jobID) { $0.progress = max($0.progress, progress) }
                     self?.bgProgress(name: job.sourceName, fraction: progress)
                 }
             }
@@ -390,13 +393,25 @@ final class JobCoordinator: ObservableObject {
         // file is STRANDED in scratch — the record would carry the scratch
         // name ("<jobID>.mp4"), loadHistory would find no such file in
         // Documents ("File removed"), and the sweep would erase it.
-        let final = promote(output, sourceName: jobs[idx].sourceName,
-                            preset: jobs[idx].preset) ?? output
-        jobs[idx].state = .done
-        jobs[idx].report = report
-        jobs[idx].outputURL = final
-        saveRecord(jobID: jobID, outputName: final.lastPathComponent,
-                   report: try? JSONEncoder().encode(report), state: "done")
+        if let final = promote(output, sourceName: jobs[idx].sourceName,
+                               preset: jobs[idx].preset) {
+            jobs[idx].state = .done
+            jobs[idx].report = report
+            jobs[idx].outputURL = final
+            saveRecord(jobID: jobID, outputName: final.lastPathComponent,
+                       report: try? JSONEncoder().encode(report), state: "done")
+        } else {
+            // Same rule as run(): a promotion failure must NOT fall back to
+            // rescuing a scratch path — the record would point at a file the
+            // next sweep erases. Fail the job with Retry (the source import
+            // survived: only verification wedged).
+            let msg = "Couldn't save the file to Files — free up storage and tap Retry."
+            jobs[idx].state = .failed
+            jobs[idx].errorMessage = msg
+            try? FileManager.default.removeItem(at: output)
+            saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
+                       errorText: msg)
+        }
         cancelFlags.removeValue(forKey: jobID)
         // The worker task is wedged (that's why we're here) — retire it and
         // start a fresh one so the queue keeps working. A late-waking old
@@ -410,7 +425,10 @@ final class JobCoordinator: ObservableObject {
     func cancel(jobID: UUID) {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }) else { return }
         if jobs[idx].state == .queued {
-            // Never started — just drop it.
+            // Never started — just drop it. The source import copy leaves
+            // TOO: removing only the row leaked the multi-GB copy in
+            // Caches/Imports until the next sweep.
+            deleteSourceImport(jobs[idx])
             withAnimation { jobs.remove(at: idx) }
         } else if let flags = cancelFlags[jobID] {
             // Active job: the engine's cancel hooks abort the encode at once;
@@ -608,26 +626,52 @@ final class JobCoordinator: ObservableObject {
 
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        // Strip path-hostile characters so the file stays a plain file in Files.
-        let bad = CharacterSet(charactersIn: "/\\:$\"?*<>|")
+        // Strip path-hostile characters so the file stays a plain file in
+        // Files. `$` is NOT in the list — it is legal in a file name and
+        // stripping it rewrote the user's name for no reason.
+        let bad = CharacterSet(charactersIn: "/\\:\"?*<>|")
         let clean = trimmed.components(separatedBy: bad).joined(separator: "-")
         let ext = out.pathExtension
-        var finalName = clean
-        if ext.isEmpty || !clean.lowercased().hasSuffix("." + ext.lowercased()) {
-            finalName = "\(clean).\(ext)"
-        }
 
-        // Collide-proof: append "(2)", "(3)"… if a file with that name exists.
+        // Determine the STEM (without the extension that is appended below)
+        // so the byte-length cap lands before the extension, never inside it.
+        var stem = clean
+        if !ext.isEmpty {
+            if clean.lowercased().hasSuffix("." + ext.lowercased()) {
+                // The user included the existing extension — don't double it.
+                stem = String(clean.prefix(clean.count - (ext.count + 1)))
+            }
+        } else if !clean.isEmpty {
+            stem = clean
+        }
+        // A leading dot makes ".foo" a HIDDEN file in Files — prefix so the
+        // renamed output stays visible.
+        if stem.isEmpty || stem.hasPrefix(".") {
+            stem = "Video" + stem
+        }
+        // NAME_MAX safety: trim BYTE-wise to 150 bytes (CJK names overflow a
+        // character count long before 255 bytes), so a long rename can never
+        // fail its file move silently.
+        while stem.utf8.count > 150 && stem.count > 1 {
+            stem = String(stem.dropLast())
+        }
+        if stem.isEmpty || stem.hasPrefix(".") { stem = "Video" }
+        var finalName = ext.isEmpty ? stem : "\(stem).\(ext)"
+
+        // Collide-proof: append "(2)", "(3)"… SKIPPING the file's OWN path —
+        // renaming to the same name previously bounced itself to "(2)".
+        let original = out.standardizedFileURL.path
         var dst = Self.outputsDirectory().appendingPathComponent(finalName)
         var bump = 1
-        while fm.fileExists(atPath: dst.path) {
+        while fm.fileExists(atPath: dst.path),
+              dst.standardizedFileURL.path != original {
             bump += 1
-            let stem = (finalName as NSString).deletingPathExtension
-            let newAppended = "\(stem) (\(bump)).\(ext)"
-            dst = Self.outputsDirectory().appendingPathComponent(newAppended)
+            let bumpedStem = (finalName as NSString).deletingPathExtension
+            dst = Self.outputsDirectory().appendingPathComponent("\(bumpedStem) (\(bump)).\(ext)")
         }
         do {
             try fm.moveItem(at: out, to: dst)
+            Self.excludedFromBackup(dst)
         } catch {
             return  // leave the file untouched if the move fails
         }
@@ -673,6 +717,7 @@ final class JobCoordinator: ObservableObject {
                 }
             }
             if kept.count < records.count { try? context.save() }
+            var purgedRecords = false
             for r in kept {
                 guard let state = JobState(rawValue: r.stateRaw) else { continue }
                 guard state != .queued, state != .analyzing,
@@ -681,7 +726,15 @@ final class JobCoordinator: ObservableObject {
                 // Storage management deletes a finished job's source copy, so
                 // only RETRYABLE rows (failed) must still have theirs.
                 if state == .failed {
-                    guard fm.fileExists(atPath: srcURL.path) else { continue }
+                    // A FAILED row is RETRYABLE — without its source it is
+                    // junk the user can neither retry nor ever see (every
+                    // launch skips it) and it live'd on invisibly. PURGE the
+                    // record instead.
+                    guard fm.fileExists(atPath: srcURL.path) else {
+                        context.delete(r)
+                        purgedRecords = true
+                        continue
+                    }
                 }
 
                 var report: IntegrityReport?
@@ -716,6 +769,7 @@ final class JobCoordinator: ObservableObject {
                     createdAt: r.createdAt
                 ))
             }
+            if purgedRecords { try? context.save() }
         } catch {
             // History is best-effort; never block the UI.
         }
@@ -834,6 +888,7 @@ final class JobCoordinator: ObservableObject {
         let final = Self.uniqueOutputURL(in: outDir, base: base, stamp: presetStamp(preset))
         do {
             try fm.moveItem(at: work, to: final)
+            Self.excludedFromBackup(final)
             return final
         } catch {
             return nil
@@ -852,6 +907,17 @@ final class JobCoordinator: ObservableObject {
     /// Files → On My iPad), so the user sees just their finished videos.
     static nonisolated func outputsDirectory() -> URL {
         documentsDirectory()
+    }
+
+    /// Outputs in Documents are included in iCloud device backups by
+    /// default — several GB of videos would silently eat the user's backup
+    /// quota while the originals still live in Photos/Files. Set the
+    /// exclusion on every promoted (or renamed) output file.
+    static func excludedFromBackup(_ url: URL) {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var target = url
+        try? target.setResourceValues(values)
     }
 
     /// Import copies live in Caches/Imports — the Files app doesn't show the

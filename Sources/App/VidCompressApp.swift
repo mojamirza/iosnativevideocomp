@@ -1,6 +1,13 @@
 import SwiftUI
 import SwiftData
 
+/// Raised ONCE in App.init when the SwiftData document store could not be
+/// opened and the app fell back to an IN-MEMORY container. The root banner
+/// reads it as a stable per-process value.
+enum StorageFallback {
+    static var inMemoryOnly = false
+}
+
 @main
 struct VidCompressApp: App {
     private let container: ModelContainer
@@ -11,7 +18,11 @@ struct VidCompressApp: App {
         do {
             container = try ModelContainer(for: JobRecord.self)
         } catch {
-            // Fall back to an in-memory store if the document store is corrupt.
+            // Fall back to an in-memory store if the document store is
+            // corrupt — the previous silent fallback made HISTORY vanish
+            // with no explanation (records written this session die with
+            // the app). The flag turns that into a visible banner.
+            StorageFallback.inMemoryOnly = true
             container = try! ModelContainer(
                 for: JobRecord.self,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)

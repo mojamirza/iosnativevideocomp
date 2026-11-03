@@ -26,6 +26,13 @@ struct RootView: View {
                             .padding(.top, 40)
                     }
 
+                    // SwiftData fell back to an in-memory store this
+                    // launch (corrupt document store): the banner explains
+                    // instead of letting history silently vanish.
+                    if StorageFallback.inMemoryOnly {
+                        storageFallbackBanner
+                    }
+
                     let active = coordinator.jobs.filter {
                         [.queued, .analyzing, .compressing, .verifying].contains($0.state)
                     }
@@ -112,6 +119,7 @@ struct RootView: View {
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result {
                     Task {
+
                         var picked: [PickedVideo] = []
                         for url in urls {
                             // The multi-GB copy runs OFF the main actor —
@@ -181,6 +189,21 @@ struct RootView: View {
         }
         .padding(.horizontal)
         .padding(.top, 6)
+    }
+
+    /// One-time banner (stable per-process flag set in App.init): the
+    /// SwiftData store failed to open and history runs memory-only.
+    private var storageFallbackBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text("History may not survive this session — the app couldn't open its database and is running without it. Your videos are not affected.")
+                .font(.footnote)
+        }
+        .padding(12)
+        .background(Color(UIColor.systemYellow).opacity(0.18),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
     }
 }
 
