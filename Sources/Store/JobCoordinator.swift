@@ -173,7 +173,7 @@ final class JobCoordinator: ObservableObject {
         let encodeStart = Date()
 
         do {
-            let plan: OptimizerPlan
+            var plan: OptimizerPlan
             if let p = job.plan {
                 plan = p
             } else {
@@ -212,6 +212,60 @@ final class JobCoordinator: ObservableObject {
                     // the row backward mid-encode.
                     self?.setJob(jobID) { $0.progress = max($0.progress, progress) }
                     self?.bgProgress(name: job.sourceName, fraction: progress)
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // GUARANTEED TARGET SIZE — the hard promise. The plan already
+            // solved its bitrate against the budget; now VERIFY the actual
+            // bytes. A first pass that drifted over the target (VideoToolbox
+            // ABR overshoot is content-dependent) gets ONE corrected extra
+            // pass, solved from the measured real bytes — never a guess.
+            // ----------------------------------------------------------------
+            if let target = plan.targetBytes, target > 0 {
+                let firstBytes = (try? fm.attributesOfItem(atPath: output.path))?[.size]
+                    as? Int64 ?? 0
+                if firstBytes > target {
+                    let audioBytes = Double(plan.audioBitrate) / 8.0 * max(0.1, plan.duration)
+                    let videoActual = max(1, Double(firstBytes - Int64(audioBytes)))
+                    let videoBudget = max(200_000.0, Double(target) - audioBytes)
+                    let corrected = min(40_000_000, max(200_000,
+                        Int(Double(plan.videoBitrate) * videoBudget / videoActual)))
+                    var plan2 = plan
+                    plan2.videoBitrate = corrected
+
+                    // Deliberate progress reset: the measured second pass
+                    // restarts the bar (the monotonic guard in the callback
+                    // resumes from 0 cleanly after this).
+                    setJob(jobID) {
+                        $0.state = .compressing
+                        $0.progress = 0
+                    }
+                    bgSubtitle("Re-encoding \(job.sourceName) to fit…")
+
+                    // The corrected pass encodes to a SEPARATE scratch; only
+                    // on full success does it replace the primary path, so a
+                    // mid-re-encode cancel/kill still presents a consistent
+                    // state to the sweep and the verifier below.
+                    let pass2 = workDir.appendingPathComponent("\(jobID.uuidString).r2.mp4")
+                    try? fm.removeItem(at: pass2)
+                    try await CompressionEngine.compress(
+                        source: job.sourceURL,
+                        output: pass2,
+                        preset: job.preset,
+                        plan: plan2,
+                        flags: flags
+                    ) { [weak self] progress in
+                        Task { @MainActor in
+                            self?.setJob(jobID) { $0.progress = max($0.progress, progress) }
+                            self?.bgProgress(name: job.sourceName, fraction: progress)
+                        }
+                    }
+                    // Swap the scratch files; downstream (verify/promote)
+                    // keeps using the ONE primary path.
+                    try? fm.removeItem(at: output)
+                    try fm.moveItem(at: pass2, to: output)
+                    plan = plan2
                 }
             }
 

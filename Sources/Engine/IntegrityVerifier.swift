@@ -262,6 +262,33 @@ enum IntegrityVerifier {
                 }
             }
         }
+        // 5c. PRIVACY SCRUB verification: no location metadata ever, and the
+        //     creation date present when the scrub is keeping it.
+        do {
+            let outMeta = (try? await outAsset.load(.commonMetadata)) ?? []
+            let hasLocation = outMeta.contains {
+                ($0.identifier?.rawValue ?? "").lowercased().contains("location")
+            }
+            if hasLocation {
+                items.append(ReportItem("privacy", "Location metadata present",
+                    "The output carries a location (GPS) tag — this must never happen; scrub it by re-running the compression.", .fail))
+            } else {
+                items.append(ReportItem("privacy", "No location metadata",
+                    "Outputs are scrubbed of location on purpose (compact privacy).", .pass))
+            }
+            if PrivacyScrub.keepCreationDate {
+                let hasDate = outMeta.contains {
+                    $0.commonKey == AVMetadataKey.commonKeyCreationDate
+                }
+                if hasDate {
+                    items.append(ReportItem("privacy", "Creation date preserved",
+                        "The output keeps the source's date; only the location is removed.", .pass))
+                } else {
+                    items.append(ReportItem("privacy", "Creation date dropped",
+                        "The scrubber was asked to keep the date, but the source's date wasn't parseable and the output ships date-less.", .warn))
+                }
+            }
+        }
 
         // 6. Bitrate & savings sanity.
         let outBitrate = fileSize > 0 && outDuration > 0
@@ -278,6 +305,26 @@ enum IntegrityVerifier {
                                videoPart / 1e6, Double(plan.videoBitrate) / 1e6), .pass))
                 }
             }
+
+        // 6b. GUARANTEED TARGET SIZE: when the plan carried a target, prove
+        //     the output lands under it — the coordinator re-encodes once if
+        //     the first pass drifted over; this check is the final word.
+        if let target = plan.targetBytes, target > 0 {
+            if fileSize <= target {
+                let used = ByteCountFormatter.string(fromByteCount: fileSize,
+                                                     countStyle: .file)
+                let budget = ByteCountFormatter.string(fromByteCount: target,
+                                                       countStyle: .file)
+                items.append(ReportItem("target", "Target size honored",
+                    "Output \(used) ≤ guaranteed budget \(budget).", .pass))
+            } else {
+                let used = ByteCountFormatter.string(fromByteCount: fileSize,
+                                                     countStyle: .file)
+                let overMB = Double(fileSize - target) / 1_000_000.0
+                items.append(ReportItem("target", "Target size exceeded",
+                    String(format: "Output \(used) is %.1f MB over the guaranteed target even after the measured re-encode — the encoder's minimum practical rate for this content is too high to hit the size.", overMB), .fail))
+            }
+        }
 
         return IntegrityReport(
             items: items,

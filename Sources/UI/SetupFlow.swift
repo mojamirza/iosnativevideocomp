@@ -25,10 +25,52 @@ struct SetupFlowView: View {
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var showEditor = false
     @State private var editingPreset: Preset?
+    /// Privacy scrub: keep the source's creation date (location is NEVER
+    /// kept). Persisted so the choice sticks across sessions.
+    @State private var keepCreationDate = PrivacyScrub.keepCreationDate
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
     var isBatch: Bool { videos.count > 1 }
+
+    /// LOW-MOTION detector (lecture / screen-recording suggestion): fires on
+    /// sources whose own bitrate is tiny relative to pixels×fps, i.e. the
+    /// encoder was starved for motion to spend bits on. Threshold: <0.045
+    /// bits-per-pixel-frame ≈ static slides with a voice track.
+    private var suggestsLectureMode: Bool {
+        guard let preset = selectedPreset,
+              preset.fpsCap == nil, preset.audioChannels == nil else { return false }
+        let candidates = probes.compactMap { $0 }
+        guard let p = candidates.first else { return false }
+        guard p.nominalFPS > 0, p.sourceSize.width > 0 else { return false }
+        let bpp = p.videoDataRate /
+            (Double(p.sourceSize.width) * Double(p.sourceSize.height) * Double(p.nominalFPS))
+        return bpp < 0.045
+    }
+
+    /// Applies the lecture recipe onto a COPY of the selected preset (built-
+    /// ins are never mutated): 15 fps cap, a lean bitrate for the output
+    /// size, and a forced MONO voice track.
+    private func applyLectureMode() {
+        guard var preset = selectedPreset else { return }
+        preset.fpsCap = 15
+        preset.fixedBitrateMbps = max(0.6, min(preset.fixedBitrateMbps, 2.0))
+        preset.audioChannels = 1
+        selectedPreset = preset
+    }
+
+    /// Lecture mode is ON when the selected preset already carries the whole
+    /// recipe (15 fps cap + forced mono) — derived, so switching presets
+    /// updates it with no stale @State flag.
+    private var lectureApplied: Bool {
+        guard let preset = selectedPreset else { return false }
+        return preset.fpsCap == 15 && preset.audioChannels == 1
+    }
+
+    /// Persist the privacy choice whenever the toggle is moved.
+    private func persistPrivacy() {
+        PrivacyScrub.keepCreationDate = keepCreationDate
+    }
 
     init(videos: [PickedVideo], onDone: @escaping () -> Void) {
         self.videos = videos
@@ -104,6 +146,11 @@ struct SetupFlowView: View {
             .task {
                 await analyze()
             }
+            // The privacy policy persists the moment the user moves it —
+            // a closed sheet must not lose the choice.
+            .onChange(of: keepCreationDate) { _, _ in
+                persistPrivacy()
+            }
         }
     }
 
@@ -149,6 +196,43 @@ struct SetupFlowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+
+            // LOW-MOTION SUGGESTION (lectures / screen recordings): sources
+            // whose own bits-per-pixel are tiny carry almost no motion — a
+            // camera-style preset wastes bitrate on 60 fps of stillness.
+            // One tap applies the lecture recipe: 15 fps cap + lean bitrate
+            // + a MONO voice track.
+            if let preset = selectedPreset, suggestsLectureMode, !lectureApplied {
+                Label {
+                    HStack(spacing: 6) {
+                        Text("Low-motion source (lecture / screen recording?)")
+                            .font(.footnote)
+                        Button("Use lecture mode") {
+                            withAnimation { applyLectureMode() }
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    }
+                } icon: {
+                    Image(systemName: "lightbulb")
+                        .foregroundStyle(Color(UIColor.systemTeal))
+                }
+            } else if lectureApplied {
+                Label("Lecture mode on — 15 fps · lean bitrate · mono voice",
+                      systemImage: "lightbulb.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Color(UIColor.systemTeal))
+            }
+
+            // PRIVACY SCRUB — deliberate policy, not an accident: outputs
+            // never carry location data; the creation date is a choice.
+            Toggle(isOn: $keepCreationDate) {
+                Label("Keep creation date (location is always removed)",
+                      systemImage: "eye.slash")
+                    .font(.footnote)
+            }
+            .tint(.accentColor)
 
             // BEFORE → AFTER story with a proportional bar.
             if let out = estimateBytes, selectedPreset != nil {
@@ -572,12 +656,25 @@ private struct PresetRow: View {
                 if let probe {
                     let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text(String(format: "≈ %.0f MB", plan.estimatedSizeMB()))
-                            .font(.callout.weight(.bold).monospacedDigit())
-                            .foregroundStyle(.tint)
+                        if preset.targetSizeMB != nil {
+                            // GUARANTEED target: show the promise, not the
+                            // estimate (the budget is exact, the estimate
+                            // would just restate it).
+                            Text(String(format: "≤ %.0f MB guaranteed",
+                                        preset.targetSizeMB ?? 0))
+                                .font(.callout.weight(.bold).monospacedDigit())
+                                .foregroundStyle(.tint)
+                        } else {
+                            Text(String(format: "≈ %.0f MB", plan.estimatedSizeMB()))
+                                .font(.callout.weight(.bold).monospacedDigit())
+                                .foregroundStyle(.tint)
+                        }
                         Text(String(format: "%.1f Mbps", Double(plan.videoBitrate) / 1e6))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                        if preset.audioChannels == 1 {
+                            TagChip(text: "Mono voice")
+                        }
                     }
                 } else if let totalBytes = batchTotalBytes {
                     VStack(alignment: .trailing, spacing: 2) {

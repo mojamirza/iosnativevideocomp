@@ -170,6 +170,15 @@ enum CompressionEngine {
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
 
         // ------------------------------------------------------------------
+        // PRIVACY SCRUB — deliberate now, accidental before: the writer never
+        // carried a metadata track at all, so a re-compressed file lost its
+        // creation date as a side effect. The output gets EXACTLY one item —
+        // the source's creation date — and never a location tag. GPS would
+        // only land here via a copied metadata track; none is copied.
+        // ------------------------------------------------------------------
+        writer.metadata = PrivacyScrub.items(for: asset)
+
+        // ------------------------------------------------------------------
         // VIDEO input settings — handed directly to VideoToolbox.
         // ------------------------------------------------------------------
         var props: [String: Any] = [
@@ -287,10 +296,15 @@ enum CompressionEngine {
             if let aFmt = aFmts.first {
                 if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(aFmt)?.pointee {
                     audioSampleRate = asbd.mSampleRate > 0 ? asbd.mSampleRate : 48_000
-                    // Keep the source channel layout (mono/stereo/5.1); AAC supports it.
+                    // Channel count: the PRESET may force mono (lecture /
+                    // screen-recording mode); otherwise the source's own
+                    // layout is kept (mono/stereo/5.1; AAC supports it).
                     audioChannels = max(1, Int(asbd.mChannelsPerFrame))
                 }
             }
+        }
+        if let forced = preset.audioChannels {
+            audioChannels = forced
         }
 
         // ------------------------------------------------------------------
@@ -383,6 +397,14 @@ enum CompressionEngine {
                 // source to 2ch is NOT guaranteed to be honoured without one.
                 var layout = AudioChannelLayout()
                 layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+                readerSettings[AVChannelLayoutKey] = Data(
+                    bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+            } else if readerChannels == 1 {
+                // Explicit MONO layout: the lecture/screen-recording mode
+                // downmixes multi-channel sources to a mono voice track —
+                // same guarantee as the stereo branch.
+                var layout = AudioChannelLayout()
+                layout.mChannelLayoutTag = kAudioChannelLayoutTag_Mono
                 readerSettings[AVChannelLayoutKey] = Data(
                     bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
             }

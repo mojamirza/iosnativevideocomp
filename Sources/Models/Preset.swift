@@ -126,6 +126,15 @@ struct Preset: Identifiable, Codable, Hashable {
     var fpsCap: Int?                 // nil = keep native frame rate
     var audioBitrateKbps: Int = 128
     var isUserDefined: Bool = false
+    /// GUARANTEED target size (MB, per video). Set by the Fit button: the
+    /// coordinator then measures the encoder's overshoot on short samples,
+    /// solves the bitrate against the budget, and re-encodes ONCE if the
+    /// verified output lands over — the promise plain fixed-bitrate Fit can't
+    /// keep. nil = normal fixed-bitrate encode.
+    var targetSizeMB: Double?
+    /// Force the AAC channel count. 1 = mono voice track (lecture/screen-
+    /// recording mode); nil = keep the source channel count.
+    var audioChannels: Int?
 
     static let bitrateRange: ClosedRange<Double> = 0.1...40
     static let fpsCapRange: ClosedRange<Int> = 1...240
@@ -170,12 +179,14 @@ struct Preset: Identifiable, Codable, Hashable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,
-             fpsCap, audioBitrateKbps, isUserDefined
+             fpsCap, audioBitrateKbps, isUserDefined,
+             targetSizeMB, audioChannels
     }
 
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
          fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
-         audioBitrateKbps: Int = 128, isUserDefined: Bool = false) {
+         audioBitrateKbps: Int = 128, isUserDefined: Bool = false,
+         targetSizeMB: Double? = nil, audioChannels: Int? = nil) {
         self.id = UUID()
         self.name = name.isEmpty ? "Custom" : name
         self.codec = codec
@@ -190,6 +201,10 @@ struct Preset: Identifiable, Codable, Hashable {
         self.audioBitrateKbps = min(Preset.audioRange.upperBound,
                                     max(Preset.audioRange.lowerBound, audioBitrateKbps))
         self.isUserDefined = isUserDefined
+        // Target size: clamp into a sane range (1 MB … 2 GB) so a fat-fingered
+        // 3 MB target can't ramp a 4-hour film to insane bitrates.
+        self.targetSizeMB = targetSizeMB.map { min(2_000, max(1, $0)) }
+        self.audioChannels = audioChannels.map { min(2, max(1, $0)) }
     }
 
     init(from decoder: Decoder) throws {
@@ -204,9 +219,12 @@ struct Preset: Identifiable, Codable, Hashable {
         let cap = try c.decodeIfPresent(Int.self, forKey: .fpsCap)
         let audio = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? 128
         let user = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
+        let target = try c.decodeIfPresent(Double.self, forKey: .targetSizeMB)
+        let channels = try c.decodeIfPresent(Int.self, forKey: .audioChannels)
         self.init(name: name, codec: codec, resolution: resolution,
                   fixedBitrateMbps: bitrate, fpsCap: cap,
-                  audioBitrateKbps: audio, isUserDefined: user)
+                  audioBitrateKbps: audio, isUserDefined: user,
+                  targetSizeMB: target, audioChannels: channels)
         self.id = decodedID   // keep the stored identity
     }
 

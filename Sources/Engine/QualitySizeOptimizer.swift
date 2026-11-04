@@ -13,6 +13,10 @@ struct OptimizerPlan: Hashable {
     var rationale: String
     var duration: Double
     var source: ProbeResult
+    /// Guaranteed target size (MB). nil on plain fixed-bitrate plans.
+    var targetSizeMB: Double?
+    /// Forced AAC channel count (1 = mono lecture audio). nil = source's own.
+    var audioChannels: Int?
 
     var expectedFrames: Int {
         max(1, Int(duration * Double(fps > 0 ? fps : 30)))
@@ -30,6 +34,16 @@ struct OptimizerPlan: Hashable {
     /// multiplied by 1_048_576, inflating every estimate by ≈4.9 %.
     var estimatedBytes: Int64 {
         Int64(Double(totalBitrate) / 8.0 * duration)
+    }
+
+    /// The guaranteed-fit budget in bytes (nil on fixed-bitrate plans).
+    var targetBytes: Int64? {
+        targetSizeMB.map { Int64($0 * 1_000_000.0) }
+    }
+
+    /// Audio's share of the estimated file (guaranteed-fit budgeting).
+    var audioBytes: Int64 {
+        Int64(Double(audioBitrate) / 8.0 * duration)
     }
 }
 
@@ -58,7 +72,19 @@ enum QualitySizeOptimizer {
             : 0
 
         // Exact bitrate from the preset, with a tiny floor for degenerate input.
-        let requested = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
+        var requested = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
+        // GUARANTEED TARGET (per video): when the preset carries a target
+        // size, the BUDGET decides the video bitrate — not the preset's own
+        // fixed value. (videoBudget = total target − audio − ~2% container
+        // overhead; solving at 95% of it leaves the overshoot to the
+        // coordinator's check + one measured re-encode.)
+        if let targetMB = preset.targetSizeMB {
+            let audioBytes = Double(audioBitrate) / 8.0 * duration
+            let overhead = max(64_000.0, Double(targetMB) * 1_000_000.0 * 0.02)
+            let videoBudget = Double(targetMB) * 1_000_000.0 - audioBytes - overhead
+            requested = max(200_000, min(40_000_000,
+                                         Int(videoBudget * 8.0 * 0.95 / duration)))
+        }
         // Ceiling: bits beyond what the pixels can use only grow the file.
         // When DOWNSCALING, scale the source's own rate by the pixel-area
         // ratio (with modest headroom) so lower resolutions always plan
@@ -115,7 +141,9 @@ enum QualitySizeOptimizer {
             sourceBitDepth: probe.bitDepth,
             rationale: rationale,
             duration: duration,
-            source: probe
+            source: probe,
+            targetSizeMB: preset.targetSizeMB,
+            audioChannels: preset.audioChannels
         )
     }
 

@@ -63,6 +63,11 @@ struct PresetEditorView: View {
     /// Inline feedback for Fit failures (bad target, too small for the
     /// duration): the prominent button must never do nothing silently.
     @State private var fitMessage: String?
+    /// GUARANTEED target: set ONLY by tapping Fit — the encode then measures
+    /// itself against that budget and re-encodes once if it drifts over.
+    /// Manual bitrate edits CLEAR it (an arbitrary manual bitrate would push
+    /// the file past the budget and the report would fail the promise).
+    @State private var guaranteedTargetMB: Double?
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
@@ -90,6 +95,9 @@ struct PresetEditorView: View {
         _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
         _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
         _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
+        _guaranteedTargetMB = State(initialValue: existing?.targetSizeMB)
+        _fitUnderText = State(initialValue: existing?.targetSizeMB
+            .map { Int($0) == Int($0) ? "\(Int($0))" : String(format: "%.1f", $0) } ?? "")
     }
 
     private static func pos(fromMbps m: Double) -> Double {
@@ -174,6 +182,23 @@ struct PresetEditorView: View {
         fixedMbps = clamped
         bitrateText = String(format: "%.1f", clamped)
         sliderPos = Self.pos(fromMbps: clamped)
+        // GUARANTEE: Fit doesn't just aim at the target — the job now carries
+        // the budget, and the encode verifies its real bytes against it,
+        // re-encoding once if the encoder's overshoot pushed it over.
+        guaranteedTargetMB = mb
+    }
+
+    /// The GUARANTEE stays alive only while the CURRENT bitrate still equals
+    /// the Fit solve for that target. Manual edits (slider, typed values,
+    /// or audio/resolution changes) invalidate it — derived, not raced: a
+    /// manual overshoot must not silently violate the promised budget.
+    private var activeTargetMB: Double? {
+        guard let mb = guaranteedTargetMB, let probe = contextProbe else { return nil }
+        let audioMbits = probe.hasAudio ? audioKbps * probe.duration / 1000 : 0
+        let solved = (mb * 8 * 0.92 - audioMbits) / probe.duration
+        let clamped = min(40, solved)
+        if clamped >= 0.1, abs(clamped - fixedMbps) < 0.06 { return mb }
+        return nil
     }
 
     /// Decimal normaliser for typed numbers: folds Latin, Eastern-Arabic and
@@ -195,6 +220,11 @@ struct PresetEditorView: View {
     private var bitrateIsValid: Bool {
         guard let v = Double(normalizedDecimal(bitrateText)) else { return false }
         return v >= 0.1 && v <= 40
+    }
+
+    /// One-line status of the armed target guarantee.
+    private func activeTargetLabel(_ mb: Double) -> String {
+        "Guaranteed: this video will come out under \(Int(mb) == mb ? "\(Int(mb))" : String(format: "%.1f", mb)) MB — the encode re-checks its real size and re-encodes once if needed."
     }
 
     var body: some View {
@@ -221,6 +251,20 @@ struct PresetEditorView: View {
                             Text("Know the file size you need — messaging or attachment limits? Type it in MB and tap Fit: the bitrate below is solved to land UNDER that size (an ~8% headroom covers encoder drift and container overhead; audio that doesn't exist isn't budgeted). The output stays a fixed bitrate — re-tap Fit after changing resolution or audio.")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
+                            // GUARANTEE state: Fit arms a measured guarantee —
+                            // the encode checks its real bytes against the
+                            // budget and re-encodes once if the first pass
+                            // drifted over. Manual bitrate edits disarm it.
+                            if let mb = activeTargetMB {
+                                Label(activeTargetLabel(mb), systemImage: "lock.shield.fill")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tint)
+                            } else if guaranteedTargetMB != nil {
+                                Label("Target cleared — the bitrate no longer matches the Fit solve. Tap Fit again to re-guarantee \(Int(guaranteedTargetMB ?? 0)) MB.",
+                                      systemImage: "exclamationmark.circle")
+                                    .font(.footnote)
+                                    .foregroundStyle(Color(UIColor.systemOrange))
+                            }
                             HStack(spacing: 10) {
                                 TextField("Target size", text: $fitUnderText)
                                     .focused($fitMBFocused)
@@ -378,7 +422,11 @@ struct PresetEditorView: View {
                             fixedBitrateMbps: fixedMbps,
                             fpsCap: fpsCapEnabled ? Int(fpsCap) : nil,
                             audioBitrateKbps: Int(audioKbps),
-                            isUserDefined: true
+                            isUserDefined: true,
+                            // The measured target guarantee ships with the
+                            // preset ONLY while the bitrate still matches
+                            // the Fit solve (activeTargetMB sees to that).
+                            targetSizeMB: activeTargetMB
                         )
                         // Editing preserves the preset's identity so the stored
                         // copy is replaced in place.
