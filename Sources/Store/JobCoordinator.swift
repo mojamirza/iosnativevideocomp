@@ -199,7 +199,11 @@ final class JobCoordinator: ObservableObject {
             // handled by cancelActiveForBackgroundExpiry(), which DOES stop
             // the engine before marking the row.
 
-            try await CompressionEngine.compress(
+            // The engine RETURNS the audio rate it actually applied (its
+            // canApply ladder may step down from the plan's request) — the
+            // plan carries the truly-encoded number into the verifier, so
+            // the report's bitrate math and the file agree.
+            let audioApplied = try await CompressionEngine.compress(
                 source: job.sourceURL,
                 output: output,
                 preset: job.preset,
@@ -214,46 +218,57 @@ final class JobCoordinator: ObservableObject {
                     self?.bgProgress(name: job.sourceName, fraction: progress)
                 }
             }
+            plan.audioBitrate = audioApplied
 
             // ----------------------------------------------------------------
             // GUARANTEED TARGET SIZE — the hard promise. The plan already
-            // solved its bitrate against the budget; now VERIFY the actual
-            // bytes. A first pass that drifted over the target (VideoToolbox
-            // ABR overshoot is content-dependent) gets ONE corrected extra
-            // pass, solved from the measured real bytes — never a guess.
+            // solved its bitrate against the budget (SizeMath, 95 % fill);
+            // now MEASURE the real bytes and, on an overshoot, re-encode
+            // with a corrected rate — up to TWO passes, both solved from
+            // measurements (never guesses), each aimed at the slightly
+            // lower correction fill (0.92) for extra closure slack.
             // ----------------------------------------------------------------
             if let target = plan.targetBytes, target > 0 {
-                let firstBytes = (try? fm.attributesOfItem(atPath: output.path))?[.size]
-                    as? Int64 ?? 0
-                if firstBytes > target {
+                var pass = 0
+                while pass < 2 {
+                    let bytes = (try? fm.attributesOfItem(atPath: output.path))?[.size]
+                        as? Int64 ?? 0
+                    if bytes <= target { break }
+                    pass += 1
                     let audioBytes = Double(plan.audioBitrate) / 8.0 * max(0.1, plan.duration)
-                    let videoActual = max(1, Double(firstBytes - Int64(audioBytes)))
-                    let videoBudget = max(200_000.0, Double(target) - audioBytes)
-                    let corrected = min(40_000_000, max(200_000,
+                    let overhead = SizeMath.containerOverhead(forBytes: Double(target))
+                    let videoActual = max(1.0, Double(bytes) - audioBytes - overhead)
+                    let videoBudget = max(1.0, (Double(target) - overhead)
+                        * SizeMath.correctionFill - audioBytes)
+                    let corrected = min(SizeMath.maxVideoBitrate, max(SizeMath.minVideoBitrate,
                         Int(Double(plan.videoBitrate) * videoBudget / videoActual)))
-                    var plan2 = plan
-                    plan2.videoBitrate = corrected
+                    // The measured rate is ALREADY at/below what the encoder
+                    // managed to undershoot to — a "correction" upward would
+                    // encode BIGGER; stop instead (the verifier decides).
+                    if corrected >= plan.videoBitrate { break }
+                    var next = plan
+                    next.videoBitrate = corrected
 
-                    // Deliberate progress reset: the measured second pass
-                    // restarts the bar (the monotonic guard in the callback
-                    // resumes from 0 cleanly after this).
+                    // Deliberate progress reset: the measured correction
+                    // pass restarts the bar (the monotonic guard in the
+                    // callback resumes from 0 cleanly after this).
                     setJob(jobID) {
                         $0.state = .compressing
                         $0.progress = 0
                     }
                     bgSubtitle("Re-encoding \(job.sourceName) to fit…")
 
-                    // The corrected pass encodes to a SEPARATE scratch; only
-                    // on full success does it replace the primary path, so a
-                    // mid-re-encode cancel/kill still presents a consistent
-                    // state to the sweep and the verifier below.
-                    let pass2 = workDir.appendingPathComponent("\(jobID.uuidString).r2.mp4")
-                    try? fm.removeItem(at: pass2)
-                    try await CompressionEngine.compress(
+                    // Each corrected pass encodes to a SEPARATE scratch;
+                    // only on full success does it replace the primary path,
+                    // so a mid-re-encode cancel/kill still presents a
+                    // consistent state to the sweep and the verifier below.
+                    let extra = workDir.appendingPathComponent("\(jobID.uuidString).r\(pass + 1).mp4")
+                    try? fm.removeItem(at: extra)
+                    let audioApplied = try await CompressionEngine.compress(
                         source: job.sourceURL,
-                        output: pass2,
+                        output: extra,
                         preset: job.preset,
-                        plan: plan2,
+                        plan: next,
                         flags: flags
                     ) { [weak self] progress in
                         Task { @MainActor in
@@ -261,11 +276,12 @@ final class JobCoordinator: ObservableObject {
                             self?.bgProgress(name: job.sourceName, fraction: progress)
                         }
                     }
+                    next.audioBitrate = audioApplied
                     // Swap the scratch files; downstream (verify/promote)
                     // keeps using the ONE primary path.
                     try? fm.removeItem(at: output)
-                    try fm.moveItem(at: pass2, to: output)
-                    plan = plan2
+                    try fm.moveItem(at: extra, to: output)
+                    plan = next
                 }
             }
 

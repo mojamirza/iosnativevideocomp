@@ -94,7 +94,7 @@ enum VideoInbox {
             do { try fm.copyItem(at: src, to: dest); return true }
             catch { return false }
         }.value
-        guard copied || fm.fileExists(atPath: dest.path) else {
+        if !copied && !fm.fileExists(atPath: dest.path) {
             // Rare provider without a file URL: honest small-file fallback.
             let data = try file.data
             try data.write(to: dest)

@@ -17,6 +17,14 @@ struct OptimizerPlan: Hashable {
     var targetSizeMB: Double?
     /// Forced AAC channel count (1 = mono lecture audio). nil = source's own.
     var audioChannels: Int?
+    /// What the USER (or the target solve) actually asked for, before the
+    /// source-rate ceiling clamped it — the UI uses the pair with
+    /// `videoBitrate` to say "(capped)" honestly.
+    var requestedVideoBitrate: Int = 0
+    /// False when no bitrate (even the floor) can land under the target on
+    /// this clip — the UI says "too small" and the job fails with the
+    /// explainable report item instead of an arbitrary big file.
+    var targetFeasible: Bool = true
 
     var expectedFrames: Int {
         max(1, Int(duration * Double(fps > 0 ? fps : 30)))
@@ -24,16 +32,22 @@ struct OptimizerPlan: Hashable {
 
     var totalBitrate: Int { videoBitrate + audioBitrate }
 
-    func estimatedSizeMB() -> Double {
-        Double(totalBitrate) / 8.0 * duration / 1_000_000.0
+    /// Whether the plan used FEWER bits than asked because the source caps
+    /// the useful rate (bits beyond what the pixels encode just inflate the
+    /// file). Displayed as "(capped)" everywhere a bitrate is shown.
+    var bitrateCapped: Bool {
+        requestedVideoBitrate > 0 && videoBitrate < requestedVideoBitrate
     }
 
-    /// EXACT estimated output size in BYTES, computed once from the bitrate
-    /// math (bits/s ÷ 8 × s). The UI previously went through
-    /// `estimatedSizeMB()` — which returns DECIMAL megabytes — and then
-    /// multiplied by 1_048_576, inflating every estimate by ≈4.9 %.
+    func estimatedSizeMB() -> Double {
+        Double(estimatedBytes) / 1_000_000.0
+    }
+
+    /// EXACT expected output size in BYTES via SizeMath — the ONE formula.
+    /// Includes audio AND the container-overhead the old estimates dropped.
     var estimatedBytes: Int64 {
-        Int64(Double(totalBitrate) / 8.0 * duration)
+        SizeMath.expectedBytes(videoBitrate: videoBitrate, audioBitrate: audioBitrate,
+                               duration: duration)
     }
 
     /// The guaranteed-fit budget in bytes (nil on fixed-bitrate plans).
@@ -71,19 +85,23 @@ enum QualitySizeOptimizer {
             ? max(32, min(preset.audioBitrateKbps, 320)) * 1000
             : 0
 
-        // Exact bitrate from the preset, with a tiny floor for degenerate input.
-        var requested = max(200_000, Int(preset.fixedBitrateMbps * 1_000_000))
+        // Requested bitrate = what the user typed, clamped to the shared
+        // SizeMath range (0.15–40 Mbps — matching Preset.bitrateRange so the
+        // slider floor and the math agree).
+        var requested = max(SizeMath.minVideoBitrate, Int(preset.fixedBitrateMbps * 1_000_000))
         // GUARANTEED TARGET (per video): when the preset carries a target
-        // size, the BUDGET decides the video bitrate — not the preset's own
-        // fixed value. (videoBudget = total target − audio − ~2% container
-        // overhead; solving at 95% of it leaves the overshoot to the
-        // coordinator's check + one measured re-encode.)
+        // size, the BUDGET decides the video bitrate — solved through
+        // SizeMath (the ONE formula: target − overhead, aimed at 95 %,
+        // minus audio). Feasibility: even the floor bitrate must land under
+        // the target, otherwise the UI says so before any encode starts.
+        var feasible = true
         if let targetMB = preset.targetSizeMB {
-            let audioBytes = Double(audioBitrate) / 8.0 * duration
-            let overhead = max(64_000.0, Double(targetMB) * 1_000_000.0 * 0.02)
-            let videoBudget = Double(targetMB) * 1_000_000.0 - audioBytes - overhead
-            requested = max(200_000, min(40_000_000,
-                                         Int(videoBudget * 8.0 * 0.95 / duration)))
+            requested = SizeMath.videoBitrate(targetMB: targetMB,
+                                              audioBitrate: audioBitrate,
+                                              duration: duration)
+            feasible = SizeMath.isFeasible(targetMB: targetMB,
+                                           audioBitrate: audioBitrate,
+                                           duration: duration)
         }
         // Ceiling: bits beyond what the pixels can use only grow the file.
         // When DOWNSCALING, scale the source's own rate by the pixel-area
@@ -102,23 +120,27 @@ enum QualitySizeOptimizer {
         // ceiling only when finite, hard-clamped well inside Int range;
         // unknown rates skip it entirely (pure fixed-bitrate).
         let videoBitrate: Int = ceiling.isFinite
-            ? min(requested, max(200_000, Int(min(ceiling, 40e9))))
+            ? min(requested, max(SizeMath.minVideoBitrate, Int(min(ceiling, 40e9))))
             : requested
+        // The CORRECTION pass in the coordinator solves PLAN-aware budgets —
+        // remember here what the source ceiling threw away so the solver
+        // never re-inflates into it.
+        let capped = requested > videoBitrate
         let audioNote = probe.hasAudio
             ? String(format: "%.0f kbps audio", Double(audioBitrate) / 1000)
             : "no audio"
         let rationale: String
-        if videoBitrate < requested {
+        if capped {
             rationale = String(
-                format: "%.1f Mbps requested — capped to %.1f Mbps for %d×%d (%.0f%% of source pixels, source is %.1f Mbps) · %@",
-                Double(requested) / 1e6, Double(videoBitrate) / 1e6,
+                format: "%.1f Mbps requested — capped to %@ Mbps for %d×%d (%.0f%% of source pixels, source is %.1f Mbps) · %@",
+                Double(requested) / 1e6, SizeMath.mbpsLabel(videoBitrate),
                 Int(outputSize.width), Int(outputSize.height),
                 areaRatio * 100, probe.videoDataRate / 1e6,
                 audioNote)
         } else {
             rationale = String(
-                format: "%.1f Mbps video · %@ at %d×%d",
-                preset.fixedBitrateMbps, audioNote,
+                format: "%@ Mbps video · %@ at %d×%d",
+                SizeMath.mbpsLabel(requested), audioNote,
                 Int(outputSize.width), Int(outputSize.height))
         }
 
@@ -143,7 +165,9 @@ enum QualitySizeOptimizer {
             duration: duration,
             source: probe,
             targetSizeMB: preset.targetSizeMB,
-            audioChannels: preset.audioChannels
+            audioChannels: preset.audioChannels,
+            requestedVideoBitrate: requested,
+            targetFeasible: feasible
         )
     }
 

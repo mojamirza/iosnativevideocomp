@@ -131,8 +131,9 @@ struct SetupFlowView: View {
                 }
             }
             .sheet(isPresented: $showEditor) {
-                // Batch setup passes NO probe: Fit would solve for video 1's
-                // duration and paint every file with that number.
+                // Target mode needs NO probe to save (the target is solved
+                // per video when each job starts) — only the solved-bitrate
+                // readout needs one, and it hides in batch setup.
                 PresetEditorView(contextProbe: isBatch ? nil : singleProbe) { newPreset in
                     savePreset(newPreset)
                 }
@@ -253,6 +254,20 @@ struct SetupFlowView: View {
                             .font(.callout.weight(.semibold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
+                    }
+                    // The EFFECTIVE planned bitrate — same plan() as the row
+                    // above, so bar and row can never disagree. "(capped)"
+                    // says when the source (not the user) limited it.
+                    if !isBatch, let est = estimate {
+                        Text("≈ \(SizeMath.mbpsLabel(est.videoBitrate)) Mbps"
+                                + (est.bitrateCapped ? " (capped)" : ""))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else if isBatch, let preset = selectedPreset,
+                              let avg = batchAvgBitrate(for: preset) {
+                        Text("avg \(SizeMath.mbpsLabel(avg)) Mbps")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                     // Proportional bar: tinted portion = output size share.
                     GeometryReader { geo in
@@ -487,7 +502,8 @@ struct SetupFlowView: View {
                 PresetRow(preset: preset,
                           isSelected: selectedPreset?.id == preset.id,
                           probe: singleProbe,
-                          batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil) {
+                          batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil,
+                          batchAvgBitrate: isBatch ? batchAvgBitrate(for: preset) : nil) {
                     selectedPreset = preset
                 }
                 .contextMenu {
@@ -521,6 +537,22 @@ struct SetupFlowView: View {
     }
 
     // Estimate card (live) + start button
+
+    /// Duration-weighted average planned VIDEO bitrate across the batch —
+    /// the batch row previously printed the PRESET's typed bitrate while
+    /// every plan actually ran the source-capped (or target-solved) value:
+    /// the number on the row and the encode disagreed.
+    private func batchAvgBitrate(for preset: Preset) -> Int? {
+        var bits: Double = 0
+        var seconds: Double = 0
+        for p in probes where p != nil {
+            let plan = QualitySizeOptimizer.plan(preset: preset, probe: p!)
+            bits += Double(plan.videoBitrate) * plan.duration
+            seconds += plan.duration
+        }
+        guard seconds > 0 else { return nil }
+        return Int(bits / seconds)
+    }
 
     /// Total ESTIMATED OUTPUT for the whole batch with a given preset.
     private func totalBatchOutBytes(for preset: Preset) -> Int64? {
@@ -632,6 +664,9 @@ private struct PresetRow: View {
     let isSelected: Bool
     let probe: ProbeResult?
     var batchTotalBytes: Int64?
+    /// Duration-weighted average of the PLANNED bitrates across the batch —
+    /// what the encoder will actually run, not what was typed.
+    var batchAvgBitrate: Int?
     let action: () -> Void
 
     var body: some View {
@@ -647,6 +682,9 @@ private struct PresetRow: View {
                     HStack(spacing: 6) {
                         TagChip(text: preset.codec == .hevc ? "HEVC" : "H.264")
                         TagChip(text: preset.resolution.displayName)
+                        if preset.audioChannels == 1 {
+                            TagChip(text: "Mono voice")
+                        }
                         // Bitrate intentionally NOT a chip: it's shown at the
                         // trailing side (and in the estimate card) — a second
                         // dark pill here just cluttered the row.
@@ -657,23 +695,38 @@ private struct PresetRow: View {
                     let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
                     VStack(alignment: .trailing, spacing: 2) {
                         if preset.targetSizeMB != nil {
-                            // GUARANTEED target: show the promise, not the
-                            // estimate (the budget is exact, the estimate
-                            // would just restate it).
-                            Text(String(format: "≤ %.0f MB guaranteed",
-                                        preset.targetSizeMB ?? 0))
-                                .font(.callout.weight(.bold).monospacedDigit())
-                                .foregroundStyle(.tint)
+                            if !plan.targetFeasible {
+                                // No rate, even the floor, fits this clip.
+                                Text("Too small")
+                                    .font(.callout.weight(.bold))
+                                    .foregroundStyle(.red)
+                                Text("target can't fit this video's length")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                // GUARANTEED target: the promise first, the
+                                // honest SOLVED plan underneath (expected
+                                // bytes INCLUDE container overhead).
+                                Text(String(format: "≤ %.0f MB",
+                                            preset.targetSizeMB ?? 0))
+                                    .font(.callout.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(.tint)
+                                Text("≈ \(ByteCountFormatter.string(fromByteCount: plan.estimatedBytes, countStyle: .file)) · \(SizeMath.mbpsLabel(plan.videoBitrate)) Mbps")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
-                            Text(String(format: "≈ %.0f MB", plan.estimatedSizeMB()))
+                            Text(String(format: "≈ %.0f MB",
+                                        plan.estimatedSizeMB()))
                                 .font(.callout.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.tint)
-                        }
-                        Text(String(format: "%.1f Mbps", Double(plan.videoBitrate) / 1e6))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if preset.audioChannels == 1 {
-                            TagChip(text: "Mono voice")
+                            // The PLAN's bitrate (target-solved or capped by
+                            // the source) — what the encode actually runs,
+                            // NOT the preset's typed value.
+                            Text("\(SizeMath.mbpsLabel(plan.videoBitrate)) Mbps"
+                                    + (plan.bitrateCapped ? " (capped)" : ""))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } else if let totalBytes = batchTotalBytes {
@@ -684,9 +737,15 @@ private struct PresetRow: View {
                         Text(String(format: "≈ %.0f MB total", Double(totalBytes) / 1_000_000))
                             .font(.callout.weight(.bold).monospacedDigit())
                             .foregroundStyle(.tint)
-                        Text(String(format: "%.1f Mbps", Double(preset.fixedBitrateMbps)))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        if let avg = batchAvgBitrate {
+                            // Duration-weighted average of the per-video
+                            // PLANS — with targets (solved per video) and
+                            // capped sources this can differ a lot from the
+                            // preset's typed number.
+                            Text("avg \(SizeMath.mbpsLabel(avg)) Mbps")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }

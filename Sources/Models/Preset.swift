@@ -126,17 +126,18 @@ struct Preset: Identifiable, Codable, Hashable {
     var fpsCap: Int?                 // nil = keep native frame rate
     var audioBitrateKbps: Int = 128
     var isUserDefined: Bool = false
-    /// GUARANTEED target size (MB, per video). Set by the Fit button: the
-    /// coordinator then measures the encoder's overshoot on short samples,
-    /// solves the bitrate against the budget, and re-encodes ONCE if the
-    /// verified output lands over — the promise plain fixed-bitrate Fit can't
-    /// keep. nil = normal fixed-bitrate encode.
+    /// GUARANTEED target size (MB, per video). Saved from the editor's
+    /// "Target size" mode: the planner solves the bitrate against the
+    /// budget (SizeMath), the coordinator MEASURES the real bytes of
+    /// every pass and re-encodes up to TWICE from the measurement if a
+    /// pass lands over — the verifier's target item is the final word.
+    /// nil = normal fixed-bitrate encode.
     var targetSizeMB: Double?
     /// Force the AAC channel count. 1 = mono voice track (lecture/screen-
     /// recording mode); nil = keep the source channel count.
     var audioChannels: Int?
 
-    static let bitrateRange: ClosedRange<Double> = 0.1...40
+    static let bitrateRange: ClosedRange<Double> = 0.15...40
     static let fpsCapRange: ClosedRange<Int> = 1...240
     static let audioRange: ClosedRange<Int> = 32...320
 

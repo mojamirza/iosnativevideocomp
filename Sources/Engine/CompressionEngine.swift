@@ -144,12 +144,16 @@ enum CompressionEngine {
         return s
     }
 
+    /// Returns the AUDIO bitrate actually applied (bits/s; 0 when the output
+    /// ships without audio): the canApply ladder may step DOWN from the
+    /// plan's request, and the coordinator writes the returned value into
+    /// the plan so the verifier's report describes the real file.
     static func compress(source: URL,
                          output: URL,
                          preset: Preset,
                          plan: OptimizerPlan,
                          flags: EngineFlags,
-                         onProgress: @escaping @Sendable (Double) -> Void) async throws {
+                         onProgress: @escaping @Sendable (Double) -> Void) async throws -> Int {
 
         // Stall watchdog — declared before the pipe functions so they can
         // capture it. Every progress report re-arms it; the deadline only
@@ -312,29 +316,62 @@ enum CompressionEngine {
         // AVFoundation is strict above stereo (a channel layout is expected)
         // and about bitrate/channel/sample-rate combinations. An invalid
         // combo would otherwise fail at startWriting and kill the JOB, not
-        // just the audio. Fallbacks: whatever fails → stereo → safe 128k.
+        // just the audio.
+        //
+        // The ladder steps DOWN only, starting at the budgeted rate: for a
+        // target-size plan the audio share was subtracted from the budget,
+        // so encoding MORE audio than budgeted (the old 96 kbps floor)
+        // would silently break the guarantee. Mono voice is capped at
+        // 96 kbps — a mono speech track can't use more.
         // ------------------------------------------------------------------
-        var audioSettings: [String: Any]? = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: audioSampleRate,
-            AVNumberOfChannelsKey: audioChannels,
-            AVEncoderBitRateKey: plan.audioBitrate,
-        ]
-        if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
-            audioSettings = [
+        let encoderChannels = audioChannels
+        let requestedAudioRate = encoderChannels == 1
+            ? min(plan.audioBitrate, 96_000)
+            : plan.audioBitrate
+        // Candidates keep the channel count; rates step down to sane
+        // speech/music minimums. The FIRST accepted one wins (the applied
+        // rate returns to the coordinator for the report).
+        var audioRateCandidates = [requestedAudioRate]
+        if encoderChannels == 1 {
+            audioRateCandidates += [64_000, 48_000, 32_000]
+        } else {
+            audioRateCandidates += [128_000, 96_000, 64_000, 32_000]
+        }
+        var audioSettings: [String: Any]? = nil
+        for rate in audioRateCandidates {
+            let candidate = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: audioSampleRate,
-                AVNumberOfChannelsKey: 2,
-                AVEncoderBitRateKey: max(96_000, min(256_000, plan.audioBitrate)),
-            ]
-            if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
-                audioSettings?[AVEncoderBitRateKey] = 128_000
-                if let s = audioSettings, !writer.canApply(outputSettings: s, forMediaType: .audio) {
-                    // Looks unusable at any config — ship without audio
-                    // rather than failing the whole job.
-                    audioSettings = nil
+                AVNumberOfChannelsKey: encoderChannels,
+                AVEncoderBitRateKey: max(32_000, rate),
+            ] as [String: Any]
+            if writer.canApply(outputSettings: candidate, forMediaType: .audio) {
+                audioSettings = candidate
+                break
+            }
+        }
+        stereoFallback: if audioSettings == nil, encoderChannels != 2 {
+            // Channel-count-specific combos (mono layouts on odd sources)
+            // can be rejected wholesale: step to plain stereo and retry.
+            for rate in audioRateCandidates {
+                let candidate = [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: audioSampleRate,
+                    AVNumberOfChannelsKey: 2,
+                    AVEncoderBitRateKey: max(32_000, rate),
+                ] as [String: Any]
+                if writer.canApply(outputSettings: candidate, forMediaType: .audio) {
+                    audioSettings = candidate
+                    audioChannels = 2
+                    break stereoFallback
                 }
             }
+        }
+        if audioSettings == nil {
+            // Looks unusable at any config — ship without audio rather than
+            // failing the whole job (audio returns 0, the report counts
+            // video only).
+            NSLog("VidCompress: no acceptable AAC config — shipping video without audio")
         }
 
         let reader = try AVAssetReader(asset: asset)
@@ -769,6 +806,10 @@ enum CompressionEngine {
         if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
         heartbeat.beat()
         onProgress(1.0)
+        // The final settings dict is the truth about what was encoded.
+        return audioSettings.flatMap {
+            ($0[AVEncoderBitRateKey] as? NSNumber)?.intValue
+        } ?? 0
     }
 
     /// Fetch a destination pixel buffer from a pool (falling back to a plain
