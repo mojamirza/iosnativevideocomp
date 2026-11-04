@@ -224,7 +224,9 @@ struct PresetEditorView: View {
 
     /// One-line status of the armed target guarantee.
     private func activeTargetLabel(_ mb: Double) -> String {
-        "Guaranteed: this video will come out under \(Int(mb) == mb ? "\(Int(mb))" : String(format: "%.1f", mb)) MB — the encode re-checks its real size and re-encodes once if needed."
+        let whole = mb == mb.rounded()
+        let shown = whole ? String(Int(mb)) : String(format: "%.1f", mb)
+        return "Guaranteed: this video will come out under \(shown) MB — the encode re-checks its real size and re-encodes once if needed."
     }
 
     var body: some View {

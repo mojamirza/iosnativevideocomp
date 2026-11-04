@@ -265,9 +265,10 @@ private struct LifetimeStatsCard: View {
     }
 
     private func fetch() {
-        let ctx = modelContext
+        // `@Environment(\.modelContext)` is NON-optional in this SDK — no
+        // optional chaining on it.
         let f = FetchDescriptor<JobRecord>(predicate: #Predicate { $0.stateRaw == "done" })
-        let records = (try? ctx?.fetch(f)) ?? []
+        let records = (try? modelContext.fetch(f)) ?? []
         var vids = 0
         var saved: Int64 = 0
         for r in records {

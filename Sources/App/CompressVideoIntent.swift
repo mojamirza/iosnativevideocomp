@@ -71,8 +71,10 @@ enum VideoInbox {
     static func stash(file: IntentFile) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        let ext = file.type.preferredFilenameExtension ?? "mov"
-        let base = ((file.suggestedName as NSString?)?.deletingPathExtension ?? "")
+        let src = file.fileURL
+        let extRaw = file.type?.preferredFilenameExtension ?? src?.pathExtension ?? "mov"
+        let ext = extRaw.isEmpty ? "mov" : extRaw
+        let base = ((src?.lastPathComponent as NSString?)?.deletingPathExtension ?? "")
             .replacingOccurrences(of: "/", with: "-")
         var stem = String(base.prefix(60))
         if stem.isEmpty { stem = "Shortcut video" }
@@ -85,7 +87,6 @@ enum VideoInbox {
             n += 1
         }
 
-        let src = file.fileURL
         let copied: Bool = await Task.detached {
             guard let src else { return false }
             let scoped = src.startAccessingSecurityScopedResource()
@@ -105,7 +106,9 @@ enum VideoInbox {
     }
 
     /// RootView consumes markers on launch: enqueues freshly marked videos
-    /// and deletes the stale markers.
+    /// and deletes the stale markers. Runs on the main actor: the coordinator
+    /// (and its job queue) is main-actor isolated.
+    @MainActor
     static func consume(with coordinator: JobCoordinator) async {
         let fm = FileManager.default
         guard let markers = try? fm.contentsOfDirectory(

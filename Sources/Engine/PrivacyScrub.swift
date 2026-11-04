@@ -31,20 +31,18 @@ enum PrivacyScrub {
         // The date can arrive typed (dateValue) or as a string (ISO-8601 /
         // yyyy-MM-dd); accept both.
         var date = srcItem.dateValue
-        if date == nil {
-            for f in [ISO8601DateFormatter()] + DateFormatter.isoFormats() {
-                if let s = srcItem.stringValue, let d = f.date(from: s) {
-                    date = d
-                    break
-                }
-            }
+        if date == nil, let s = srcItem.stringValue {
+            date = ISO8601DateFormatter().date(from: s)
+                ?? DateFormatter.isoFormats().lazy
+                    .compactMap { $0.date(from: s) }.first
         }
         guard let date else { return [] }
         let item = AVMutableMetadataItem()
         item.identifier = .quickTimeMetadataCreationDate
-        // dataType is left to AVFoundation: assigning dateValue types it
-        // correctly (a hand-set fourCC here risks an invalid item).
-        item.dateValue = date
+        // dateValue is READ-ONLY on AVMetadataItem; the writer accepts the
+        // standard ISO-8601 text form for the creation-date key (players and
+        // Files both parse it), so the date is written as a string.
+        item.value = ISO8601DateFormatter().string(from: date) as NSString
         return [item]
     }
 }
