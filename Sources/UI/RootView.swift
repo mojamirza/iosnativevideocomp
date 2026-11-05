@@ -10,6 +10,7 @@ import AVFoundation
 struct RootView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showingSetup = false
     @State private var importedVideos: [PickedVideo] = []
@@ -183,6 +184,21 @@ struct RootView: View {
                     await VideoInbox.consume(with: coordinator)
                 }
             }
+            // Shortcuts handoff does not wait for the next launch: a video
+            // stashed while the app is merely BACKGROUNDED must be picked up
+            // the moment the scene becomes active again (the launch .task
+            // above only ever fires once per process).
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, #available(iOS 17.0, *) else { return }
+                Task { await VideoInbox.consume(with: coordinator) }
+            }
+            // Haptic polish, ONE source of truth: the coordinator's ticks
+            // fire on terminal transitions regardless of which row a job
+            // currently lives in (a finished row MOVES between ForEachs, so
+            // per-row feedback was rebuilt around its own event and never
+            // fired). Cancellations don't tick — the user did that.
+            .sensoryFeedback(.success, trigger: coordinator.completionTick)
+            .sensoryFeedback(.error, trigger: coordinator.failureTick)
         }
     }
 

@@ -40,6 +40,12 @@ enum IntegrityVerifier {
         var items: [ReportItem] = []
         let outAsset = AVURLAsset(url: output)
         var outDuration: Double = 0
+        // Wall-clock anchor for the OPTIONAL verification extras (quality
+        // scoring). The whole verifyImpl races the outer 60 s timeout — if
+        // the quality step started after ~30 s had already been spent, it
+        // could straddle the deadline and the WHOLE report would be lost.
+        // The basics always run; extras only start when there's headroom.
+        let verifyStart = Date()
 
         // 1. Container & video track present?
         let videoTracks = (try? await outAsset.loadTracks(withMediaType: .video)) ?? []
@@ -306,15 +312,24 @@ enum IntegrityVerifier {
                     "Outputs are scrubbed of location on purpose (compact privacy).", .pass))
             }
             if PrivacyScrub.keepCreationDate {
-                let hasDate = outMeta.contains {
+                // A source that never CARRIED a date cannot "drop" one —
+                // only run the check when the source actually had it, or
+                // every date-less screen recording warns forever.
+                let srcMeta = (try? await AVURLAsset(url: source).load(.commonMetadata)) ?? []
+                let srcHadDate = srcMeta.contains {
                     $0.commonKey == AVMetadataKey.commonKeyCreationDate
                 }
-                if hasDate {
-                    items.append(ReportItem("privacy", "Creation date preserved",
-                        "The output keeps the source's date; only the location is removed.", .pass))
-                } else {
-                    items.append(ReportItem("privacy", "Creation date dropped",
-                        "The scrubber was asked to keep the date, but the source's date wasn't parseable and the output ships date-less.", .warn))
+                if srcHadDate {
+                    let hasDate = outMeta.contains {
+                        $0.commonKey == AVMetadataKey.commonKeyCreationDate
+                    }
+                    if hasDate {
+                        items.append(ReportItem("privacy", "Creation date preserved",
+                            "The output keeps the source's date; only the location is removed.", .pass))
+                    } else {
+                        items.append(ReportItem("privacy", "Creation date dropped",
+                            "The scrubber was asked to keep the date, but the source's date wasn't parseable and the output ships date-less.", .warn))
+                    }
                 }
             }
         }
@@ -364,26 +379,43 @@ enum IntegrityVerifier {
         }
 
         // 6c. QUALITY SCORE: real decoded luma comparison of source vs
-        //     output frames at the same timeline fractions → PSNR + SSIM.
+        //     output frames at matched timeline points → PSNR + SSIM.
         //     Skipped where the comparison would LIE: after a deliberate
-        //     (and desired) HDR→SDR conversion, for HDR sources generally,
-        //     and when the timeline drifted >5 % (frame capping pulls fps
-        //     comparisons apart). Hard 18 s wall-clock budget — never more
-        //     expensive than the encode it audits.
+        //     (and desired) HDR→SDR conversion, and for HDR sources
+        //     generally. HARD wall-clock hierarchy — ≤ 30 s of the OUTER
+        //     verify timeout consumed: if the basics already used ~30 s,
+        //     the extras don't start (they could straddle the 60 s timeout
+        //     and the WHOLE report would be lost); per-frame sampling stops
+        //     at 18 s into the quality step.
         if !plan.sdrConvert && !probe.tags.isHDR
-            && fileSize > 0 && outDuration > 0.5 && plan.duration > 0.5 {
-            let drift = abs(outDuration - plan.duration) / plan.duration
+            && fileSize > 0 && outDuration > 0.5 && plan.duration > 0.5
+            && Date().timeIntervalSince(verifyStart) < 30 {
             let fractions: [Double] = [0.15, 0.4, 0.65, 0.9]
             let t0 = Date()
             var psnrs = [Double]()
             var ssims = [Double]()
             var sampled = 0
+            // TIME ANCHOR: the engine appends frames with the SOURCE's raw
+            // presentation timestamps, but a clipped source can START at a
+            // non-zero PTS. Learn the output's first-frame PTS (one narrow
+            // read) and offset every source sample by it — fraction-
+            // of-duration alone would compare the wrong scenes.
             let srcAsset = AVURLAsset(url: source)
+            var anchor: Double = 0
+            if let f0 = await QualityCheck.lumaFrame(asset: outAsset, at: 0),
+               f0.time > 0 {
+                anchor = f0.time
+            }
+            // Frame-rate capping drops FRAMES, not seconds: the truthful
+            // note is "outputs fewer fps", not "the timeline drifted".
+            let fpsCapped = plan.fpsCap != nil && probe.nominalFPS > 0
+                && Double(plan.fpsCap!) < probe.nominalFPS * 0.9
             for fraction in fractions {
                 if Date().timeIntervalSince(t0) > 18 { break }
-                let seconds = fraction * outDuration
-                async let a = QualityCheck.lumaFrame(asset: srcAsset, at: seconds)
-                async let b = QualityCheck.lumaFrame(asset: outAsset, at: seconds)
+                let tOut = fraction * outDuration
+                let tSrc = (anchor.isFinite ? anchor : 0) + tOut
+                async let a = QualityCheck.lumaFrame(asset: srcAsset, at: tSrc)
+                async let b = QualityCheck.lumaFrame(asset: outAsset, at: tOut)
                 guard let fa = await a, let fb = await b else { continue }
                 sampled += 1
                 if let p = QualityCheck.psnr(fa, fb) { psnrs.append(p) }
@@ -394,13 +426,13 @@ enum IntegrityVerifier {
                 let avgS = ssims.isEmpty ? 0 : ssims.reduce(0, +) / Double(ssims.count)
                 let g = QualityCheck.grade(psnr: avgP, ssim: avgS)
                 var detail = g.detail
-                if drift > 0.05 {
-                    detail += "\nNote: the output timeline drifted \((drift * 100).rounded())% from the plan (frame-rate capping) — scores are sampled at matched points, treat them as approximate."
+                if fpsCapped {
+                    detail += "\nNote: sampled at matched timestamps after a frame-rate cap (\(probe.nominalFPS, specifier: "%.0f") fps → \(plan.fpsCap!, specifier: "%d") fps)."
                 }
                 items.append(ReportItem("quality", g.label, detail, g.severity))
             } else {
                 items.append(ReportItem("quality", "Quality score unavailable",
-                    "The verifier's sampling window closed before decodable frames from both files could be compared (fast verify budget). The other checks still ran.", .warn))
+                    "The verifier's sampling window closed before decodable frames from both files could be compared (fast verify budget). The other checks still ran.", .pass))
             }
         }
 

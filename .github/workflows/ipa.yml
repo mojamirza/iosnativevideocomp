@@ -37,17 +37,23 @@ jobs:
         env:
           CODE_SIGNING_ALLOWED: NO
         run: |
-          # A concrete simulator destination (any available iPhone/iPad).
-          # Metal-dependent tests XCTSkip when the runner has no GPU device.
-          DEST=$(xcrun simctl list devices available |
-                 grep -m1 -E "iPhone|iPad" |
-                 cut -d'(' -f1 | xargs)
-          echo "Destination: $DEST"
+          # Destination by UDID — available devices vary per runner (one
+          # green run had NO iPhone, only iPad sims), and matching by name
+          # turned that into a red round. A UDID always matches whatever
+          # simctl says exists.
+          LINE=$(xcrun simctl list devices available | grep -m1 -E "iPhone|iPad")
+          SIMID=$(echo "$LINE" | grep -oE "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}" | head -n1)
+          echo "Simulator: $LINE -> $SIMID"
+          if [ -z "$SIMID" ]; then
+            xcrun simctl list devices available
+            echo "No iPhone/iPad simulator found on this runner" >&2
+            exit 1
+          fi
           xcodebuild \
             -project VidCompress.xcodeproj \
             -scheme VidCompress \
             -configuration Debug \
-            -destination "platform=iOS Simulator,name=$DEST" \
+            -destination "platform=iOS Simulator,id=$SIMID" \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             test

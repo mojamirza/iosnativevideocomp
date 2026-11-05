@@ -105,6 +105,25 @@ enum VideoInbox {
         try payload.write(to: marker)
     }
 
+    /// Paths of videos currently marked in the inbox. The launch/orphan
+    /// sweep unites these into its keep set: a stashed import copy can sit
+    /// here waiting for the app to become active — the sweep would
+    /// otherwise delete it as an orphan after the 1-hour freshness window
+    /// even though the marker (the intent to compress it) still exists.
+    static func pendingPaths() -> Set<String> {
+        let fm = FileManager.default
+        guard let markers = try? fm.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil) else { return [] }
+        var paths = Set<String>()
+        for marker in markers where marker.pathExtension == "json" {
+            guard let payload = try? Data(contentsOf: marker),
+                  let decoded = try? JSONDecoder().decode(Marker.self, from: payload)
+            else { continue }
+            paths.formUnion(decoded.urls)
+        }
+        return paths
+    }
+
     /// RootView consumes markers on launch: enqueues freshly marked videos
     /// and deletes the stale markers. Runs on the main actor: the coordinator
     /// (and its job queue) is main-actor isolated.

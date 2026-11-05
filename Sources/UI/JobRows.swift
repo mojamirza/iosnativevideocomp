@@ -30,11 +30,6 @@ struct JobRowView: View {
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
     }
 
-    /// Haptic on terminal transitions: success vs. failure feel different.
-    private var stateTrigger: JobCoordinator.JobState? {
-        [.done, .failed, .cancelled].contains(job.state) ? job.state : nil
-    }
-
     /// The row's title: for finished jobs, the OUTPUT's name (so renames
     /// are reflected); otherwise the source name.
     private var displayName: String {
@@ -144,14 +139,6 @@ struct JobRowView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(saveNotice ?? "")
-        }
-        // Haptic polish on terminal transitions: success vs. problem feel
-        // different. The nil→state change is what fires the feedback.
-        .sensoryFeedback(.success, trigger: stateTrigger) { _, newValue in
-            newValue == .done
-        }
-        .sensoryFeedback(.error, trigger: stateTrigger) { _, newValue in
-            newValue == .failed
         }
         // Existence cache refresh: files can vanish (Files-app deletions) or
         // appear (Keep-anyway promotion) between renders without rebuilding

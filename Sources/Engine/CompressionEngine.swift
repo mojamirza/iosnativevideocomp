@@ -356,15 +356,17 @@ enum CompressionEngine {
         let requestedAudioRate = encoderChannels == 1
             ? min(plan.audioBitrate, 96_000)
             : plan.audioBitrate
-        // Candidates keep the channel count; rates step down to sane
-        // speech/music minimums. The FIRST accepted one wins (the applied
-        // rate returns to the coordinator for the report).
-        var audioRateCandidates = [requestedAudioRate]
-        if encoderChannels == 1 {
-            audioRateCandidates += [64_000, 48_000, 32_000]
-        } else {
-            audioRateCandidates += [128_000, 96_000, 64_000, 32_000]
-        }
+        // Candidates keep the channel count; rates step DOWN ONLY from the
+        // budgeted rate — a stereo preset budgeting 96 kbps must not get
+        // bumped to 128 kbps, and a mono plan at 48 kbps must not climb to
+        // 64. Filters BELOW the requested rate keep that a hard rule at any
+        // budget. The FIRST accepted one wins (the applied rate returns to
+        // the coordinator for the report).
+        let steps = encoderChannels == 1
+            ? [64_000, 48_000, 32_000]
+            : [128_000, 96_000, 64_000, 32_000]
+        let audioRateCandidates = [requestedAudioRate]
+            + steps.filter { $0 < requestedAudioRate }
         var audioSettings: [String: Any]? = nil
         for rate in audioRateCandidates {
             let candidate = [
@@ -874,10 +876,14 @@ enum CompressionEngine {
         if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
         heartbeat.beat()
         onProgress(1.0)
-        // The final settings dict is the truth about what was encoded.
-        return audioSettings.flatMap {
-            ($0[AVEncoderBitRateKey] as? NSNumber)?.intValue
-        } ?? 0
+        // The applied audio rate is 0 unless an audio input was actually
+        // ADDED to the writer: a silent source (no track) or an audio
+        // pipeline rejected by canAdd must NOT report a rate — the
+        // coordinator writes it into plan.audioBitrate and the correction
+        // solver would subtract audio bytes that don't exist.
+        return audioInput != nil
+            ? (audioSettings?[AVEncoderBitRateKey] as? NSNumber)?.intValue ?? 0
+            : 0
     }
 
     /// Fetch a destination pixel buffer from a pool (falling back to a plain

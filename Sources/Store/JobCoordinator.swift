@@ -468,6 +468,7 @@ final class JobCoordinator: ObservableObject {
             jobs[idx].state = .done
             jobs[idx].report = report
             jobs[idx].outputURL = final
+            noteTerminalTick(.done)
             saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                        report: try? JSONEncoder().encode(report), state: "done")
         } else {
@@ -478,6 +479,7 @@ final class JobCoordinator: ObservableObject {
             let msg = "Couldn't save the file to Files — free up storage and tap Retry."
             jobs[idx].state = .failed
             jobs[idx].errorMessage = msg
+            noteTerminalTick(.failed)
             try? FileManager.default.removeItem(at: output)
             saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
                        errorText: msg)
@@ -572,6 +574,7 @@ final class JobCoordinator: ObservableObject {
         jobs[idx].state = .done
         jobs[idx].outputURL = final
         jobs[idx].errorMessage = nil
+        noteTerminalTick(.done)
         saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                    report: try? JSONEncoder().encode(report), state: "done")
         // Same storage rule as a normal success: our import copy of the
@@ -655,6 +658,11 @@ final class JobCoordinator: ObservableObject {
             [.queued, .analyzing, .compressing, .verifying].contains(job.state) {
             keepSources.insert(job.sourceURL.standardizedFileURL.path)
         }
+        // Inbox markers: a stashed import copy can be older than the 1-hour
+        // freshness cutoff (copyItem keeps the source mtime); while its
+        // marker still exists it MUST count as kept, or the sweep deletes
+        // handoff videos waiting for the app to come active.
+        keepSources.formUnion(VideoInbox.pendingPaths())
         // Working scratch: in-progress attempts claim \(jobID).mp4; terminal
         // jobs' scratch files are leftovers and disappear.
         var keepWork = Set<String>()
@@ -902,6 +910,25 @@ final class JobCoordinator: ObservableObject {
     private func setJob(_ jobID: UUID, _ mutate: (inout Job) -> Void) {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }) else { return }
         mutate(&jobs[idx])
+        noteTerminalTick(jobs[idx].state)
+    }
+
+    /// Haptic ticks for terminal transitions. The old per-row
+    /// `.sensoryFeedback(trigger: stateTrigger)` never fired reliably: a
+    /// terminal row MOVES between the active/finished ForEachs, so the row
+    /// view is rebuilt after the transition and the change is never
+    /// observes inside it. The ticks live on the COORDINATOR (published,
+    /// process-wide) and RootView attaches the feedback once. Cancellations
+    /// deliberately don't tick — the user did that themselves.
+    @Published var completionTick = 0
+    @Published var failureTick = 0
+
+    private func noteTerminalTick(_ state: JobCoordinator.JobState) {
+        switch state {
+        case .done: completionTick += 1
+        case .failed: failureTick += 1
+        default: break
+        }
     }
 
     private func presetStamp(_ preset: Preset) -> String {

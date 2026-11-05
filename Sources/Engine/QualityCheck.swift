@@ -17,6 +17,11 @@ enum QualityCheck {
         let luma: [UInt8]
         let width: Int
         let height: Int
+        /// Presentation timestamp (seconds) of the sampled frame. The
+        /// verifier uses it to align a non-zero-starting SOURCE with the
+        /// output timeline — fraction-of-duration alone compares the wrong
+        /// scenes on clipped assets.
+        let time: Double
     }
 
     /// Small enough to be cheap, large enough to score real detail.
@@ -58,6 +63,7 @@ enum QualityCheck {
         // First decodable frame inside the window carries the sample.
         while let sample = output.copyNextSampleBuffer() {
             defer { reader.cancelReading() }
+            let time = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
             guard let buffer = CMSampleBufferGetImageBuffer(sample),
                   CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess
             else { return nil }
@@ -74,7 +80,7 @@ enum QualityCheck {
                 luma.replaceSubrange(row * w..<(row * w) + w,
                                      with: UnsafeBufferPointer(start: start, count: w))
             }
-            return LumaFrame(luma: luma, width: w, height: h)
+            return LumaFrame(luma: luma, width: w, height: h, time: time.isFinite ? time : seconds)
         }
         return nil
     }
@@ -133,20 +139,22 @@ enum QualityCheck {
         return max(0.0, min(1.0, total / Double(windows)))
     }
 
-    /// Report language for a scored pair. PSNR on luma of decodes that went
-    /// through different pixel formats/scales never reads infinity in
-    /// practice — the bands describe honest expectations:
-    ///   ≥ 38 dB: excellent · ≥ 30: strong · ≥ 22: acceptable · else: weak.
+    /// Report language for a scored pair. QUALITY IS NOT INTEGRITY: a lower
+    /// bitrate preset on hard content lands south of 30 dB without the file
+    /// being broken in any way, so only genuinely weak scores warn — bands:
+    ///   ≥ 38 dB: excellent · ≥ 30: strong · ≥ 22: acceptable (all pass) ·
+    ///   below 22: weak (warn).
     static func grade(psnr: Double, ssim: Double)
         -> (label: String, detail: String, severity: ReportSeverity) {
         switch psnr {
         case ..<22:
             return ("Weak match",
-                String(format: "PSNR %.1f dB · SSIM %.2f — a LOW score means visible differences vs the source (aggressive bitrate, scaling or fps capping). Watch it before deleting the original.",
+                String(format: "PSNR %.1f dB · SSIM %.2f — visible differences vs the source (aggressive bitrate, scaling or fps capping). Compare the two before deleting the original; consider a higher bitrate.",
                        psnr, ssim), .warn)
         case ..<30:
             return ("Acceptable quality",
-                String(format: "PSNR %.1f dB · SSIM %.2f — differences exist but the decode is intact.", psnr, ssim), .warn)
+                String(format: "PSNR %.1f dB · SSIM %.2f — differences exist, which is expected at this bitrate; the decode is intact.",
+                       psnr, ssim), .pass)
         case ..<38:
             return ("Strong quality",
                 String(format: "PSNR %.1f dB · SSIM %.2f — the output closely matches the source.", psnr, ssim), .pass)

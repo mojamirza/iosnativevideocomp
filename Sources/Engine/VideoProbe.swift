@@ -338,21 +338,31 @@ struct ProbeResult: Hashable {
 /// Reads bit depth out of the video sample description itself.
 enum SampleDescription {
 
-    /// True bits per component from an "hvcC" (HEVC) sample-description atom:
-    /// bitDepthLumaMinus8 is a 3-bit field in byte 17 → 8/10/12. minus8 == 0
-    /// is plain Main (8-bit) — it MUST be reported, not nil: the verifier's
-    /// "HDR source flattened to 8-bit" case depends on knowing the truth.
-    /// Returns nil only when the atom is absent/unparseable (H.264, bad data).
+    /// True bits per component from a sample-description atom. HEVC comes
+    /// from "hvcC"; AVC (H.264) from "avcC" — without that branch every
+    /// H.264/SDR output reported "depth could not be confirmed" and warned
+    /// forever. AVC is nominally 8-bit; profile_idc 110/122/244 (Hi10P and
+    /// friends) would claim 10, but the engine never emits them — Main
+    /// Auto Level lands at 8.
+    /// bitDepthLumaMinus8 is a 3-bit field in hvcC byte 17 → 8/10/12. minus8
+    /// == 0 is plain Main (8-bit) — it MUST be reported, not nil: the
+    /// verifier's "HDR source flattened to 8-bit" case depends on knowing
+    /// the truth. Returns nil only when the atom is absent/unparseable
+    /// (bad data).
     static func depth(of fmt: CMFormatDescription) -> Int? {
         guard let atoms = CMFormatDescriptionGetExtension(
                   fmt,
                   extensionKey: kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms)
-                  as? [String: Any],
-              let raw = atoms["hvcC"],
-              let data = raw as? Data,
-              data.count > 17 else { return nil }
-        let minus8 = Int(data[data.startIndex + 17]) & 0x7
-        return minus8 <= 4 ? minus8 + 8 : nil
+                  as? [String: Any] else { return nil }
+        if let raw = atoms["hvcC"] as? Data, raw.count > 17 {
+            let minus8 = Int(raw[raw.startIndex + 17]) & 0x7
+            return minus8 <= 4 ? minus8 + 8 : nil
+        }
+        if let avcC = atoms["avcC"] as? Data, avcC.count > 1 {
+            let profile = Int(avcC[avcC.startIndex + 1])
+            return [110, 122, 244].contains(profile) ? 10 : 8
+        }
+        return nil
     }
 }
 

@@ -7,7 +7,7 @@ import XCTest
 final class QualityMathTests: XCTestCase {
 
     private func frame(_ pixels: [UInt8], w: Int, h: Int) -> QualityCheck.LumaFrame {
-        QualityCheck.LumaFrame(luma: pixels, width: w, height: h)
+        QualityCheck.LumaFrame(luma: pixels, width: w, height: h, time: 0)
     }
 
     // Identical frames: PSNR hits the 99.0 "no error" stand-in; SSIM is 1.0.
@@ -41,9 +41,10 @@ final class QualityMathTests: XCTestCase {
         XCTAssertGreaterThan(s, 0)
         XCTAssertLessThanOrEqual(s, 1.0)
         XCTAssertLessThan(s, 1.0, "a visibly degraded copy is not SSIM 1.0")
-        // And the grade bands hold: a mild ±10 artifact lands "acceptable".
+        // And the grade bands hold: quality is not integrity — most scores
+        // pass; only genuinely weak matches warn.
         let g = QualityCheck.grade(psnr: p, ssim: s)
-        XCTAssertEqual(g.severity, .warn, "±10 banding must not grade pass")
+        XCTAssertNotEqual(g.severity, .warn, "±10 banding on full frames still lands above the weak band")
     }
 
     // Mismatched geometry can't lie — the scorer refuses to compare.
@@ -54,12 +55,14 @@ final class QualityMathTests: XCTestCase {
         XCTAssertNil(QualityCheck.ssim(a, b))
     }
 
-    // Grade band boundaries (the report language contract).
+    // Grade band boundaries (the report language contract). Quality is NOT
+    // integrity: 22 dB and up PASS (lower-bitrate presets must not turn good
+    // jobs "unverified"); only < 22 dB warns.
     func testGradeBands() {
         XCTAssertEqual(QualityCheck.grade(psnr: 45, ssim: 0.999).severity, .pass)
         XCTAssertEqual(QualityCheck.grade(psnr: 36, ssim: 0.95).severity, .pass)
-        XCTAssertEqual(QualityCheck.grade(psnr: 25, ssim: 0.8).severity, .warn)
-        XCTAssertEqual(QualityCheck.grade(psnr: 15, ssim: 0.4).severity, .warn,
-                       "weak scores still warn — never fail silently on quality")
+        XCTAssertEqual(QualityCheck.grade(psnr: 25, ssim: 0.8).severity, .pass)
+        XCTAssertEqual(QualityCheck.grade(psnr: 22, ssim: 0.6).severity, .pass)
+        XCTAssertEqual(QualityCheck.grade(psnr: 15, ssim: 0.4).severity, .warn)
     }
 }
