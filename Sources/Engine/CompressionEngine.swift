@@ -202,6 +202,12 @@ enum CompressionEngine {
 
         let tags = await ColorTags.from(track: track)
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
+        // Web-optimized MP4 structure (more aggressive interleaving for
+        // progressive network playback) — the outputs are shared/streamed
+        // far more often than they are archived. NOTE: this lives on the
+        // WRITER — there is no per-input property (CI proved the input-level
+        // variant does not exist).
+        writer.shouldOptimizeForNetworkUse = true
 
         // ------------------------------------------------------------------
         // REAL HDR → SDR (opt-in, plan.sdrConvert): the conversion is done
@@ -364,9 +370,6 @@ enum CompressionEngine {
                                             outputSettings: settings,
                                             sourceFormatHint: (sdrConvert || !hintMatches) ? nil : hint)
         videoInput.expectsMediaDataInRealTime = false
-        // Web-optimized MP4 structure (more aggressive interleaving) — the
-        // outputs are shared/streamed far more often than they are archived.
-        videoInput.shouldOptimizeForNetworkUse = true
         // Preserve rotation on every path EXCEPT the SDR composition path
         // (there the rotation is baked into the rendered pixels — applying
         // the transform again would rotate the video twice).
@@ -602,7 +605,6 @@ enum CompressionEngine {
             let candidateInput = AVAssetWriterInput(mediaType: .audio,
                                                     outputSettings: aSettings)
             candidateInput.expectsMediaDataInRealTime = false
-            candidateInput.shouldOptimizeForNetworkUse = true
             // Same rationale as the video output: PCM blocks are consumed
             // within their loop iteration — skip the defensive copy.
             candidateOutput.alwaysCopiesSampleData = false
