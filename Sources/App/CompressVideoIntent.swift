@@ -100,7 +100,7 @@ enum VideoInbox {
             defer { if scoped { src.stopAccessingSecurityScopedResource() } }
             // Coordinated copy: iCloud Drive placeholders are downloaded by
             // the file coordinator before the copy (plain files pass through).
-            ImportHelpers.coordinatedCopy(from: src, to: target)
+            return ImportHelpers.coordinatedCopy(from: src, to: target)
         }.value
         if !copied && !fm.fileExists(atPath: target.path) {
             // Rare provider without a file URL: honest small-file fallback.
