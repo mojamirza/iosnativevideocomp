@@ -1,42 +1,47 @@
 # VidCompress — Native iPadOS Video Compressor
 
-A simple but professional, **100% native** (no external frameworks) iPad video compressor written in **Swift + SwiftUI**.
+A professional, **100% native** (no external frameworks) iPad video compressor written in **Swift + SwiftUI** — VideoToolbox all the way down.
 
 | Layer | Technology |
 |---|---|
 | UI | SwiftUI (iPad-first) |
-| Media I/O | `import AVFoundation` (AVAssetReader / AVAssetWriter, PhotosPicker + document picker) |
-| Encoding | **VideoToolbox** — AVAssetWriter feeds VT directly (`AVVideoCompressionPropertiesKey`, profile levels, GOP, bitrate) |
-| Per-frame analysis | **Core Video + VideoToolbox** (HighQuality-mode pixel transfer for all downscaling) |
+| Media I/O | `AVFoundation` (AVAssetReader / AVAssetWriter; PhotosPicker + document picker) |
+| Encoding | **VideoToolbox** — AVAssetWriter drives VT directly (profiles, GOP, average bitrate) |
+| Scaling | VideoToolbox pixel-transfer sessions (rotation-aware, bit-depth preserving) |
+| HDR → SDR (opt-in) | AVFoundation video composition — system tone-map, primaries conversion, scale & rotation in one pipeline |
 | Persistence | **SwiftData** (compression history) |
 
-## The three differentiators (vs. Kompresso & friends)
+## The three differentiators
 
 ### 1. Color-safe engine
 `Sources/Engine/VideoProbe.swift`, `CompressionEngine.swift`
-- Reads the source track's **color primaries / transfer function / YCbCr matrix** from its format description.
-- Every decoded pixel buffer is **re-tagged** with the exact source metadata (Core Video attachments) before it reaches the encoder.
-- The output mux carries **the same tags** (`AVVideoColorPropertiesKey`), so Rec.709, Rec.2020 and P3 files stay exactly as they were.
-- **Bit-depth aware**: 10-bit and HDR (HLG/PQ) sources decode to **10-bit YCbCr** (HEVC picks Main10 automatically) — they are never tonemapped and never squeezed through an 8-bit intermediate. 10-bit/HDR/rotated sources keep their resolution rather than risk color or orientation damage (noted in the optimizer rationale). The verifier even fails the report if color metadata drifts.
+- Reads the source track's **color primaries / transfer function / YCbCr matrix** and canonicalises them onto real SDK constants in **one** resolver — buffer attachments and writer settings can never disagree.
+- Every decoded pixel buffer is **re-tagged** with the source metadata (Core Video attachments) before it reaches the encoder, and the output mux carries the same tags (`AVVideoColorPropertiesKey`). Rec.709, Rec.2020 and P3 files stay exactly as they were.
+- **Bit-depth aware**: 10-bit and HDR (HLG/PQ) sources decode to **10-bit YCbCr** and encode as **HEVC Main10** — requested explicitly, then re-parsed from the output's own hvcC atom by the verifier (verify, don't trust). Never tonemapped, never squeezed through an 8-bit intermediate.
+- **HDR → SDR conversion is opt-in** (preset-level): an AVFoundation video composition declared Rec.709 tone-maps the source (HLG or PQ), converts the primaries, scales and rotation-bakes the render in one system pipeline — no custom kernels. Downscaling on this path **scales via a layer-instruction transform** (shrinking `renderSize` alone would crop the canvas), and the writer receives no stale source-format hint.
+- The verifier **fails the report** if color metadata drifts on an HDR source.
 
-### 2. Quality–size optimizer
-`Sources/Engine/ComplexityAnalyzer.swift`, `QualitySizeOptimizer.swift`
-- Before compression, ~16 frames sampled evenly across the video are decoded and measured via Core Image: per-frame **spatial detail** (luminance σ) + **motion** (mean abs luminance delta).
-- The score adapts the bitrate: `bits = pixels·fps·bpp(quality goal)·codec factor·(0.62 + 0.75·complexity)`.
-- Three goals: *Smallest / Balanced / Best*, **fixed Mbps**, or an **exact target file size (MB)** — the audio budget is reserved first, then the video bitrate is derived.
-- Never allocates more than the source bitrate (no "compressed" files bigger than the original).
+### 2. Honest size planning
+`Sources/Engine/SizeMath.swift`, `QualitySizeOptimizer.swift`
+- Two rate modes: **fixed Mbps** — always capped at ~95 % of the source's own bitrate (a re-encode never inflates a file; the UI says "(capped)") — or a **guaranteed target size in MB**.
+- The target guarantee is enforced by **measurement**: the bitrate is solved from the budget (target − container overhead − audio, aimed at 95 %), the real bytes of the finished pass are measured, and the encode re-runs (up to twice) with a corrected rate. The verifier's "Target size honored" item is the final word.
+- Every live estimate — setup sheet, preset rows, editor — runs the **same `plan()`** the encoder runs, container overhead included, so the number on screen is the number the job runs with.
+- Feasibility is checked per video **before** any encode starts ("Too small" in the preset row).
 
 ### 3. Output integrity report
-`Sources/Engine/IntegrityVerifier.swift`
-- After **every** encode the output is re-opened and actually verified: duration conservation (±1 % or 0.35 s), track presence, **decode spot-check of first + late frames**, audio conservation, **color metadata preservation**, bitrate sanity, measured savings.
-- One tap → full checklist with ✓ / ⚠ / ✗ per check. Present it to the user instead of a blind "Done".
+`Sources/Engine/IntegrityVerifier.swift`, `QualityCheck.swift`
+- After **every** encode the output is re-opened and actually verified: duration conservation, track presence, **decode spot-checks** (first + late frames), audio conservation, **color metadata**, **bit depth**, privacy, bitrate sanity and target size.
+- A **PSNR/SSIM quality score** is computed from real decoded luma frames of source vs output at matched timestamps (anchor-corrected for trimmed sources).
+- Three-state verdict — ✓ verified / ⚠ warnings / ✗ failed — warnings never masquerade as a pass. One tap → the full checklist.
 
 ## Feature map
 
-- **Detailed presets** with output size & bitrate: 8 built-ins (adaptive ×3, 4K/1080p/720p HEVC, 1080p H.264 for compatibility, half-size) + a custom preset editor (codec, resolution class, adaptive tier / fixed Mbps / MB size target, fps cap, audio kbps). Live **estimated output size** per preset, per source.
-- **File selection**: `PhotosPicker` (library) + `UIDocumentPickerViewController`-backed `fileImporter` (Files app), both copies into a private Imports folder.
-- **Compressing rows**: live progress + **Cancel**, queued/analyzing states, **error display**, Retry, Delete, Share, SwiftData-backed History.
-- Everything saved **locally** (Documents/Compressed) with SwiftData history records.
+- **Presets**: 3 built-ins (High quality keep-resolution HEVC 8 Mbps · Medium 720p 4 Mbps · Low 480p 1.5 Mbps) + a full custom editor — codec (HEVC / H.264), resolution class (keep … 4K), **fixed bitrate** (log slider + exact typed value) or **guaranteed MB target**, fps cap, audio bitrate, mono voice track, HDR→SDR. Live per-preset estimated output size and quality hints. Presets persist; the last-used selection sticks.
+- **Import**: PhotosPicker (original pixels — `preferredItemEncoding: .current`, so the picker never pre-transcodes HDR) and the Files app picker, both multi-select for batches; plus a **Shortcuts action** ("Compress video") that hands videos to the queue.
+- **Queue & history**: live progress with encode speed/ETA, cancel, retry, swipe-to-delete, SwiftData-backed history with per-job savings, in-app player with **source/output comparison at the same timestamp**.
+- **Background compression** (iOS 26+): encodes keep running when you leave the app with progress on the system indicator; a revoked task turns its jobs into retryable rows — never silent loss.
+- **Privacy scrub**: outputs never carry location metadata; the creation date is kept by default (toggle in setup). If a muxer ever refuses the date item, the encode retries once without metadata rather than failing the job.
+- **Storage**: outputs land in the app's Files folder (On My iPad → VidCompress) and are excluded from iCloud backups; import copies and encode scratch live in Caches and are cleaned automatically (including on cancelled setups).
 
 ## Project layout
 
@@ -44,16 +49,22 @@ A simple but professional, **100% native** (no external frameworks) iPad video c
 project.yml                     XcodeGen spec (generates VidCompress.xcodeproj)
 Sources/
   App/VidCompressApp.swift      entry point + ModelContainer
+  App/BackgroundCompress.swift  iOS 26 BGContinuedProcessingTask lifeline
+  App/CompressVideoIntent.swift Shortcuts intent + VideoInbox handoff
   Models/                       Preset, IntegrityReport, SwiftData JobRecord
   Engine/
-    VideoProbe.swift            probe + ColorTags (color-safe core)
-    ComplexityAnalyzer.swift    Core Image per-frame analysis
+    VideoProbe.swift            probe + ColorTags (color-safe core) + SessionAnchor
     QualitySizeOptimizer.swift  bitrate planning
-    CompressionEngine.swift     Reader→CI→VideoToolbox pipeline (+cancel)
-    IntegrityVerifier.swift     third pillar
+    SizeMath.swift              THE one target-size/bitrate/expected-bytes formula
+    CompressionEngine.swift     Reader → (composition | VT pixel transfer) → VideoToolbox
+    IntegrityVerifier.swift     post-encode verification
+    QualityCheck.swift          PSNR/SSIM luma sampling
+    PrivacyScrub.swift          metadata policy + session kill switch
+    AsyncTimeout.swift          watchdogs / bounded async races
   Store/JobCoordinator.swift    queue, progress, cancel, SwiftData records
   UI/                           RootView, SetupFlow, JobRows, PresetViews
-.github/workflows/ipa.yml       CI: builds unsigned IPA on every push
+Tests/                          SizeMath, Plan, QualityMath, ColorTags (CI-runnable)
+.github/workflows/ipa.yml       CI: unit tests + unsigned/signed IPA on every push
 ```
 
 ## Build the app locally
@@ -64,7 +75,7 @@ Sources/
 
 ## Build an IPA with GitHub Actions
 
-The workflow `.github/workflows/ipa.yml` fires on every push and produces
+The workflow `.github/workflows/ipa.yml` runs the unit tests first, then produces
 **`VidCompress-unsigned.ipa`** (artifact) with **no secrets required** — re-sign it
 later with Sideloadly / AltStore / Apple Configurator.
 
@@ -89,7 +100,8 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Known design decisions
 
-- Container is **MP4 (H.264/HEVC)**; HDR sources keep their resolution (never downscaled) to guarantee no tonemapping — the setup sheet annotates this.
-- Audio is re-encoded to AAC at the preset's budget instead of stream copy, which simplifies consistent A/V muxing.
-- Jobs run one at a time (stable memory footprint on older iPads); queued jobs show the standard cancel affordance.
-- The complexity analyzer defaults to a "balanced" score if analyzing fails — it never blocks compression.
+- Container is **MP4 (H.264/HEVC)**; HDR sources keep their resolution by default and are never tonemapped unless the preset explicitly converts to SDR.
+- Audio is re-encoded to AAC at the preset's budget (channel-aware ladder that only steps down; ships without audio only when no AAC configuration validates) instead of stream copy, for consistent A/V muxing.
+- Jobs run one at a time (stable memory footprint on older iPads).
+- VideoToolbox on iOS has no true 2-pass or CRF mode; the guaranteed-target mode implements the equivalent by **measuring real output bytes and re-encoding with a corrected rate** (up to two passes).
+- The complexity heuristic of earlier pre-release builds (per-frame Core Image analysis) was removed in favour of predictable, honest planning from the source's own data rate.

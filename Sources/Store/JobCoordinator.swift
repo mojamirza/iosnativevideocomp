@@ -630,6 +630,22 @@ final class JobCoordinator: ObservableObject {
         try? FileManager.default.removeItem(at: job.sourceURL)
     }
 
+    /// Bulk variant of deleteSourceImport for the SETUP FLOW: when the user
+    /// cancels the sheet (or a batch video was skipped because its probe
+    /// failed), the copies that never became jobs would leak in
+    /// Caches/Imports until the NEXT launch's sweep — multi-GB on large
+    /// batches. Deletes ONLY paths inside the Imports folder; anything the
+    /// picker handed us from elsewhere (system temp URLs) is left alone.
+    static nonisolated func deleteImportCopies(_ urls: [URL]) {
+        let imports = importsDirectory().standardizedFileURL.path
+        let fm = FileManager.default
+        for url in urls {
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(imports + "/") else { continue }
+            try? fm.removeItem(at: url)
+        }
+    }
+
     private static var swept = false
 
     /// Storage sweep at launch: removes orphaned files in Caches/Imports/
@@ -909,8 +925,15 @@ final class JobCoordinator: ObservableObject {
 
     private func setJob(_ jobID: UUID, _ mutate: (inout Job) -> Void) {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }) else { return }
+        // Tick only on an actual STATE change: setJob runs after every
+        // mutation, and a late progress update on an already-finished job
+        // re-ticked the terminal haptic (a phantom success buzz per stale
+        // engine emission).
+        let oldState = jobs[idx].state
         mutate(&jobs[idx])
-        noteTerminalTick(jobs[idx].state)
+        if jobs[idx].state != oldState {
+            noteTerminalTick(jobs[idx].state)
+        }
     }
 
     /// Haptic ticks for terminal transitions. The old per-row

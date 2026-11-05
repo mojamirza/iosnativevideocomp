@@ -22,8 +22,9 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        NSCameraUsageDescription: ""
-        NSPhotoLibraryUsageDescription: Pick videos from your library to compress.
+        # PhotosPicker runs out-of-process (no library-read permission
+        # needed) and saving uses add-only authorization, so only the
+        # add-only usage key is required.
         NSPhotoLibraryAddUsageDescription: Save compressed videos back to your photo library.
         ITSAppUsesNonExemptEncryption: false
         # Background compression (BGContinuedProcessingTask, iOS 26+)

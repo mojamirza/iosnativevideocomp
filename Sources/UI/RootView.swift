@@ -166,7 +166,22 @@ struct RootView: View {
             } message: {
                 Text("The system refused background processing for this install — this can happen after the app was re-signed. Compression still works normally; just keep the app open in the foreground until the queue finishes.")
             }
-            .sheet(isPresented: $showingSetup) {
+            .sheet(isPresented: $showingSetup, onDismiss: {
+                // The setup sheet closed — Cancel, Compress, or a swipe down.
+                // Import copies that never became a job (cancelled setup,
+                // batch videos skipped after a failed probe) would otherwise
+                // leak in Caches/Imports until the NEXT launch's sweep —
+                // multi-GB on large batches. Delete the leftovers now;
+                // enqueued jobs keep their copies (the queue needs them).
+                let jobPaths = Set(coordinator.jobs.map {
+                    $0.sourceURL.standardizedFileURL.path
+                })
+                let leftovers = importedVideos.map(\.url).filter {
+                    !jobPaths.contains($0.standardizedFileURL.path)
+                }
+                JobCoordinator.deleteImportCopies(leftovers)
+                importedVideos = []
+            }) {
                 SetupFlowView(videos: importedVideos,
                               onDone: { showingSetup = false })
                     .presentationDetents([.large])

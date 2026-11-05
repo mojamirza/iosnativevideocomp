@@ -508,6 +508,10 @@ struct SetupFlowView: View {
                           batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil,
                           batchAvgBitrate: isBatch ? batchAvgBitrate(for: preset) : nil) {
                     selectedPreset = preset
+                    // The tap IS the selection: persist it now — the old code
+                    // only persisted editor saves, so the last-used preset
+                    // never stuck for plain row selections.
+                    PresetStore.setLastUsedPreset(preset.id)
                 }
                 .contextMenu {
                     if preset.isUserDefined {
@@ -587,6 +591,9 @@ struct SetupFlowView: View {
 
     private func start() {
         guard let preset = selectedPreset, analysisDone else { return }
+        // Commit-time truth for "last used": the preset that actually ran
+        // (covers the lecture-mode variant too, which shares the base id).
+        PresetStore.setLastUsedPreset(preset.id)
         for i in videos.indices {
             guard let probe = probes[i] else { continue }
             let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)

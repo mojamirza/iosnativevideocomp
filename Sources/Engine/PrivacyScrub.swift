@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 
 /// PRIVACY SCRUB — outputs carry NO location metadata, ever, and the creation
 /// date is preserved as a DELIBERATE choice. Before this existed the writer
@@ -10,6 +11,14 @@ import AVFoundation
 /// date, nothing else. GPS (`.quickTimeMetadataLocationISO6709` /
 /// `com.apple.quicktime.location.ISO6709`) is never copied on any path, and
 /// there is no switch that re-enables it.
+///
+/// Robustness contract: the metadata item is the one piece of the writer
+/// setup AVFoundation might refuse for a given container/muxer combination
+/// (CI only builds — the first run on a real device decides). If the writer
+/// rejects it, the engine fails the job as `metadataRejected` and retries
+/// the encode ONCE with an empty metadata list; `sessionDisabled` then keeps
+/// every later encode of the session metadata-free (a missing date is a
+/// report warning — a failed job is not).
 enum PrivacyScrub {
 
     /// Setup-flow toggle (on by default). When off, the output ships with an
@@ -20,11 +29,25 @@ enum PrivacyScrub {
         set { UserDefaults.standard.set(newValue, forKey: keepDateKey) }
     }
 
-    /// Writer metadata items derived from the source asset (synchronous
-    /// common-metadata access; safe on any thread).
-    static func items(for source: AVAsset) -> [AVMetadataItem] {
-        guard keepCreationDate else { return [] }
-        let src = source.commonMetadata.first {
+    private static let lock = NSLock()
+    private static var _sessionDisabled = false
+
+    /// Session-wide kill switch: set the first time a writer refuses to start
+    /// with the scrubbed metadata items. Read/written from the engine's tasks
+    /// (off the main actor), hence the lock.
+    static var sessionDisabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _sessionDisabled }
+        set { lock.lock(); _sessionDisabled = newValue; lock.unlock() }
+    }
+
+    /// Writer metadata items derived from the source asset. ASYNC — the
+    /// engine calls this off the main actor, and `load(.commonMetadata)` is
+    /// the modern non-blocking accessor (the old synchronous `commonMetadata`
+    /// could stall on slow storage).
+    static func items(for source: AVAsset) async -> [AVMetadataItem] {
+        guard keepCreationDate, !sessionDisabled else { return [] }
+        let common = (try? await source.load(.commonMetadata)) ?? []
+        let src = common.first {
             $0.commonKey == AVMetadataKey.commonKeyCreationDate
         }
         guard let srcItem = src else { return [] }
@@ -38,11 +61,18 @@ enum PrivacyScrub {
         }
         guard let date else { return [] }
         let item = AVMutableMetadataItem()
-        item.identifier = .quickTimeMetadataCreationDate
-        // dateValue is READ-ONLY on AVMetadataItem; the writer accepts the
-        // standard ISO-8601 text form for the creation-date key (players and
-        // Files both parse it), so the date is written as a string.
-        item.value = ISO8601DateFormatter().string(from: date) as NSString
+        // COMMON identifier + explicit UTF-8 data type (Data value): the
+        // QuickTime-scoped identifier family is muxer-contingent, while
+        // AVFoundation maps the COMMON creation-date identifier onto whatever
+        // the target container supports (mp4 included). If even this
+        // combination is refused, the engine's startWriting guard fails the
+        // job as metadataRejected and retries once with NO metadata.
+        item.identifier = .commonIdentifierCreationDate
+        item.dataType = kCMMetadataBaseDataType_UTF8 as String
+        guard let raw = ISO8601DateFormatter().string(from: date).data(using: .utf8) else {
+            return []
+        }
+        item.value = raw as NSData
         return [item]
     }
 }

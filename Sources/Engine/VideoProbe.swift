@@ -233,6 +233,13 @@ struct ProbeResult: Hashable {
     var videoDataRate: Double       // bits/second
     var audioDataRate: Double       // bits/second
     var fileSize: Int64
+    /// The muxer-anchor seconds the probe SUBTRACTED from `duration`
+    /// (SessionAnchor: the earliest track start, when above zero). The
+    /// verifier adds it back to map an output timeline position onto the
+    /// SOURCE's raw timeline — the engine anchors the session at the
+    /// source's start, so the output's first frame sits at PTS ~0 and a
+    /// clipped source must be sampled with this offset.
+    var startOffset: Double = 0
 
     static func codecName(_ fourCC: FourCharCode) -> String {
         var name = ""
@@ -301,6 +308,7 @@ struct ProbeResult: Hashable {
         // time, so the plan's duration must describe the OUTPUT timeline —
         // otherwise the verifier's duration check fails on a good file.
         var sourceDuration = CMTimeGetSeconds(durationTime)
+        var startOffset = 0.0
         if sourceDuration.isFinite, sourceDuration > 0 {
             let videoStart = ((try? await track.load(.timeRange))?.start) ?? .zero
             var audioStart: CMTime?
@@ -311,6 +319,7 @@ struct ProbeResult: Hashable {
                 video: videoStart, audio: audioStart))
             if offset.isFinite, offset > 0 {
                 sourceDuration = max(0.1, sourceDuration - offset)
+                startOffset = offset
             }
         }
 
@@ -330,7 +339,8 @@ struct ProbeResult: Hashable {
             hasAudio: !(audioTracks.isEmpty),
             videoDataRate: dataRate,
             audioDataRate: audioRate,
-            fileSize: size
+            fileSize: size,
+            startOffset: startOffset
         )
     }
 }

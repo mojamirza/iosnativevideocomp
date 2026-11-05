@@ -401,11 +401,13 @@ enum IntegrityVerifier {
             // read) and offset every source sample by it — fraction-
             // of-duration alone would compare the wrong scenes.
             let srcAsset = AVURLAsset(url: source)
-            var anchor: Double = 0
-            if let f0 = await QualityCheck.lumaFrame(asset: outAsset, at: 0),
-               f0.time > 0 {
-                anchor = f0.time
-            }
+            // TIME ANCHOR: the engine anchors the muxer session at the
+            // SOURCE's earliest track start (SessionAnchor), so the output's
+            // first frame sits at PTS ~0 — anchoring on the OUTPUT side was
+            // always ~0 and never compensated a clipped source (wrong scenes
+            // compared, low scores on good files). The probe CARRIES the
+            // offset it subtracted from its duration; adding it back maps an
+            // output timeline position onto the source's raw timeline.
             // Frame-rate capping drops FRAMES, not seconds: the truthful
             // note is "outputs fewer fps", not "the timeline drifted".
             let fpsCapped = plan.fpsCap != nil && probe.nominalFPS > 0
@@ -413,7 +415,7 @@ enum IntegrityVerifier {
             for fraction in fractions {
                 if Date().timeIntervalSince(t0) > 18 { break }
                 let tOut = fraction * outDuration
-                let tSrc = (anchor.isFinite ? anchor : 0) + tOut
+                let tSrc = probe.startOffset + tOut
                 async let a = QualityCheck.lumaFrame(asset: srcAsset, at: tSrc)
                 async let b = QualityCheck.lumaFrame(asset: outAsset, at: tOut)
                 guard let fa = await a, let fb = await b else { continue }

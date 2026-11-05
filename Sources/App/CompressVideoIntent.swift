@@ -52,6 +52,9 @@ struct CompressVideoShortcuts: AppShortcutsProvider {
 /// consumes markers on launch and enqueues the videos.
 enum VideoInbox {
 
+    /// Re-entrancy guard for consume(with:) — see its doc comment.
+    @MainActor private static var consumeInFlight = false
+
     /// NOT the Files-visible Documents tree: only the marker JSONs live here.
     static var directory: URL {
         let support = FileManager.default.urls(for: .applicationSupportDirectory,
@@ -131,8 +134,17 @@ enum VideoInbox {
     /// RootView consumes markers on launch: enqueues freshly marked videos
     /// and deletes the stale markers. Runs on the main actor: the coordinator
     /// (and its job queue) is main-actor isolated.
+    ///
+    /// NON-REENTRANT: at cold launch RootView's .task AND the scene-active
+    /// onChange can both call this while the first consumer is still
+    /// awaiting probes — both would list the same markers before either
+    /// deletes them, double-enqueueing every stashed video. The main-actor
+    /// flag makes the second call a no-op (the first consumer owns the pass).
     @MainActor
     static func consume(with coordinator: JobCoordinator) async {
+        guard !consumeInFlight else { return }
+        consumeInFlight = true
+        defer { consumeInFlight = false }
         let fm = FileManager.default
         guard let markers = try? fm.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil) else { return }

@@ -59,6 +59,10 @@ enum CompressionError: LocalizedError {
     case writerFailed(String)
     case cancelled
     case framesDropped(Int)
+    /// The writer refused to start while metadata items were set — the
+    /// compress() wrapper catches this, flips PrivacyScrub.sessionDisabled
+    /// and retries once with an empty metadata list.
+    case metadataRejected(String)
 
     var errorDescription: String? {
         switch self {
@@ -68,6 +72,8 @@ enum CompressionError: LocalizedError {
         case .cancelled: return "Compression was cancelled."
         case .framesDropped(let n):
             return "Buffer starvation while encoding — \(n) frames could not be allocated or transferred, so the output would stutter."
+        case .metadataRejected(let m):
+            return "The writer refused the output's metadata: \(m)"
         }
     }
 }
@@ -154,6 +160,30 @@ enum CompressionEngine {
                          plan: OptimizerPlan,
                          flags: EngineFlags,
                          onProgress: @escaping @Sendable (Double) -> Void) async throws -> Int {
+        do {
+            return try await compressImpl(source: source, output: output, preset: preset,
+                                          plan: plan, flags: flags, onProgress: onProgress,
+                                          allowMetadata: !PrivacyScrub.sessionDisabled)
+        } catch CompressionError.metadataRejected {
+            // Session-wide kill switch: this writer refused to start with the
+            // scrubbed metadata — retry the encode ONCE with NO metadata so a
+            // muxer/metadata quirk can never fail every dated video of the
+            // session (a missing date is a report warning; a failed job is
+            // not). The writer is single-use, so the retry rebuilds it all.
+            PrivacyScrub.sessionDisabled = true
+            return try await compressImpl(source: source, output: output, preset: preset,
+                                          plan: plan, flags: flags, onProgress: onProgress,
+                                          allowMetadata: false)
+        }
+    }
+
+    private static func compressImpl(source: URL,
+                             output: URL,
+                             preset: Preset,
+                             plan: OptimizerPlan,
+                             flags: EngineFlags,
+                             onProgress: @escaping @Sendable (Double) -> Void,
+                             allowMetadata: Bool) async throws -> Int {
 
         // Stall watchdog — declared before the pipe functions so they can
         // capture it. Every progress report re-arms it; the deadline only
@@ -195,8 +225,15 @@ enum CompressionEngine {
         // creation date as a side effect. The output gets EXACTLY one item —
         // the source's creation date — and never a location tag. GPS would
         // only land here via a copied metadata track; none is copied.
+        // Loaded ASYNC here (this engine runs off the main actor); and if the
+        // writer refuses to start with the item, compress()'s wrapper retries
+        // once with NO metadata and flips the session-wide kill switch.
         // ------------------------------------------------------------------
-        writer.metadata = PrivacyScrub.items(for: asset)
+        if allowMetadata {
+            writer.metadata = await PrivacyScrub.items(for: asset)
+        } else {
+            writer.metadata = []
+        }
 
         // ------------------------------------------------------------------
         // VIDEO input settings — handed directly to VideoToolbox.
@@ -310,9 +347,13 @@ enum CompressionEngine {
                 sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
                                    height: Int(plan.source.sourceSize.height)))
 
+        // FORMAT HINT: the SDR-conversion path must NOT hand the writer a
+        // hint describing the SOURCE (e.g. 10-bit HLG HEVC) — the buffers it
+        // actually appends are the composition's 8-bit SDR renders, and a
+        // contradicting hint can misconfigure the encoder.
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
-                                            sourceFormatHint: hint)
+                                            sourceFormatHint: sdrConvert ? nil : hint)
         videoInput.expectsMediaDataInRealTime = false
         // Preserve rotation on every path EXCEPT the SDR composition path
         // (there the rotation is baked into the rendered pixels — applying
@@ -444,6 +485,24 @@ enum CompressionEngine {
                 comp.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
                 comp.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
                 comp.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+                // SCALE, NOT CROP: shrinking renderSize alone cuts the canvas
+                // down to its top-left region — the layer instruction must
+                // CARRY the scale (source rotation transform first, then the
+                // display→render scale), or "720p + Convert to SDR" would
+                // output the top-left 1280×720 crop of the full frame.
+                let display = plan.source.sourceSize   // rotation-aware display size
+                let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+                layer.setTransform(preferredTransform.concatenating(
+                    CGAffineTransform(
+                        scaleX: display.width > 0 ? CGFloat(encodeW) / display.width : 1,
+                        y: display.height > 0 ? CGFloat(encodeH) / display.height : 1)),
+                    at: .zero)
+                let instruction = AVMutableVideoCompositionInstruction()
+                instruction.timeRange = CMTimeRange(
+                    start: .zero,
+                    duration: try await asset.load(.duration))
+                instruction.layerInstructions = [layer]
+                comp.instructions = [instruction]
                 comp.renderSize = CGSize(width: encodeW, height: encodeH)
                 let compOut = AVAssetReaderVideoCompositionOutput(
                     videoTracks: [track],
@@ -560,6 +619,16 @@ enum CompressionEngine {
             throw CompressionError.readerFailed(reader.error?.localizedDescription ?? "could not start reading")
         }
         guard writer.startWriting() else {
+            // Metadata is the SUSPECT when it was set: surface a distinct,
+            // catchable error so compress() can retry once without it (the
+            // writer is single-use — a plain retry on the same instance is
+            // impossible, the wrapper rebuilds everything).
+            if allowMetadata, !writer.metadata.isEmpty {
+                reader.cancelReading()
+                throw CompressionError.metadataRejected(
+                    writer.error?.localizedDescription
+                        ?? "startWriting failed while metadata was set")
+            }
             throw writer.error ?? CompressionError.writerFailed("startWriting returned false")
         }
         // Session start via the SHARED SessionAnchor helper (the probe
