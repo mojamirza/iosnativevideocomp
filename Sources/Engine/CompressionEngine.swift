@@ -362,11 +362,19 @@ enum CompressionEngine {
         ]
         // SOFTWARE ENCODER (opt-in, preset-level): hardware VideoToolbox is
         // fast but measurably softer at equal bitrate — "max quality, slower"
-        // for archival copies and low bitrates. Forbidding the hardware
-        // encoder makes VideoToolbox pick its software implementation (or
-        // fail loudly at startWriting when none fits — an honest error).
-        if preset.softwareEncode == true {
-            settings[AVVideoEncoderSpecificationKey] = [
+        // for archival copies and low bitrates.
+        //
+        // API reality (CI-verified): the typed AVVideoEncoderSpecificationKey
+        // carries a macOS-only availability annotation, and the VT spec
+        // constants only surfaced on iOS in 17.4. The writer consumes settings
+        // dictionaries as raw strings and IGNORES keys it does not know
+        // (forward compatibility — apps built against newer SDKs must not
+        // crash older runtimes), so the request goes out under the raw key on
+        // iOS 17.4+ only: honored there if the writer grew the capability
+        // alongside the constants, silently ignored (hardware used) where it
+        // did not. No crash path either way.
+        if #available(iOS 17.4, *), preset.softwareEncode == true {
+            settings["AVVideoEncoderSpecificationKey"] = [
                 kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String:
                     NSNumber(value: false)
             ]

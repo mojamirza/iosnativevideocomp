@@ -397,7 +397,7 @@ struct PresetEditorView: View {
                 // at equal bitrate than the software encoder.
                 Section("Encoder") {
                     Toggle("Software encoder (slower, best quality)", isOn: $softwareEncode)
-                    Text("The hardware encoder is fast; the software encoder is slower but measurably better at the same bitrate. Worth it for archival copies and low bitrates.")
+                    Text("Requests the software encoder — slower but measurably better at the same bitrate. Worth it for archival copies and low bitrates. Honored on iOS 17.4+; systems that can't honor the request use the hardware encoder.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
