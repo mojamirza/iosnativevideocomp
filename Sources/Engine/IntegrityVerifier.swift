@@ -154,10 +154,19 @@ enum IntegrityVerifier {
         if let outTrack = outVideo {
             let outTags = await ColorTags.from(track: outTrack)
             let src = probe.tags
-            let want = src.resolved(
-                isHDR: src.isHDR,
-                sd: ColorTags.isSD(width: Int(probe.sourceSize.width),
-                                   height: Int(probe.sourceSize.height)))
+            // With a completed SDR conversion the EXPECTED tags are the SDR
+            // defaults (709 transfer/primaries; 601 on SD) — resolved through
+            // the SAME canonical resolver, so engine and verifier agree by
+            // construction on what an SDR-converted output must carry.
+            let want = plan.sdrConvert
+                ? ColorTags(primaries: nil, transferFunction: nil, yCbCrMatrix: nil).resolved(
+                    isHDR: false,
+                    sd: ColorTags.isSD(width: Int(probe.sourceSize.width),
+                                       height: Int(probe.sourceSize.height)))
+                : src.resolved(
+                    isHDR: src.isHDR,
+                    sd: ColorTags.isSD(width: Int(probe.sourceSize.width),
+                                       height: Int(probe.sourceSize.height)))
             var mismatch = false
             var detail = [String]()
             func compare(_ name: String, _ a: String?, _ b: String?) {
@@ -185,9 +194,13 @@ enum IntegrityVerifier {
             compare("transfer", want.transferFunction, outTags.transferFunction)
             compare("matrix", want.yCbCrMatrix, outTags.yCbCrMatrix)
             if mismatch {
-                if src.isHDR {
+                if src.isHDR && !plan.sdrConvert {
                     items.append(ReportItem("color", "Color metadata drifted",
                         detail.joined(separator: "\n"), .fail))
+                } else if plan.sdrConvert {
+                    items.append(ReportItem("color", "SDR conversion tag check",
+                        "The conversion re-tagged the file \(src.humanLabel) → Rec.709 SDR as part of the tone-map.\n"
+                            + detail.joined(separator: "\n"), .warn))
                 } else {
                     items.append(ReportItem("color", "SDR color metadata normalised",
                         "The output's color tags differ slightly from the source's — tone may shift marginally, but the decode is intact.\n"
@@ -241,14 +254,29 @@ enum IntegrityVerifier {
             }
         }
 
-        // 5b. 10-bit depth preservation: an HDR/10-bit source MUST come out
-        // as 10-bit HEVC. Main10 is explicitly requested now (see engine),
-        // but verify, don't trust — parse the output's own hvcC atom; if
-        // auto-negotiation ever picked Main (8-bit), the HDR chain broke.
+        // 5b. Bit-depth verification: an HDR/10-bit source MUST come out
+        //     as 10-bit HEVC — Main10 is explicitly requested (see engine),
+        //     but verify, don't trust: parse the output's own hvcC atom.
+        //     With a REQUESTED SDR conversion the expectation INVERTS: the
+        //     output is deliberately 8-bit 709, and 10-bit would be a
+        //     pipeline bug (the tone-map kernel rendered 8-bit buffers).
         if probe.bitDepth >= 10 || probe.tags.isHDR {
             if let outTrack = videoTracks.first {
                 let outFmts: [CMFormatDescription] = (try? await outTrack.load(.formatDescriptions)) ?? []
                 let parsed = outFmts.first.flatMap { SampleDescription.depth(of: $0) }
+                if plan.sdrConvert {
+                    switch parsed {
+                    case .some(let d) where d <= 8:
+                        items.append(ReportItem("hdr", "SDR conversion verified",
+                            String(format: "HDR → SDR applied end-to-end: output decodes as %d-bit Rec.709 (planned flattening, not a loss).", d), .pass))
+                    case .some:
+                        items.append(ReportItem("hdr", "SDR output unexpectedly 10-bit",
+                            "The conversion rendered 8-bit SDR buffers, but the file still carries 10-bit depth — check that the tone-map actually ran.", .warn))
+                    case nil:
+                        items.append(ReportItem("hdr", "Output depth could not be confirmed",
+                            "The output's format description did not parse during verification; the conversion itself is verified by the color tags above.", .warn))
+                    }
+                } else {
                 switch parsed {
                 case .some(let d) where d >= 10:
                     items.append(ReportItem("hdr", "10-bit depth preserved",
@@ -259,6 +287,7 @@ enum IntegrityVerifier {
                 case nil:
                     items.append(ReportItem("hdr", "10-bit depth could not be confirmed",
                         "The output's hvcC atom did not parse; the encoder's profile negotiation may or may not have chosen Main10. If HDR looks washed out, this file is 8-bit.", .warn))
+                }
                 }
             }
         }
@@ -331,6 +360,47 @@ enum IntegrityVerifier {
                     String(format: "Output %@ is %.1f MB over the guaranteed target even after the measured re-encode — the encoder's minimum practical rate for this content is too high to hit the size. (%.1f%% over)",
                            used, overMB, over * 100),
                     over <= 0.01 ? .warn : .fail))
+            }
+        }
+
+        // 6c. QUALITY SCORE: real decoded luma comparison of source vs
+        //     output frames at the same timeline fractions → PSNR + SSIM.
+        //     Skipped where the comparison would LIE: after a deliberate
+        //     (and desired) HDR→SDR conversion, for HDR sources generally,
+        //     and when the timeline drifted >5 % (frame capping pulls fps
+        //     comparisons apart). Hard 18 s wall-clock budget — never more
+        //     expensive than the encode it audits.
+        if !plan.sdrConvert && !probe.tags.isHDR
+            && fileSize > 0 && outDuration > 0.5 && plan.duration > 0.5 {
+            let drift = abs(outDuration - plan.duration) / plan.duration
+            let fractions: [Double] = [0.15, 0.4, 0.65, 0.9]
+            let t0 = Date()
+            var psnrs = [Double]()
+            var ssims = [Double]()
+            var sampled = 0
+            let srcAsset = AVURLAsset(url: source)
+            for fraction in fractions {
+                if Date().timeIntervalSince(t0) > 18 { break }
+                let seconds = fraction * outDuration
+                async let a = QualityCheck.lumaFrame(asset: srcAsset, at: seconds)
+                async let b = QualityCheck.lumaFrame(asset: outAsset, at: seconds)
+                guard let fa = await a, let fb = await b else { continue }
+                sampled += 1
+                if let p = QualityCheck.psnr(fa, fb) { psnrs.append(p) }
+                if let s = QualityCheck.ssim(fa, fb) { ssims.append(s) }
+            }
+            if sampled > 0 && !psnrs.isEmpty {
+                let avgP = psnrs.reduce(0, +) / Double(psnrs.count)
+                let avgS = ssims.isEmpty ? 0 : ssims.reduce(0, +) / Double(ssims.count)
+                let g = QualityCheck.grade(psnr: avgP, ssim: avgS)
+                var detail = g.detail
+                if drift > 0.05 {
+                    detail += "\nNote: the output timeline drifted \((drift * 100).rounded())% from the plan (frame-rate capping) — scores are sampled at matched points, treat them as approximate."
+                }
+                items.append(ReportItem("quality", g.label, detail, g.severity))
+            } else {
+                items.append(ReportItem("quality", "Quality score unavailable",
+                    "The verifier's sampling window closed before decodable frames from both files could be compared (fast verify budget). The other checks still ran.", .warn))
             }
         }
 

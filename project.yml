@@ -45,10 +45,30 @@ targets:
         TARGETED_DEVICE_FAMILY: "2"          # iPad-focused
         DEVELOPMENT_TEAM: ""                  # set locally in Xcode, or via CI secrets
         CODE_SIGN_STYLE: Automatic
+
+  # CI unit-test target. TEST_HOST = the app (UIKit/AVFoundation plumbing
+  # needs a host process in the simulator); the Info plist is generated.
+  VidCompressTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: VidCompress
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.vidcompress.tests
+        SWIFT_VERSION: "5.10"
 schemes:
   VidCompress:
     build:
       targets:
         VidCompress: all
+        VidCompressTests: [test]
+    test:
+      config: Debug
+      targets:
+        - VidCompressTests
     archive:
       config: Release

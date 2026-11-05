@@ -70,6 +70,10 @@ struct PresetEditorView: View {
     @State private var rateMode: RateMode
     /// Forced mono voice track (lecture mode recipe).
     @State private var monoAudio: Bool
+    /// REAL HDR→SDR conversion (opt-in). Only offered/shown when the video
+    /// currently being set up IS HDR — otherwise SDR-to-SDR "conversion"
+    /// would be a no-op hiding behind a toggle.
+    @State private var hdrConvert: Bool
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
@@ -99,6 +103,7 @@ struct PresetEditorView: View {
         _audioKbps = State(initialValue: Double(existing?.audioBitrateKbps ?? 128))
         _rateMode = State(initialValue: existing?.targetSizeMB != nil ? .target : .bitrate)
         _monoAudio = State(initialValue: existing?.audioChannels == 1)
+        _hdrConvert = State(initialValue: existing?.hdrToSDR == true)
         _fitUnderText = State(initialValue: existing?.targetSizeMB
             .map { $0 == $0.rounded() ? "\(Int($0))" : String(format: "%.1f", $0) } ?? "")
     }
@@ -155,7 +160,8 @@ struct PresetEditorView: View {
             audioBitrateKbps: Int(audioKbps),
             isUserDefined: true,
             targetSizeMB: rateMode == .target ? targetMB : nil,
-            audioChannels: monoAudio ? 1 : nil), probe: probe)
+            audioChannels: monoAudio ? 1 : nil,
+            hdrToSDR: hdrConvert ? true : nil), probe: probe)
     }
 
     /// Parsed, range-checked target (MB) from the text field. The PRESET
@@ -383,6 +389,29 @@ struct PresetEditorView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                // REAL HDR → SDR, offered ONLY on an HDR source. This is a
+                // deliberate conversion (BT.2100 tone-map → 709 re-encode,
+                // verified in the report) — never a relabeling. Off = keep
+                // HDR untouched (the default, 10-bit Main10 HEVC).
+                if contextProbe?.tags.isHDR == true {
+                    Section("HDR output") {
+                        Picker("Color space", selection: $hdrConvert) {
+                            Text("Keep HDR").tag(false)
+                            Text("Convert to SDR").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        if hdrConvert {
+                            Text("Tone-maps the video into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. Report shows: \"SDR conversion verified\".")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Output stays \(contextProbe?.tags.humanLabel ?? "HDR"): fewer devices can show its true colors, but nothing is altered.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
             .navigationTitle(existing == nil ? "Custom preset" : "Edit preset")
             .navigationBarTitleDisplayMode(.inline)
@@ -406,7 +435,11 @@ struct PresetEditorView: View {
                             // solve + measured re-encode + verified report
                             // — never a hand-solved slider value).
                             targetSizeMB: rateMode == .target ? targetMB : nil,
-                            audioChannels: monoAudio ? 1 : nil
+                            audioChannels: monoAudio ? 1 : nil,
+                            // Only a positive flag is persisted; nil means
+                            // "keep HDR" — a preset saved on an HDR video
+                            // must not silently convert HDR videos later.
+                            hdrToSDR: hdrConvert ? true : nil
                         )
                         // Editing preserves the preset's identity so the stored
                         // copy is replaced in place.

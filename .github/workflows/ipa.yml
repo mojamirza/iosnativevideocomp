@@ -7,12 +7,59 @@ on:
 
 jobs:
   # -------------------------------------------------------------------------
+  # UNIT TESTS — runs FIRST: the app target must also build for the
+  # simulator and every test must pass before the IPA jobs run at all.
+  # -------------------------------------------------------------------------
+  unit-tests:
+    name: Unit tests (iPhone simulator)
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew list xcodegen &>/dev/null || brew install xcodegen
+
+      - name: Select Xcode
+        run: |
+          X26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)
+          if [ -n "$X26" ]; then
+            sudo xcode-select -s "$X26"
+          else
+            sudo xcode-select -s "/Applications/Xcode_16.4.app" 2>/dev/null || sudo xcode-select -s /Applications/Xcode.app
+          fi
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Test
+        env:
+          CODE_SIGNING_ALLOWED: NO
+        run: |
+          # A concrete simulator destination (any available iPhone/iPad).
+          # Metal-dependent tests XCTSkip when the runner has no GPU device.
+          DEST=$(xcrun simctl list devices available |
+                 grep -m1 -E "iPhone|iPad" |
+                 cut -d'(' -f1 | xargs)
+          echo "Destination: $DEST"
+          xcodebuild \
+            -project VidCompress.xcodeproj \
+            -scheme VidCompress \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,name=$DEST" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+  # -------------------------------------------------------------------------
   # UNSIGNED IPA — works with zero secrets. Re-sign later with Sideloadly,
   # AltStore, Apple Configurator or Xcode to install on a device.
   # -------------------------------------------------------------------------
   unsigned-ipa:
     name: Unsigned IPA (for Sideloadly / AltStore)
     runs-on: macos-15
+    needs: unit-tests
     steps:
       - name: Checkout
         uses: actions/checkout@v4

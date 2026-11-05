@@ -186,8 +186,11 @@ struct SetupFlowView: View {
                     .foregroundStyle(.red)
             }
             // H.264 cannot encode 10-bit/HDR — the engine uses HEVC. Tell the
-            // user WHY the selected codec chip will be overridden.
+            // user WHY the selected codec chip will be overridden — UNLESS a
+            // requested SDR conversion flattens everything to 8-bit 709, in
+            // which case H.264 IS legal and this warning would be a lie.
             if let preset = selectedPreset, preset.codec == .h264,
+               preset.hdrToSDR != true,
                probes.contains(where: { p in
                    guard let p else { return false }
                    return p.tags.isHDR || p.bitDepth >= 10
@@ -684,6 +687,9 @@ private struct PresetRow: View {
                         TagChip(text: preset.resolution.displayName)
                         if preset.audioChannels == 1 {
                             TagChip(text: "Mono voice")
+                        }
+                        if preset.hdrToSDR == true {
+                            TagChip(text: "SDR out")
                         }
                         // Bitrate intentionally NOT a chip: it's shown at the
                         // trailing side (and in the estimate card) — a second

@@ -136,6 +136,12 @@ struct Preset: Identifiable, Codable, Hashable {
     /// Force the AAC channel count. 1 = mono voice track (lecture/screen-
     /// recording mode); nil = keep the source channel count.
     var audioChannels: Int?
+    /// REAL HDR → SDR conversion, opt-in. true = an HDR (HLG/PQ) source is
+    /// tone-mapped, primaries-converted and re-encoded into Rec.709/8-bit
+    /// SDR (see SDRConvert.swift — BT.2100 math, unit-verified). Applies
+    /// ONLY when the source actually is HDR; nil = keep HDR (the default,
+    /// and the color pillar's preserve-everything rule).
+    var hdrToSDR: Bool?
 
     static let bitrateRange: ClosedRange<Double> = 0.15...40
     static let fpsCapRange: ClosedRange<Int> = 1...240
@@ -181,13 +187,14 @@ struct Preset: Identifiable, Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,
              fpsCap, audioBitrateKbps, isUserDefined,
-             targetSizeMB, audioChannels
+             targetSizeMB, audioChannels, hdrToSDR
     }
 
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
          fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
          audioBitrateKbps: Int = 128, isUserDefined: Bool = false,
-         targetSizeMB: Double? = nil, audioChannels: Int? = nil) {
+         targetSizeMB: Double? = nil, audioChannels: Int? = nil,
+         hdrToSDR: Bool? = nil) {
         self.id = UUID()
         self.name = name.isEmpty ? "Custom" : name
         self.codec = codec
@@ -206,6 +213,7 @@ struct Preset: Identifiable, Codable, Hashable {
         // 3 MB target can't ramp a 4-hour film to insane bitrates.
         self.targetSizeMB = targetSizeMB.map { min(2_000, max(1, $0)) }
         self.audioChannels = audioChannels.map { min(2, max(1, $0)) }
+        self.hdrToSDR = hdrToSDR
     }
 
     init(from decoder: Decoder) throws {
@@ -222,10 +230,12 @@ struct Preset: Identifiable, Codable, Hashable {
         let user = try c.decodeIfPresent(Bool.self, forKey: .isUserDefined) ?? false
         let target = try c.decodeIfPresent(Double.self, forKey: .targetSizeMB)
         let channels = try c.decodeIfPresent(Int.self, forKey: .audioChannels)
+        let hdrSDR = try c.decodeIfPresent(Bool.self, forKey: .hdrToSDR)
         self.init(name: name, codec: codec, resolution: resolution,
                   fixedBitrateMbps: bitrate, fpsCap: cap,
                   audioBitrateKbps: audio, isUserDefined: user,
-                  targetSizeMB: target, audioChannels: channels)
+                  targetSizeMB: target, audioChannels: channels,
+                  hdrToSDR: hdrSDR)
         self.id = decodedID   // keep the stored identity
     }
 

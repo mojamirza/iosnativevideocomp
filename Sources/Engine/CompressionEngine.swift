@@ -174,6 +174,24 @@ enum CompressionEngine {
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
 
         // ------------------------------------------------------------------
+        // REAL HDR → SDR (opt-in, plan.sdrConvert): the plan branches the
+        // whole pipeline — 10-bit decode, Core Image tone-map kernel
+        // (SDRConvert.swift), 8-bit 709 encode. `neutralTags` resolves to
+        // the canonical SDR triplet (709 transfer/primaries; 601 matrix on
+        // SD, 709 on HD) and becomes the tags of EVERYTHING downstream.
+        // A nil converter means the CI kernel failed to compile — the job
+        // FAILS LOUDLY rather than silently shipping HDR pixels as "SDR"
+        // (the color pillar would rather fail than lie).
+        // ------------------------------------------------------------------
+        let neutralTags = ColorTags(primaries: nil, transferFunction: nil, yCbCrMatrix: nil)
+        let sdrScheme: HDRScheme? = plan.sdrConvert ? HDRScheme(transfer: tags.transferFunction) : nil
+        let sdrConverter = sdrScheme != nil ? SDRConverter.shared : nil
+        if sdrScheme != nil && sdrConverter == nil {
+            throw CompressionError.writerFailed(
+                "SDR conversion requested but the tone-map kernel failed to initialize on this device")
+        }
+
+        // ------------------------------------------------------------------
         // PRIVACY SCRUB — deliberate now, accidental before: the writer never
         // carried a metadata track at all, so a re-compressed file lost its
         // creation date as a side effect. The output gets EXACTLY one item —
@@ -202,13 +220,20 @@ enum CompressionEngine {
         // claim that HEVC profile constants aren't exported turned out to be
         // wrong — only the pixel-transfer MODE constants are macro-only);
         // 8-bit HEVC stays on auto-profile negotiation.
+        //
+        // DECODE vs ENCODE depth: the DECODE follows the SOURCE (10-bit for
+        // HDR sources — the tone-map kernel needs the extra precision), the
+        // ENCODE follows the OUTPUT: with a requested SDR conversion the
+        // writer expects 8-bit SDR buffers, so H.264 becomes legal again
+        // and Main10 is NOT requested.
         // ------------------------------------------------------------------
         let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
-        let encodeCodec: VideoCodec = (wants10Bit && preset.codec == .h264) ? .hevc : preset.codec
+        let encode10Bit = wants10Bit && sdrScheme == nil
+        let encodeCodec: VideoCodec = (encode10Bit && preset.codec == .h264) ? .hevc : preset.codec
         if encodeCodec == .h264 {
             // H.264: explicit down-to-earth profile (8-bit only).
             props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
-        } else if wants10Bit {
+        } else if encode10Bit {
             // 10-bit/HDR sources: EXPLICIT Main10 instead of trusting the
             // auto-negotiation — and the verifier re-parses the output's own
             // hvcC atom to prove the depth survived (never take it on faith).
@@ -272,9 +297,12 @@ enum CompressionEngine {
         // isSD rule on the SOURCE display size — the same inputs attach()
         // uses, so the buffer-path and writer-path colorimetry agree by
         // construction (max≤720 AND min≤576: 720×1280 portrait is NOT SD).
-        settings[AVVideoColorPropertiesKey] = tags.writerColorProperties(
-            sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
-                               height: Int(plan.source.sourceSize.height)))
+        // With SDR conversion the SDR triplet REPLACES the source's HDR
+        // resolution — tags and pixels must tell the same story.
+        settings[AVVideoColorPropertiesKey] = (sdrScheme != nil ? neutralTags : tags)
+            .writerColorProperties(
+                sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
+                                   height: Int(plan.source.sourceSize.height)))
 
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
@@ -393,9 +421,16 @@ enum CompressionEngine {
         reader.add(videoOut)
 
         var scalePool: CVPixelBufferPool?
-        if scaleNeeded {
+        // The pool feeds BOTH paths that append freshly-created buffers:
+        // scaling (bit-depth preserved) and SDR conversion (8-bit out).
+        // Format = what the WRITER expects, not what the decoder emits.
+        let writesNewBuffers = scaleNeeded || sdrScheme != nil
+        let writerFormat: OSType = sdrScheme != nil
+            ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            : decodeFormat
+        if writesNewBuffers {
             let poolAttrs: [String: Any] = [
-                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: writerFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
                 // IOSurface-backed buffers: zero-copy handoff into the VT
@@ -468,11 +503,12 @@ enum CompressionEngine {
             }
         }
 
-        // Pixel-buffer adaptor used only on the scaling path: its pool produces
-        // buffers in exactly the geometry and bit depth the writer expects.
-        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = scaleNeeded ? {
+        // Pixel-buffer adaptor + pool: used on the scaling path AND the SDR-
+        // conversion path (which always writes NEW buffers). Geometry and
+        // format come from the shared pool attributes above.
+        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = writesNewBuffers ? {
             let poolAttrs: [String: Any] = [
-                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: writerFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
                 String(kCVPixelBufferIOSurfacePropertiesKey): [String: Any](),
@@ -610,7 +646,39 @@ enum CompressionEngine {
                             }
                         }
 
-                        if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
+                        if let scheme = sdrScheme, let src = CMSampleBufferGetImageBuffer(sb) {
+                            guard let converter = sdrConverter else {
+                                // Guarded at setup (throws) — unreachable, but
+                                // a drop here must still respect the budget.
+                                if noteDrop() { return }
+                                continue
+                            }
+                            guard let dst = Self.nextPoolBuffer(
+                                    scalePool, width: encodeW, height: encodeH,
+                                    format: writerFormat) else {
+                                if noteDrop() { return }
+                                continue
+                            }
+                            // COLOR-SAFE SDR conversion: the kernel decodes
+                            // the transfer, converts primaries, tone-maps and
+                            // re-encodes 709 — the buffer's own tags must NOT
+                            // leak HDR sidecars (mastering display etc.) into
+                            // an SDR file, so the full SDR triplet is attached
+                            // on the NEW buffer AFTER the render.
+                            do {
+                                try converter.render(from: src, to: dst, scheme: scheme)
+                            } catch {
+                                if noteDrop() { return }
+                                continue
+                            }
+                            ColorTags.attach(to: dst, tags: neutralTags)
+                            if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+                                flags.fail(writer.error
+                                    ?? CompressionError.writerFailed("SDR buffer append failed"))
+                                resume.resumeOnce()
+                                return
+                            }
+                        } else if scaleNeeded, let src = CMSampleBufferGetImageBuffer(sb) {
                             guard let transfer = transferSession else {
                                 if noteDrop() { return }
                                 continue
