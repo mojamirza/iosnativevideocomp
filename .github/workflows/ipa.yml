@@ -37,11 +37,15 @@ jobs:
         env:
           CODE_SIGNING_ALLOWED: NO
         run: |
-          # Destination by UDID — available devices vary per runner (one
-          # green run had NO iPhone, only iPad sims), and matching by name
-          # turned that into a red round. A UDID always matches whatever
-          # simctl says exists.
-          LINE=$(xcrun simctl list devices available | grep -m1 -E "iPhone|iPad")
+          # Destination by UDID, iPad first — verified quirk of these
+          # runners: simctl advertises iPhone devices that xcodebuild then
+          # REFUSES as scheme destinations (round 41946543925 and its retry
+          # both proved it), while iPad sims are always available. Fall
+          # back to iPhone only when no iPad exists.
+          LINE=$(xcrun simctl list devices available | grep -m1 -E "iPad")
+          if [ -z "$LINE" ]; then
+            LINE=$(xcrun simctl list devices available | grep -m1 -E "iPhone")
+          fi
           SIMID=$(echo "$LINE" | grep -oE "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}" | head -n1)
           echo "Simulator: $LINE -> $SIMID"
           if [ -z "$SIMID" ]; then
