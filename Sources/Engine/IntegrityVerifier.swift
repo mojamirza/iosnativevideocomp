@@ -409,7 +409,7 @@ enum IntegrityVerifier {
             // Frame-rate capping drops FRAMES, not seconds: the truthful
             // note is "outputs fewer fps", not "the timeline drifted".
             let fpsCapped = plan.fpsCap != nil && probe.nominalFPS > 0
-                && Double(plan.fpsCap!) < probe.nominalFPS * 0.9
+                && Double(plan.fpsCap!) < Double(probe.nominalFPS) * 0.9
             for fraction in fractions {
                 if Date().timeIntervalSince(t0) > 18 { break }
                 let tOut = fraction * outDuration
@@ -427,7 +427,8 @@ enum IntegrityVerifier {
                 let g = QualityCheck.grade(psnr: avgP, ssim: avgS)
                 var detail = g.detail
                 if fpsCapped {
-                    detail += "\nNote: sampled at matched timestamps after a frame-rate cap (\(probe.nominalFPS, specifier: "%.0f") fps → \(plan.fpsCap!, specifier: "%d") fps)."
+                    detail += "\n"
+                        + String(format: "Note: sampled at matched timestamps after a frame-rate cap (%.0f fps → %d fps).", probe.nominalFPS, plan.fpsCap!)
                 }
                 items.append(ReportItem("quality", g.label, detail, g.severity))
             } else {

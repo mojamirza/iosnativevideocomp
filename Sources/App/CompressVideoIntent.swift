@@ -87,21 +87,25 @@ enum VideoInbox {
             n += 1
         }
 
+        // IMMUTABLE copies only: `dest` keeps mutating in the dedup loop
+        // above, and a concurrently-executing (@Sendable) closure may not
+        // capture mutable state — pin the final path down before detaching.
+        let target = dest
         let copied: Bool = await Task.detached {
             guard let src else { return false }
             let scoped = src.startAccessingSecurityScopedResource()
             defer { if scoped { src.stopAccessingSecurityScopedResource() } }
-            do { try fm.copyItem(at: src, to: dest); return true }
+            do { try FileManager.default.copyItem(at: src, to: target); return true }
             catch { return false }
         }.value
-        if !copied && !fm.fileExists(atPath: dest.path) {
+        if !copied && !fm.fileExists(atPath: target.path) {
             // Rare provider without a file URL: honest small-file fallback.
             let data = try file.data
-            try data.write(to: dest)
+            try data.write(to: target)
         }
 
         let marker = directory.appendingPathComponent("\(UUID().uuidString).json")
-        let payload = try JSONEncoder().encode(Marker(urls: [dest.standardizedFileURL.path]))
+        let payload = try JSONEncoder().encode(Marker(urls: [target.standardizedFileURL.path]))
         try payload.write(to: marker)
     }
 
