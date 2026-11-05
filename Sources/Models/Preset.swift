@@ -144,6 +144,9 @@ struct Preset: Identifiable, Codable, Hashable {
     /// ONLY when the source actually is HDR; nil = keep HDR (the default,
     /// and the color pillar's preserve-everything rule).
     var hdrToSDR: Bool?
+    /// Force the SOFTWARE VideoToolbox encoder (slower, best quality math)
+    /// instead of the hardware blocks. nil/false = hardware (the default).
+    var softwareEncode: Bool?
 
     static let bitrateRange: ClosedRange<Double> = 0.15...40
     static let fpsCapRange: ClosedRange<Int> = 1...240
@@ -189,14 +192,14 @@ struct Preset: Identifiable, Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,
              fpsCap, audioBitrateKbps, isUserDefined,
-             targetSizeMB, audioChannels, hdrToSDR
+             targetSizeMB, audioChannels, hdrToSDR, softwareEncode
     }
 
     init(name: String, codec: VideoCodec, resolution: ResolutionClass,
          fixedBitrateMbps: Double = 4.0, fpsCap: Int? = nil,
          audioBitrateKbps: Int = 128, isUserDefined: Bool = false,
          targetSizeMB: Double? = nil, audioChannels: Int? = nil,
-         hdrToSDR: Bool? = nil) {
+         hdrToSDR: Bool? = nil, softwareEncode: Bool? = nil) {
         self.id = UUID()
         self.name = name.isEmpty ? "Custom" : name
         self.codec = codec
@@ -216,6 +219,7 @@ struct Preset: Identifiable, Codable, Hashable {
         self.targetSizeMB = targetSizeMB.map { min(2_000, max(1, $0)) }
         self.audioChannels = audioChannels.map { min(2, max(1, $0)) }
         self.hdrToSDR = hdrToSDR
+        self.softwareEncode = softwareEncode
     }
 
     init(from decoder: Decoder) throws {
@@ -233,11 +237,12 @@ struct Preset: Identifiable, Codable, Hashable {
         let target = try c.decodeIfPresent(Double.self, forKey: .targetSizeMB)
         let channels = try c.decodeIfPresent(Int.self, forKey: .audioChannels)
         let hdrSDR = try c.decodeIfPresent(Bool.self, forKey: .hdrToSDR)
+        let swEncode = try c.decodeIfPresent(Bool.self, forKey: .softwareEncode)
         self.init(name: name, codec: codec, resolution: resolution,
                   fixedBitrateMbps: bitrate, fpsCap: cap,
                   audioBitrateKbps: audio, isUserDefined: user,
                   targetSizeMB: target, audioChannels: channels,
-                  hdrToSDR: hdrSDR)
+                  hdrToSDR: hdrSDR, softwareEncode: swEncode)
         self.id = decodedID   // keep the stored identity
     }
 

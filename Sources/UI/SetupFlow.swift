@@ -698,6 +698,9 @@ private struct PresetRow: View {
                         if preset.hdrToSDR == true {
                             TagChip(text: "SDR out")
                         }
+                        if preset.softwareEncode == true {
+                            TagChip(text: "SW encode")
+                        }
                         // Bitrate intentionally NOT a chip: it's shown at the
                         // trailing side (and in the estimate card) — a second
                         // dark pill here just cluttered the row.

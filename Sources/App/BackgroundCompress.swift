@@ -102,7 +102,10 @@ enum BackgroundCompress {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
-                guard let idx = coordinator.jobs.firstIndex(where: { $0.state == .queued }) else { break }
+                // Same pick rule as the in-app worker: the array is newest-
+                // first, so the LAST queued entry is the OLDEST pick (FIFO
+                // by selection order).
+                guard let idx = coordinator.jobs.lastIndex(where: { $0.state == .queued }) else { break }
                 coordinator.jobs[idx].state = .analyzing
                 let id = coordinator.jobs[idx].id
                 await coordinator.run(jobID: id)

@@ -297,12 +297,7 @@ enum CompressionEngine {
         // no bit-depth loss, color metadata re-applied onto the destination
         // buffer (color-safe).
         // ------------------------------------------------------------------
-        let transferSession: VTPixelTransferSession? = (plan.scaleNeeded && !sdrConvert)
-            ? makeTransferSession()
-            : nil
-        // Extremely unlikely fallback: if the transfer session could not be
-        // created, keep the source resolution rather than risk mangling.
-        let scaleNeeded = plan.scaleNeeded && transferSession != nil
+        var scaleNeeded = plan.scaleNeeded
 
         // ROTATE-AWARE GEOMETRY. plan.outputSize is the *display* size (post-
         // rotation, e.g. 480×854 for a portrait video). The encoder writes
@@ -323,8 +318,20 @@ enum CompressionEngine {
         if !scaleNeeded, let f = hint {
             let d = CMVideoFormatDescriptionGetDimensions(f)
             if d.width > 0 && d.height > 0 {
-                encodeW = Int(d.width)
-                encodeH = Int(d.height)
+                var w = Int(d.width)
+                var h = Int(d.height)
+                // 4:2:0 encoders require EVEN dimensions: a source stored at
+                // odd width/height (rare but real) cannot ship through the
+                // direct path — even the geometry (never exceeding the
+                // source) and route through the pixel-transfer session
+                // instead (a 1-px scale, aspect shift ≤ 0.1%).
+                if w % 2 != 0 || h % 2 != 0 {
+                    scaleNeeded = true
+                    w -= w % 2
+                    h -= h % 2
+                }
+                encodeW = w
+                encodeH = h
             }
         }
         if sdrConvert {
@@ -337,12 +344,33 @@ enum CompressionEngine {
             encodeH = Int(plan.outputSize.height)
         }
 
+        // One pixel-transfer session for ANY downscale (8-bit SDR included) —
+        // created whenever the scale path is active, whether the scale was
+        // plan-requested or forced above by odd source dimensions.
+        let transferSession: VTPixelTransferSession? = (scaleNeeded && !sdrConvert)
+            ? makeTransferSession()
+            : nil
+        // Extremely unlikely fallback: if the transfer session could not be
+        // created, keep the source resolution rather than risk mangling.
+        scaleNeeded = scaleNeeded && transferSession != nil
+
         var settings: [String: Any] = [
             AVVideoCodecKey: encodeCodec.avCodecType,
             AVVideoWidthKey: encodeW,
             AVVideoHeightKey: encodeH,
             AVVideoCompressionPropertiesKey: props,
         ]
+        // SOFTWARE ENCODER (opt-in, preset-level): hardware VideoToolbox is
+        // fast but measurably softer at equal bitrate — "max quality, slower"
+        // for archival copies and low bitrates. Forbidding the hardware
+        // encoder makes VideoToolbox pick its software implementation (or
+        // fail loudly at startWriting when none fits — an honest error).
+        if preset.softwareEncode == true {
+            settings[AVVideoEncoderSpecificationKey] = [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String:
+                    NSNumber(value: false)
+            ]
+        }
         // Always complete — the resolver produces a full, valid triplet
         // (never a partial dictionary). The SD/HD decision uses the shared
         // isSD rule on the SOURCE display size — the same inputs attach()

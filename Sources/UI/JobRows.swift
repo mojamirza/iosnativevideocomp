@@ -272,6 +272,10 @@ struct JobRowView: View {
     @ViewBuilder
     private var thumbnail: some View {
         let isTerminal = [.done, .failed, .cancelled].contains(job.state)
+        // Play affordance only when SOMETHING is still playable — a done job
+        // whose output was deleted (and whose source import is gone) must
+        // not open a dead sheet.
+        let isPlayable = isTerminal && (outputExists || sourceExists)
         let image = Group {
             if let thumb = job.thumbnail {
                 Image(uiImage: thumb)
@@ -286,7 +290,7 @@ struct JobRowView: View {
                     .overlay { Image(systemName: "film").foregroundStyle(.secondary) }
             }
         }
-        if isTerminal {
+        if isPlayable {
             Button {
                 showingPlayer = true
             } label: {
@@ -731,7 +735,6 @@ struct ReportSheet: View {
                 Text(item.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(4)
             }
             Spacer()
         }
@@ -843,7 +846,25 @@ private struct OutputPlayerSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                if let player {
+                if !outputExists && !sourceExists {
+                    // Honest empty state instead of a dead black rectangle:
+                    // done jobs delete the source import, and the output may
+                    // have been removed in Files.
+                    VStack(spacing: 10) {
+                        Image(systemName: "questionmark.square.dashed")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.tertiary)
+                        Text("This video is gone")
+                            .font(.headline)
+                        Text("The compressed file and its source were both removed from the app's folders.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 48)
+                } else if let player {
                     VideoPlayer(player: player)
                         .aspectRatio(aspect ?? 16.0 / 9.0, contentMode: .fit)
                         .background(Color.black)

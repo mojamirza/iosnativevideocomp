@@ -17,9 +17,12 @@ targets:
       properties:
         CFBundleDisplayName: VidCompress
         UILaunchScreen: {}
-        UIRequiresFullScreen: true
+        # MULTITASKING: Split View / Stage Manager supported (also the
+        # prerequisite for drag-and-drop import from Files). Multitasking
+        # iPad apps must support ALL FOUR orientations per App Store rules.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         # PhotosPicker runs out-of-process (no library-read permission

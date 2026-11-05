@@ -115,7 +115,9 @@ final class JobCoordinator: ObservableObject {
                     [.compressing, .analyzing, .verifying].contains($0.state)
                 }
                 let subtitle = current?.sourceName
-                    ?? jobs.first(where: { $0.state == .queued })?.sourceName
+                    // Name the job that will encode NEXT (the oldest queued
+                    // pick — same rule as the workers), not the newest row.
+                    ?? jobs.last(where: { $0.state == .queued })?.sourceName
                     ?? "videos"
                 if !BackgroundCompress.submit(subtitle: subtitle), !submitDenialNoticed {
                     // The refusal previously vanished: background
@@ -147,7 +149,11 @@ final class JobCoordinator: ObservableObject {
             }
             while !Task.isCancelled {
                 guard let self,
-                      let idx = self.jobs.firstIndex(where: { $0.state == .queued }) else { break }
+                      // PICK ORDER: the array is newest-first (enqueue inserts
+                      // at 0 for the history display), so the LAST queued
+                      // entry is the OLDEST pick — batch jobs encode in the
+                      // order the user selected instead of reversed.
+                      let idx = self.jobs.lastIndex(where: { $0.state == .queued }) else { break }
                 // Claim the job atomically (MainActor) BEFORE running it, so a
                 // revived second worker can never double-process the same job.
                 self.jobs[idx].state = .analyzing

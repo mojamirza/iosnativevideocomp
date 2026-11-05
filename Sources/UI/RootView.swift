@@ -17,6 +17,7 @@ struct RootView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFiles = false
     @State private var importError: String?
+    @State private var dropActive = false
 
     var body: some View {
         NavigationStack {
@@ -70,8 +71,48 @@ struct RootView: View {
                     StorageFooter()
                         .padding(.top, 6)                }
                 .padding(.vertical)
+                // DESKTOP-CLASS WIDTH: a full-bleed single column on a 13"
+                // iPad reads as a stretched phone app — cap the content and
+                // center it (Split View's narrow widths are unaffected).
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
             }
             .background(Color(.systemGroupedBackground))
+            // DRAG & DROP import — the Split View / Stage Manager companion:
+            // movies dropped from Files or Photos enter the same setup flow
+            // as picked videos.
+            .onDrop(of: [UTType.movie], isTargeted: { dropActive = $0; return true }) { providers in
+                guard !showingSetup, !providers.isEmpty else { return false }
+                Task {
+                    var picked: [PickedVideo] = []
+                    for provider in providers {
+                        guard let url = await ImportHelpers.urlFromDrop(provider) else { continue }
+                        if let copy = await ImportHelpers.copyOffMain(url) {
+                            let thumb = await Thumbnails.make(url: copy)
+                            picked.append(PickedVideo(url: copy, thumbnail: thumb))
+                        }
+                    }
+                    if picked.isEmpty {
+                        importError = "The dropped videos could not be imported."
+                    } else {
+                        importedVideos = picked
+                        showingSetup = true
+                    }
+                }
+                return true
+            }
+            .overlay {
+                if dropActive {
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(.tint.opacity(0.14))
+                        .overlay {
+                            Label("Drop videos to import", systemImage: "arrow.down.doc")
+                                .font(.headline)
+                        }
+                        .padding(10)
+                        .allowsHitTesting(false)
+                }
+            }
             .navigationTitle("VidCompress")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -436,6 +477,31 @@ enum ImportHelpers {
         await Task.detached {
             SecurityScoped(url: url).importCopy()
         }.value
+    }
+
+    /// Pulls a file URL out of a dropped item provider. Files-app drops hand
+    /// over security-scoped URLs; some sources deliver raw Data instead —
+    /// written to a temp file first (AVFoundation sniffs the container, the
+    /// extension is cosmetic). nil when the provider has nothing usable.
+    static func urlFromDrop(_ provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { cont in
+            _ = provider.loadItem(forTypeIdentifier: UTType.movie.identifier, options: nil) { item, _ in
+                if let url = item as? URL {
+                    cont.resume(returning: url)
+                } else if let data = item as? Data {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("drop-\(UUID().uuidString).mov")
+                    do {
+                        try data.write(to: tmp)
+                        cont.resume(returning: tmp)
+                    } catch {
+                        cont.resume(returning: nil)
+                    }
+                } else {
+                    cont.resume(returning: nil)
+                }
+            }
+        }
     }
 
     /// Coordinated read + copy for files that may be iCloud Drive documents:
