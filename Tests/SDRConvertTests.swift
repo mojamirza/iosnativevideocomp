@@ -56,8 +56,8 @@ final class SDRConvertTests: XCTestCase {
         for s in stride(from: 0.05, through: 1.0, by: 0.05) {
             let next = SDRMath.convert(s, scheme: .hlg)
             XCTAssertGreaterThanOrEqual(next, prev, "HLG \(s) must not invert")
-            XCTAssertGreaterThanOrEqual(next, 0.0, accuracy: 1e-6)
-            XCTAssertLessThanOrEqual(next, 1.0, accuracy: 1e-6)
+            XCTAssertGreaterThanOrEqual(next, -1e-6)
+            XCTAssertLessThanOrEqual(next, 1.0 + 1e-6)
             prev = next
         }
     }

@@ -243,21 +243,35 @@ struct RootView: View {
 /// history (every done record stores its in/out bytes), so the number is
 /// honest — negative deltas (outputs that grew) don't inflate it.
 private struct LifetimeStatsCard: View {
-    @Environment(\.modelContext) private var modelContext
-    @State private var videos = 0
-    @State private var savedBytes: Int64 = 0
+    // @Query refreshes itself on every save of the context — the manual
+    // NotificationCenter listen was betting on a Core Data name that
+    // SwiftData does not re-export, and was never a reliable save-signal.
+    @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
+    private var records: [JobRecord]
+
+    private var stats: (videos: Int, saved: Int64) {
+        var vids = 0
+        var saved: Int64 = 0
+        for r in records {
+            let delta = r.inBytes - r.outBytes
+            if delta > 0 { saved += delta; vids += 1 }
+            else if r.outBytes > 0 { vids += 1 }
+        }
+        return (vids, saved)
+    }
 
     var body: some View {
         Group {
-            if videos > 0, savedBytes > 0 {
+            let s = stats
+            if s.videos > 0, s.saved > 0 {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill")
                         .font(.callout)
                         .foregroundStyle(Color(UIColor.systemGreen))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: savedBytes, countStyle: .file))")
+                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
                             .font(.callout.weight(.semibold))
-                        Text("Lifetime total across \(videos) finished compression\(videos == 1 ? "" : "s").")
+                        Text("Lifetime total across \(s.videos) finished compression\(s.videos == 1 ? "" : "s").")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -269,31 +283,6 @@ private struct LifetimeStatsCard: View {
                 .padding(.horizontal)
             }
         }
-        .task {
-            fetch()
-        }
-        // History changes (finish a job, delete a row) refresh the tally.
-        .onReceive(NotificationCenter.default.publisher(
-            for: .NSManagedObjectContextDidSave)) { _ in
-            fetch()
-        }
-
-    }
-
-    private func fetch() {
-        // `@Environment(\.modelContext)` is NON-optional in this SDK — no
-        // optional chaining on it.
-        let f = FetchDescriptor<JobRecord>(predicate: #Predicate { $0.stateRaw == "done" })
-        let records = (try? modelContext.fetch(f)) ?? []
-        var vids = 0
-        var saved: Int64 = 0
-        for r in records {
-            let delta = r.inBytes - r.outBytes
-            if delta > 0 { saved += delta; vids += 1 }
-            else if r.outBytes > 0 { vids += 1 }
-        }
-        videos = vids
-        savedBytes = saved
     }
 }
 
