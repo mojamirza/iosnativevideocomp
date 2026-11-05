@@ -31,7 +31,7 @@ struct RootView: View {
     private var interactiveList: some View {
         presentedList
             .onDrop(of: [UTType.movie],
-                    isTargeted: { dropActive = $0; return true },
+                    isTargeted: $dropActive,
                     perform: handleDrop)
             .overlay { dropTargetOverlay }
             .navigationTitle("VidCompress")
