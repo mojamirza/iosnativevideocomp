@@ -88,7 +88,8 @@ enum QualityCheck {
     /// PSNR over 8-bit luma (higher = closer; identical frames → 99.0 dB
     /// stand-in for infinity). nil when sizes differ (can't compare).
     static func psnr(_ a: LumaFrame, _ b: LumaFrame) -> Double? {
-        guard a.luma.count == b.luma.count, !a.luma.isEmpty else { return nil }
+        guard a.luma.count == b.luma.count, !a.luma.isEmpty,
+              a.width == b.width, a.height == b.height else { return nil }
         var acc: UInt64 = 0
         for i in a.luma.indices {
             let d = Int(a.luma[i]) - Int(b.luma[i])
@@ -103,7 +104,8 @@ enum QualityCheck {
     /// mean/variance/covariance form; c1/c2 = the canonical constants).
     /// Identical frames → 1.0. nil when sizes differ.
     static func ssim(_ a: LumaFrame, _ b: LumaFrame) -> Double? {
-        guard a.luma.count == b.luma.count, !a.luma.isEmpty else { return nil }
+        guard a.luma.count == b.luma.count, !a.luma.isEmpty,
+              a.width == b.width, a.height == b.height else { return nil }
         let w = a.width, h = a.height
         let c1 = 6.5025, c2 = 58.5225        // (0.01·255)², (0.03·255)²
         var total = 0.0

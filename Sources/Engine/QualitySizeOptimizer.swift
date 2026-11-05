@@ -24,7 +24,8 @@ struct OptimizerPlan: Hashable {
     /// False when no bitrate (even the floor) can land under the target on
     /// this clip — the UI says so before any encode starts.
     var targetFeasible: Bool = true
-    /// REAL HDR→SDR conversion requested (SDRConvert.swift). Only ever set
+    /// REAL HDR→SDR conversion requested (AVFoundation composition path
+    /// in CompressionEngine). Only ever set
     /// when the source actually IS HDR — the engine branches on this
     /// (10-bit decode → CI tone-map → 8-bit 709 encode) and the verifier
     /// expects an 8-bit 709 output instead of a 10-bit HDR one.

@@ -174,22 +174,20 @@ enum CompressionEngine {
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
 
         // ------------------------------------------------------------------
-        // REAL HDR → SDR (opt-in, plan.sdrConvert): the plan branches the
-        // whole pipeline — 10-bit decode, Core Image tone-map kernel
-        // (SDRConvert.swift), 8-bit 709 encode. `neutralTags` resolves to
-        // the canonical SDR triplet (709 transfer/primaries; 601 matrix on
-        // SD, 709 on HD) and becomes the tags of EVERYTHING downstream.
-        // A nil converter means the CI kernel failed to compile — the job
-        // FAILS LOUDLY rather than silently shipping HDR pixels as "SDR"
-        // (the color pillar would rather fail than lie).
+        // REAL HDR → SDR (opt-in, plan.sdrConvert): the conversion is done
+        // by AVFoundation ITSELF. The reader runs a video composition whose
+        // color triplet is declared Rec.709; the system then decodes the
+        // HDR source (HLG or PQ), tone-maps it into SDR, converts the
+        // primaries, bakes the rotation and scales to renderSize — one
+        // system pipeline, no custom kernels. (Core Image cannot compile
+        // Metal kernels at runtime — CIKernel(source:) only accepts the
+        // legacy kernel language, a verified CI red round proved it.)
+        // `neutralTags` is the canonical SDR triplet (709 transfer/primaries;
+        // 601 matrix on SD, 709 on HD) and becomes the tags of EVERYTHING
+        // downstream — writer settings AND the appended buffers.
         // ------------------------------------------------------------------
         let neutralTags = ColorTags(primaries: nil, transferFunction: nil, yCbCrMatrix: nil)
-        let sdrScheme: HDRScheme? = plan.sdrConvert ? HDRScheme(transfer: tags.transferFunction) : nil
-        let sdrConverter = sdrScheme != nil ? SDRConverter.shared : nil
-        if sdrScheme != nil && sdrConverter == nil {
-            throw CompressionError.writerFailed(
-                "SDR conversion requested but the tone-map kernel failed to initialize on this device")
-        }
+        let sdrConvert = plan.sdrConvert
 
         // ------------------------------------------------------------------
         // PRIVACY SCRUB — deliberate now, accidental before: the writer never
@@ -221,14 +219,13 @@ enum CompressionEngine {
         // wrong — only the pixel-transfer MODE constants are macro-only);
         // 8-bit HEVC stays on auto-profile negotiation.
         //
-        // DECODE vs ENCODE depth: the DECODE follows the SOURCE (10-bit for
-        // HDR sources — the tone-map kernel needs the extra precision), the
-        // ENCODE follows the OUTPUT: with a requested SDR conversion the
-        // writer expects 8-bit SDR buffers, so H.264 becomes legal again
-        // and Main10 is NOT requested.
+        // DECODE vs ENCODE depth: on the normal path the DECODE follows the
+        // SOURCE (10-bit HDR stays 10-bit) and the ENCODE with it. With a
+        // requested SDR conversion the composition RENDERS 8-bit SDR, so
+        // H.264 is legal again and Main10 is NOT requested.
         // ------------------------------------------------------------------
         let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
-        let encode10Bit = wants10Bit && sdrScheme == nil
+        let encode10Bit = wants10Bit && !sdrConvert
         let encodeCodec: VideoCodec = (encode10Bit && preset.codec == .h264) ? .hevc : preset.codec
         if encodeCodec == .h264 {
             // H.264: explicit down-to-earth profile (8-bit only).
@@ -255,7 +252,7 @@ enum CompressionEngine {
         // no bit-depth loss, color metadata re-applied onto the destination
         // buffer (color-safe).
         // ------------------------------------------------------------------
-        let transferSession: VTPixelTransferSession? = plan.scaleNeeded
+        let transferSession: VTPixelTransferSession? = (plan.scaleNeeded && !sdrConvert)
             ? makeTransferSession()
             : nil
         // Extremely unlikely fallback: if the transfer session could not be
@@ -285,6 +282,15 @@ enum CompressionEngine {
                 encodeH = Int(d.height)
             }
         }
+        if sdrConvert {
+            // The composition bakes the rotation and renders at the plan's
+            // DISPLAY size. The source-format dims above are pre-rotation —
+            // they must NOT override the writer geometry on this path, and
+            // the writer's transform below stays IDENTITY (the rotation is
+            // already inside the pixels).
+            encodeW = Int(plan.outputSize.width)
+            encodeH = Int(plan.outputSize.height)
+        }
 
         var settings: [String: Any] = [
             AVVideoCodecKey: encodeCodec.avCodecType,
@@ -299,7 +305,7 @@ enum CompressionEngine {
         // construction (max≤720 AND min≤576: 720×1280 portrait is NOT SD).
         // With SDR conversion the SDR triplet REPLACES the source's HDR
         // resolution — tags and pixels must tell the same story.
-        settings[AVVideoColorPropertiesKey] = (sdrScheme != nil ? neutralTags : tags)
+        settings[AVVideoColorPropertiesKey] = (sdrConvert ? neutralTags : tags)
             .writerColorProperties(
                 sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
                                    height: Int(plan.source.sourceSize.height)))
@@ -308,9 +314,10 @@ enum CompressionEngine {
                                             outputSettings: settings,
                                             sourceFormatHint: hint)
         videoInput.expectsMediaDataInRealTime = false
-        // Preserve rotation on every path (the scale path encodes transposed
-        // pre-rotation frames; the transform restores the display orientation).
-        if !preferredTransform.isIdentity {
+        // Preserve rotation on every path EXCEPT the SDR composition path
+        // (there the rotation is baked into the rendered pixels — applying
+        // the transform again would rotate the video twice).
+        if !sdrConvert, !preferredTransform.isIdentity {
             videoInput.transform = preferredTransform
         }
         writer.add(videoInput)
@@ -417,22 +424,53 @@ enum CompressionEngine {
             ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
 
-        let videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
-        ])
+        // ------------------------------------------------------------------
+        // VIDEO OUTPUT: two shapes.
+        //  · SDR conversion → a VIDEO COMPOSITION output. Declaring the 709
+        //    triplet + renderSize makes AVFoundation decode the HDR source,
+        //    tone-map it into SDR (both HLG and PQ), convert primaries,
+        //    bake rotation and scale — we append the READY buffers.
+        //    If a composition can't be built for the asset the job fails
+        //    LOUDLY here (the color pillar would rather fail than
+        //    silently ship HDR pixels tagged as SDR).
+        //  · Normal path → a TRACK output; bit depth preserved (10-bit for
+        //    HDR — the color-safe engine).
+        // ------------------------------------------------------------------
+        let videoOut: AVAssetReaderOutput
+        if sdrConvert {
+            do {
+                let comp = try await AVMutableVideoComposition
+                    .videoComposition(withPropertiesOf: asset)
+                comp.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+                comp.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+                comp.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+                comp.renderSize = CGSize(width: encodeW, height: encodeH)
+                let compOut = AVAssetReaderVideoCompositionOutput(
+                    videoTracks: [track],
+                    videoSettings: [
+                        kCVPixelBufferPixelFormatTypeKey as String:
+                            NSNumber(value: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                    ])
+                compOut.videoComposition = comp
+                videoOut = compOut
+            } catch {
+                throw CompressionError.writerFailed(
+                    "SDR conversion requested, but no video composition could be built for this asset (\(error.localizedDescription))")
+            }
+        } else {
+            videoOut = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
+            ])
+        }
         reader.add(videoOut)
 
         var scalePool: CVPixelBufferPool?
-        // The pool feeds BOTH paths that append freshly-created buffers:
-        // scaling (bit-depth preserved) and SDR conversion (8-bit out).
-        // Format = what the WRITER expects, not what the decoder emits.
-        let writesNewBuffers = scaleNeeded || sdrScheme != nil
-        let writerFormat: OSType = sdrScheme != nil
-            ? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-            : decodeFormat
-        if writesNewBuffers {
+        // The pool feeds the SCALING path only (bit-depth preserving).
+        // The SDR composition path needs no pool: it hands us finished
+        // 8-bit SDR buffers of exactly the writer's geometry.
+        if scaleNeeded {
             let poolAttrs: [String: Any] = [
-                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: writerFormat),
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
                 // IOSurface-backed buffers: zero-copy handoff into the VT
@@ -505,12 +543,11 @@ enum CompressionEngine {
             }
         }
 
-        // Pixel-buffer adaptor + pool: used on the scaling path AND the SDR-
-        // conversion path (which always writes NEW buffers). Geometry and
-        // format come from the shared pool attributes above.
-        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = writesNewBuffers ? {
+        // Pixel-buffer adaptor: used on the scaling path only. Geometry and
+        // format mirror the pool attributes above (what the WRITER expects).
+        let adaptor: AVAssetWriterInputPixelBufferAdaptor? = scaleNeeded ? {
             let poolAttrs: [String: Any] = [
-                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: writerFormat),
+                String(kCVPixelBufferPixelFormatTypeKey): NSNumber(value: decodeFormat),
                 String(kCVPixelBufferWidthKey): encodeW,
                 String(kCVPixelBufferHeightKey): encodeH,
                 String(kCVPixelBufferIOSurfacePropertiesKey): [String: Any](),
@@ -648,33 +685,19 @@ enum CompressionEngine {
                             }
                         }
 
-                        if let scheme = sdrScheme, let src = CMSampleBufferGetImageBuffer(sb) {
-                            guard let converter = sdrConverter else {
-                                // Guarded at setup (throws) — unreachable, but
-                                // a drop here must still respect the budget.
-                                if noteDrop() { return }
-                                continue
+                        if sdrConvert {
+                            // The composition already tone-mapped, scaled
+                            // and rotation-baked the frame: re-tag the
+                            // buffer with the FULL SDR triplet (HDR
+                            // sidecars — mastering display, light level —
+                            // must never travel into an SDR file, so no
+                            // attachment is copied from the source) and
+                            // append as-is. append(sample:) carries the
+                            // composition's original timestamps.
+                            if let img = CMSampleBufferGetImageBuffer(sb) {
+                                ColorTags.attach(to: img, tags: neutralTags)
                             }
-                            guard let dst = Self.nextPoolBuffer(
-                                    scalePool, width: encodeW, height: encodeH,
-                                    format: writerFormat) else {
-                                if noteDrop() { return }
-                                continue
-                            }
-                            // COLOR-SAFE SDR conversion: the kernel decodes
-                            // the transfer, converts primaries, tone-maps and
-                            // re-encodes 709 — the buffer's own tags must NOT
-                            // leak HDR sidecars (mastering display etc.) into
-                            // an SDR file, so the full SDR triplet is attached
-                            // on the NEW buffer AFTER the render.
-                            do {
-                                try converter.render(from: src, to: dst, scheme: scheme)
-                            } catch {
-                                if noteDrop() { return }
-                                continue
-                            }
-                            ColorTags.attach(to: dst, tags: neutralTags)
-                            if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+                            if !videoInput.append(sb) {
                                 flags.fail(writer.error
                                     ?? CompressionError.writerFailed("SDR buffer append failed"))
                                 resume.resumeOnce()

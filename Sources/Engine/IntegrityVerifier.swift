@@ -265,7 +265,7 @@ enum IntegrityVerifier {
         //     but verify, don't trust: parse the output's own hvcC atom.
         //     With a REQUESTED SDR conversion the expectation INVERTS: the
         //     output is deliberately 8-bit 709, and 10-bit would be a
-        //     pipeline bug (the tone-map kernel rendered 8-bit buffers).
+        //     pipeline bug (the conversion renders 8-bit buffers).
         if probe.bitDepth >= 10 || probe.tags.isHDR {
             if let outTrack = videoTracks.first {
                 let outFmts: [CMFormatDescription] = (try? await outTrack.load(.formatDescriptions)) ?? []

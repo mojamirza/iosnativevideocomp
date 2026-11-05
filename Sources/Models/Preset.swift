@@ -138,7 +138,9 @@ struct Preset: Identifiable, Codable, Hashable {
     var audioChannels: Int?
     /// REAL HDR → SDR conversion, opt-in. true = an HDR (HLG/PQ) source is
     /// tone-mapped, primaries-converted and re-encoded into Rec.709/8-bit
-    /// SDR (see SDRConvert.swift — BT.2100 math, unit-verified). Applies
+    /// SDR (a system AVFoundation video composition declared Rec.709
+    /// tone-maps, scales and rotation-bakes the render — see
+    /// CompressionEngine). Applies
     /// ONLY when the source actually is HDR; nil = keep HDR (the default,
     /// and the color pillar's preserve-everything rule).
     var hdrToSDR: Bool?
