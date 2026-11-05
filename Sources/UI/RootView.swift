@@ -23,53 +23,8 @@ struct RootView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 14) {
-                    if coordinator.jobs.isEmpty {
-                        EmptyState(photoItems: $photoItems,
-                                   onFiles: { showFiles = true })
-                            .padding(.top, 40)
-                    }
-
-                    // SwiftData fell back to an in-memory store this
-                    // launch (corrupt document store): the banner explains
-                    // instead of letting history silently vanish.
-                    if StorageFallback.inMemoryOnly {
-                        storageFallbackBanner
-                    }
-
-                    let active = coordinator.jobs.filter {
-                        [.queued, .analyzing, .compressing, .verifying].contains($0.state)
-                    }
-                    let finished = coordinator.jobs.filter {
-                        [.done, .failed, .cancelled].contains($0.state)
-                    }
-
-                    if !active.isEmpty {
-                        sectionHeader("In progress", icon: "hourglass", count: active.count)
-                        ForEach(active) { job in
-                            JobRowView(job: job)
-                                // STABLE identity: ".id(job.id + state)" rebuilt every row on
-                                // each state change — the completion haptics never fired
-                                // (observer re-created around the event) and any open
-                                // dialog/sheet inside a row closed. State is a plain value
-                                // read; identity must stay constant per job.
-                                .padding(.horizontal)
-                        }
-                    }
-
-                    if !finished.isEmpty {
-                        sectionHeader("History", icon: "clock", count: finished.count)
-                        ForEach(finished) { job in
-                            JobRowView(job: job)
-                                .padding(.horizontal)
-                        }
-                    }
-
-                    // LIFETIME STATS — the running tally of what the app has
-                    // actually saved the user, read straight from history.
-                    LifetimeStatsCard()
-
-                    StorageFooter()
-                        .padding(.top, 6)                }
+                    jobSections
+                }
                 .padding(.vertical)
                 // DESKTOP-CLASS WIDTH: a full-bleed single column on a 13"
                 // iPad reads as a stretched phone app — cap the content and
@@ -78,89 +33,16 @@ struct RootView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(Color(.systemGroupedBackground))
-            // DRAG & DROP import — the Split View / Stage Manager companion:
-            // movies dropped from Files or Photos enter the same setup flow
-            // as picked videos.
-            .onDrop(of: [UTType.movie], isTargeted: { dropActive = $0; return true }) { providers in
-                guard !showingSetup, !providers.isEmpty else { return false }
-                Task {
-                    var picked: [PickedVideo] = []
-                    for provider in providers {
-                        guard let url = await ImportHelpers.urlFromDrop(provider) else { continue }
-                        if let copy = await ImportHelpers.copyOffMain(url) {
-                            let thumb = await Thumbnails.make(url: copy)
-                            picked.append(PickedVideo(url: copy, thumbnail: thumb))
-                        }
-                    }
-                    if picked.isEmpty {
-                        importError = "The dropped videos could not be imported."
-                    } else {
-                        importedVideos = picked
-                        showingSetup = true
-                    }
-                }
-                return true
-            }
-            .overlay {
-                if dropActive {
-                    RoundedRectangle(cornerRadius: 24)
-                        .fill(.tint.opacity(0.14))
-                        .overlay {
-                            Label("Drop videos to import", systemImage: "arrow.down.doc")
-                                .font(.headline)
-                        }
-                        .padding(10)
-                        .allowsHitTesting(false)
-                }
-            }
+            .onDrop(of: [UTType.movie],
+                    isTargeted: { dropActive = $0; return true },
+                    perform: handleDrop)
+            .overlay { dropTargetOverlay }
             .navigationTitle("VidCompress")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    // DIRECT toolbar buttons: a PhotosPicker nested inside a
-                    // Menu is unreliable on device (the sheet can be swallowed
-                    // by the menu's dismissal). The empty-state pickers — which
-                    // work on device — are direct, so the toolbar matches that
-                    // proven shape.
-                    // preferredItemEncoding: .current — without it the picker
-                    // may hand back a TRANSCODED HDR→SDR movie; the engine
-                    // must see the original pixels to keep the color tags.
-                    PhotosPicker(selection: $photoItems, matching: .videos,
-                                 preferredItemEncoding: .current) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                    }
-                    .accessibilityLabel("Import from Photos")
-
-                    Button {
-                        showFiles = true
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                    }
-                    .accessibilityLabel("Import from Files")
-                }
-            }
+            .toolbar { importToolbar }
             // Photos library selection (multi-select → batch)
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
-                Task {
-                    var picked: [PickedVideo] = []
-                    for item in items {
-                        do {
-                            let url = try await ImportHelpers.copyFromLibrary(item)
-                            let thumb = await Thumbnails.make(url: url)
-                            picked.append(PickedVideo(url: url, thumbnail: thumb))
-                        } catch {
-                            // Unreadable/untransferable item — skipped; the
-                            // batch card shows what made it through.
-                        }
-                    }
-                    photoItems = []
-                    if picked.isEmpty {
-                        importError = "The selected videos could not be imported."
-                    } else {
-                        importedVideos = picked
-                        showingSetup = true
-                    }
-                }
+                Task { await importFromLibrary(items) }
             }
             // Files app selection (UIDocumentPickerViewController-backed,
             // multi-select → batch)
@@ -168,25 +50,7 @@ struct RootView: View {
                           allowedContentTypes: [.movie, .mpeg4Movie, .quickTimeMovie],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result {
-                    Task {
-
-                        var picked: [PickedVideo] = []
-                        for url in urls {
-                            // The multi-GB copy runs OFF the main actor —
-                            // inline on MainActor it froze the UI for the
-                            // entire copy duration.
-                            if let copy = await ImportHelpers.copyOffMain(url) {
-                                let thumb = await Thumbnails.make(url: copy)
-                                picked.append(PickedVideo(url: copy, thumbnail: thumb))
-                            }
-                        }
-                        if picked.isEmpty {
-                            importError = "The selected files could not be copied into the app's storage."
-                        } else {
-                            importedVideos = picked
-                            showingSetup = true
-                        }
-                    }
+                    Task { await importFromFiles(urls) }
                 }
             }
             .alert("Import failed", isPresented: Binding(
@@ -208,20 +72,7 @@ struct RootView: View {
                 Text("The system refused background processing for this install — this can happen after the app was re-signed. Compression still works normally; just keep the app open in the foreground until the queue finishes.")
             }
             .sheet(isPresented: $showingSetup, onDismiss: {
-                // The setup sheet closed — Cancel, Compress, or a swipe down.
-                // Import copies that never became a job (cancelled setup,
-                // batch videos skipped after a failed probe) would otherwise
-                // leak in Caches/Imports until the NEXT launch's sweep —
-                // multi-GB on large batches. Delete the leftovers now;
-                // enqueued jobs keep their copies (the queue needs them).
-                let jobPaths = Set(coordinator.jobs.map {
-                    $0.sourceURL.standardizedFileURL.path
-                })
-                let leftovers = importedVideos.map(\.url).filter {
-                    !jobPaths.contains($0.standardizedFileURL.path)
-                }
-                JobCoordinator.deleteImportCopies(leftovers)
-                importedVideos = []
+                setupSheetDismiss()
             }) {
                 SetupFlowView(videos: importedVideos,
                               onDone: { showingSetup = false })
@@ -256,6 +107,180 @@ struct RootView: View {
             .sensoryFeedback(.success, trigger: coordinator.completionTick)
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
         }
+    }
+
+    // MARK: body parts — extracted from `body` so the total expression stays
+    // inside the type-checker's complexity budget (CI hit "unable to
+    // type-check this expression in reasonable time" once drag & drop landed
+    // inline; the same rule the row card already documents).
+
+    @ViewBuilder
+    private var jobSections: some View {
+        if coordinator.jobs.isEmpty {
+            EmptyState(photoItems: $photoItems,
+                       onFiles: { showFiles = true })
+                .padding(.top, 40)
+        }
+
+        // SwiftData fell back to an in-memory store this
+        // launch (corrupt document store): the banner explains
+        // instead of letting history silently vanish.
+        if StorageFallback.inMemoryOnly {
+            storageFallbackBanner
+        }
+
+        let active = coordinator.jobs.filter {
+            [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+        }
+        let finished = coordinator.jobs.filter {
+            [.done, .failed, .cancelled].contains($0.state)
+        }
+
+        if !active.isEmpty {
+            sectionHeader("In progress", icon: "hourglass", count: active.count)
+            ForEach(active) { job in
+                JobRowView(job: job)
+                    // STABLE identity: ".id(job.id + state)" rebuilt every row on
+                    // each state change — the completion haptics never fired
+                    // (observer re-created around the event) and any open
+                    // dialog/sheet inside a row closed. State is a plain value
+                    // read; identity must stay constant per job.
+                    .padding(.horizontal)
+            }
+        }
+
+        if !finished.isEmpty {
+            sectionHeader("History", icon: "clock", count: finished.count)
+            ForEach(finished) { job in
+                JobRowView(job: job)
+                    .padding(.horizontal)
+            }
+        }
+
+        // LIFETIME STATS — the running tally of what the app has
+        // actually saved the user, read straight from history.
+        LifetimeStatsCard()
+
+        StorageFooter()
+            .padding(.top, 6)
+    }
+
+    private var importToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            // DIRECT toolbar buttons: a PhotosPicker nested inside a
+            // Menu is unreliable on device (the sheet can be swallowed
+            // by the menu's dismissal). The empty-state pickers — which
+            // work on device — are direct, so the toolbar matches that
+            // proven shape.
+            // preferredItemEncoding: .current — without it the picker
+            // may hand back a TRANSCODED HDR→SDR movie; the engine
+            // must see the original pixels to keep the color tags.
+            PhotosPicker(selection: $photoItems, matching: .videos,
+                         preferredItemEncoding: .current) {
+                Image(systemName: "photo.on.rectangle.angled")
+            }
+            .accessibilityLabel("Import from Photos")
+
+            Button {
+                showFiles = true
+            } label: {
+                Image(systemName: "folder.badge.plus")
+            }
+            .accessibilityLabel("Import from Files")
+        }
+    }
+
+    @ViewBuilder
+    private var dropTargetOverlay: some View {
+        if dropActive {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(.tint.opacity(0.14))
+                .overlay {
+                    Label("Drop videos to import", systemImage: "arrow.down.doc")
+                        .font(.headline)
+                }
+                .padding(10)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// Drop entry point: movies dropped from Files or Photos enter the same
+    /// setup flow as picked videos.
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !showingSetup, !providers.isEmpty else { return false }
+        Task {
+            var picked: [PickedVideo] = []
+            for provider in providers {
+                guard let url = await ImportHelpers.urlFromDrop(provider) else { continue }
+                if let copy = await ImportHelpers.copyOffMain(url) {
+                    let thumb = await Thumbnails.make(url: copy)
+                    picked.append(PickedVideo(url: copy, thumbnail: thumb))
+                }
+            }
+            if picked.isEmpty {
+                importError = "The dropped videos could not be imported."
+            } else {
+                importedVideos = picked
+                showingSetup = true
+            }
+        }
+        return true
+    }
+
+    private func importFromLibrary(_ items: [PhotosPickerItem]) async {
+        var picked: [PickedVideo] = []
+        for item in items {
+            do {
+                let url = try await ImportHelpers.copyFromLibrary(item)
+                let thumb = await Thumbnails.make(url: url)
+                picked.append(PickedVideo(url: url, thumbnail: thumb))
+            } catch {
+                // Unreadable/untransferable item — skipped; the
+                // batch card shows what made it through.
+            }
+        }
+        photoItems = []
+        if picked.isEmpty {
+            importError = "The selected videos could not be imported."
+        } else {
+            importedVideos = picked
+            showingSetup = true
+        }
+    }
+
+    private func importFromFiles(_ urls: [URL]) async {
+        var picked: [PickedVideo] = []
+        for url in urls {
+            // The multi-GB copy runs OFF the main actor —
+            // inline on MainActor it froze the UI for the
+            // entire copy duration.
+            if let copy = await ImportHelpers.copyOffMain(url) {
+                let thumb = await Thumbnails.make(url: copy)
+                picked.append(PickedVideo(url: copy, thumbnail: thumb))
+            }
+        }
+        if picked.isEmpty {
+            importError = "The selected files could not be copied into the app's storage."
+        } else {
+            importedVideos = picked
+            showingSetup = true
+        }
+    }
+
+    /// The setup sheet closed — Cancel, Compress, or a swipe down. Import
+    /// copies that never became a job (cancelled setup, batch videos skipped
+    /// after a failed probe) would otherwise leak in Caches/Imports until
+    /// the NEXT launch's sweep — multi-GB on large batches. Delete the
+    /// leftovers now; enqueued jobs keep their copies (the queue needs them).
+    private func setupSheetDismiss() {
+        let jobPaths = Set(coordinator.jobs.map {
+            $0.sourceURL.standardizedFileURL.path
+        })
+        let leftovers = importedVideos.map(\.url).filter {
+            !jobPaths.contains($0.standardizedFileURL.path)
+        }
+        JobCoordinator.deleteImportCopies(leftovers)
+        importedVideos = []
     }
 
     private func sectionHeader(_ title: String, icon: String, count: Int) -> some View {
