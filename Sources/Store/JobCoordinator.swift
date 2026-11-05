@@ -3,6 +3,21 @@ import SwiftUI
 import SwiftData
 import AVFoundation
 
+/// Raised BEFORE any bytes are written when the output volume can't hold the
+/// planned result (with a working margin) — a multi-GB encode onto a nearly
+/// full disk otherwise dies mid-write with a confusing encoder error (or
+/// fills the disk for every other app on the device).
+struct InsufficientSpaceError: LocalizedError {
+    let neededBytes: Int64
+    let freeBytes: Int64
+
+    var errorDescription: String? {
+        let need = ByteCountFormatter.string(fromByteCount: neededBytes, countStyle: .file)
+        let free = ByteCountFormatter.string(fromByteCount: freeBytes, countStyle: .file)
+        return "Not enough free space — this compression needs about \(need) free, but only \(free) is available. Free up storage and tap Retry."
+    }
+}
+
 @MainActor
 final class JobCoordinator: ObservableObject {
 
@@ -36,6 +51,10 @@ final class JobCoordinator: ObservableObject {
     /// worker's `defer` can't nil out a NEW worker's task reference.
     private var workerGeneration = 0
     private var cancelFlags: [UUID: EngineFlags] = [:]
+    /// Jobs whose thumbnail was already (re)generated this process — history
+    /// rows are rebuilt thumbnail-less at relaunch and must not re-decode a
+    /// frame on every lazy row appearance.
+    private var thumbnailAttempts = Set<UUID>()
     /// Jobs whose engine was stopped because iOS revoked the background task.
     /// They become FAILED rows (source kept, Retry available) instead of
     /// silently vanishing.
@@ -182,6 +201,22 @@ final class JobCoordinator: ObservableObject {
                 setJob(jobID) { $0.plan = plan }
             }
 
+            // FREE-SPACE PREFLIGHT: the planned output (with a working
+            // margin) must fit in the volume's free space BEFORE any bytes
+            // are written — a multi-GB encode onto a nearly-full disk
+            // otherwise dies mid-write with a confusing encoder error (or
+            // fills the disk for every other app). Target-size jobs budget
+            // TWO outputs: the measured correction pass writes a second
+            // scratch file while the first pass's file still exists.
+            if let free = Self.volumeFreeBytes(at: workDir) {
+                let base = plan.targetBytes ?? plan.estimatedBytes
+                let factor: Double = plan.targetBytes != nil ? 2.0 : 1.2
+                let needed = Int64((Double(base) * factor).rounded()) + 64_000_000
+                if free < needed {
+                    throw InsufficientSpaceError(neededBytes: needed, freeBytes: free)
+                }
+            }
+
             setJob(jobID) {
                 $0.state = .compressing
                 $0.progress = 0
@@ -295,7 +330,10 @@ final class JobCoordinator: ObservableObject {
             // if anything wedges beyond that (worker task never resuming,
             // SwiftData stall, …), this independent watchdog forces the row
             // terminal. The job list can never show "Verifying…" forever.
-            let verifyDeadline = Date()
+            // MONOTONIC deadline (systemUptime, not Date()): wall-clock
+            // jumps (NTP sync, timezone) could fire the backstop early or
+            // late. systemUptime is monotonic.
+            let verifyDeadline = ProcessInfo.processInfo.systemUptime
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 75_000_000_000)
                 self?.forceVerifyTerminal(jobID: jobID, output: output,
@@ -446,8 +484,8 @@ final class JobCoordinator: ObservableObject {
     /// the row on). Unlike the deleted compress watchdog, verification is
     /// read-only (no live engine running), so forcing the row terminal here
     /// cannot leave a second encode running.
-    private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: Date) {
-        guard Date().timeIntervalSince(startedAt) >= 74 else { return }
+    private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: TimeInterval) {
+        guard ProcessInfo.processInfo.systemUptime - startedAt >= 74 else { return }
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
               jobs[idx].state == .verifying else { return }
         let fileSize = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
@@ -617,6 +655,15 @@ final class JobCoordinator: ObservableObject {
         }
     }
 
+    /// Free space on the volume holding `url`, per the "important usage"
+    /// policy (conservative about purgeable data). nil when unreadable —
+    /// the preflight is best-effort and must never block a healthy disk.
+    static func volumeFreeBytes(at url: URL) -> Int64? {
+        guard let values = try? url.resourceValues(
+                  forKeys: [.volumeAvailableCapacityForImportantUsageKey]) else { return nil }
+        return values.volumeAvailableCapacityForImportantUsage
+    }
+
     // MARK: Storage management
 
     /// Deletes the app's IMPORT COPY of the source — never anything outside
@@ -707,6 +754,35 @@ final class JobCoordinator: ObservableObject {
         }
         sweep(Self.importsDirectory(), keep: keepSources)
         sweep(Self.workingDirectory(), keep: keepWork)
+    }
+
+    // MARK: Lazy thumbnails
+
+    /// History rows are rebuilt WITHOUT thumbnails after a relaunch (UIImage
+    /// bytes are not persisted in SwiftData). Regenerate lazily when a row
+    /// first appears: one bounded AVAssetImageGenerator decode per job,
+    /// guarded so a row only ever spawns ONE attempt per process. Prefers
+    /// the output file; falls back to the source import (retryable failures
+    /// keep theirs).
+    func ensureThumbnail(jobID: UUID) {
+        guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
+              jobs[idx].thumbnail == nil,
+              !thumbnailAttempts.contains(jobID) else { return }
+        let url: URL?
+        if let out = jobs[idx].outputURL,
+           FileManager.default.fileExists(atPath: out.path) {
+            url = out
+        } else if FileManager.default.fileExists(atPath: jobs[idx].sourceURL.path) {
+            url = jobs[idx].sourceURL
+        } else {
+            url = nil
+        }
+        guard let url else { return }
+        thumbnailAttempts.insert(jobID)
+        Task { [weak self] in
+            let thumb = await Thumbnails.make(url: url)
+            self?.setJob(jobID) { $0.thumbnail = thumb }
+        }
     }
 
     // MARK: SwiftData history

@@ -390,26 +390,30 @@ struct PresetEditorView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // REAL HDR → SDR, offered ONLY on an HDR source. This is a
-                // deliberate conversion (BT.2100 tone-map → 709 re-encode,
-                // verified in the report) — never a relabeling. Off = keep
-                // HDR untouched (the default, 10-bit Main10 HEVC).
-                if contextProbe?.tags.isHDR == true {
-                    Section("HDR output") {
-                        Picker("Color space", selection: $hdrConvert) {
-                            Text("Keep HDR").tag(false)
-                            Text("Convert to SDR").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        if hdrConvert {
-                            Text("Tone-maps the video into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. Report shows: \"SDR conversion verified\".")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Output stays \(contextProbe?.tags.humanLabel ?? "HDR"): fewer devices can show its true colors, but nothing is altered.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                // REAL HDR → SDR, a deliberate conversion (BT.2100 tone-map
+                // → 709 re-encode, verified in the report) — never a
+                // relabeling. Off = keep HDR untouched (the default, 10-bit
+                // Main10 HEVC). Shown WITHOUT a probe too (batch setup): the
+                // flag is applied PER SOURCE at encode time — HDR sources
+                // convert, SDR sources pass through unchanged.
+                Section("HDR output") {
+                    Picker("Color space", selection: $hdrConvert) {
+                        Text("Keep HDR").tag(false)
+                        Text("Convert to SDR").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    if hdrConvert {
+                        Text("Tone-maps HDR video (HLG/PQ) into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. SDR sources pass through unchanged. Report shows: \"SDR conversion verified\".")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if let probe = contextProbe {
+                        Text("Output stays \(probe.tags.humanLabel): fewer devices can show its true colors, but nothing is altered.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Each source keeps its own colors untouched.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

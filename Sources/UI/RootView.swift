@@ -437,6 +437,30 @@ enum ImportHelpers {
             SecurityScoped(url: url).importCopy()
         }.value
     }
+
+    /// Coordinated read + copy for files that may be iCloud Drive documents:
+    /// a placeholder must be DOWNLOADED before it can be copied, and touching
+    /// iCloud documents without an NSFileCoordinator races the sync daemon
+    /// (the documented requirement). With .forUploading the coordinator hands
+    /// the block a fully materialized file (the same path for plain local
+    /// files). Returns false when the copy could not be made.
+    static func coordinatedCopy(from url: URL, to dest: URL) -> Bool {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var ok = false
+        var coordError: NSError?
+        coordinator.coordinate(readingItemAt: url, options: [.forUploading], error: &coordError) { readURL in
+            do {
+                try FileManager.default.copyItem(at: readURL, to: dest)
+                ok = true
+            } catch {
+                ok = false
+            }
+        }
+        if let coordError {
+            NSLog("VidCompress: coordinated read failed: \(coordError.localizedDescription)")
+        }
+        return ok
+    }
 }
 
 /// Memory-safe Transferable for library videos: imports via a file
@@ -488,7 +512,9 @@ struct SecurityScoped {
             dest = dir.appendingPathComponent("\(base)-\(n).\(ext)")
             n += 1
         }
-        guard (try? FileManager.default.copyItem(at: url, to: dest)) != nil else { return nil }
+        // Coordinated copy: iCloud Drive placeholders get downloaded by the
+        // file coordinator first; plain local files copy straight through.
+        guard ImportHelpers.coordinatedCopy(from: url, to: dest) else { return nil }
         return dest
     }
 }

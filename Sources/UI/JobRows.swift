@@ -143,7 +143,12 @@ struct JobRowView: View {
         // Existence cache refresh: files can vanish (Files-app deletions) or
         // appear (Keep-anyway promotion) between renders without rebuilding
         // identity.
-        .onAppear(perform: refreshExistence)
+        .onAppear {
+            refreshExistence()
+            // History rows come back thumbnail-less after a relaunch (UIImage
+            // bytes aren't persisted in SwiftData) — regenerate lazily.
+            coordinator.ensureThumbnail(jobID: job.id)
+        }
         .onChange(of: job.state) { _, _ in
             refreshExistence()
         }
@@ -177,6 +182,9 @@ struct JobRowView: View {
                         .font(.caption2)
                         .monospacedDigit()
                         .contentTransition(.numericText())
+                        // contentTransition only plays INSIDE an animation
+                        // context — without this the digits hard-snap.
+                        .animation(.default, value: job.progress)
                     Spacer()
                 }
             }

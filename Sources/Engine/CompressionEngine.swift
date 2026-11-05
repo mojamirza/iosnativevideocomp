@@ -243,8 +243,10 @@ enum CompressionEngine {
             AVVideoMaxKeyFrameIntervalKey: max(1, Int(plan.fps * 2)),
             AVVideoExpectedSourceFrameRateKey: max(1, Int(plan.fps)),
             AVVideoAllowFrameReorderingKey: NSNumber(value: true),
-            // Offline (non realtime) VT session => best quality math.
-            (kVTCompressionPropertyKey_RealTime as String): NSNumber(value: false),
+            // NOTE: no explicit RealTime key here — expectsMediaDataInRealTime
+            // = false (set on the input below) already drives the VideoToolbox
+            // session into offline mode; kVTCompressionPropertyKey_RealTime
+            // was redundant.
         ]
 
         // ------------------------------------------------------------------
@@ -347,14 +349,24 @@ enum CompressionEngine {
                 sd: ColorTags.isSD(width: Int(plan.source.sourceSize.width),
                                    height: Int(plan.source.sourceSize.height)))
 
-        // FORMAT HINT: the SDR-conversion path must NOT hand the writer a
-        // hint describing the SOURCE (e.g. 10-bit HLG HEVC) — the buffers it
-        // actually appends are the composition's 8-bit SDR renders, and a
-        // contradicting hint can misconfigure the encoder.
+        // FORMAT HINT: only truthful when the output will actually look like
+        // the source's compressed format. It is cleared when
+        //  · the SDR composition re-renders 8-bit 709 (the source is 10-bit
+        //    HDR — the buffers appended are NOT the hinted format), or
+        //  · the preset's codec family differs from the source's — a hint
+        //    describing HEVC while the writer encodes H.264 (compatibility
+        //    presets) can misconfigure the encoder just the same.
+        let sourceIsHEVC = plan.source.codecSubType == "hvc1"
+            || plan.source.codecSubType == "hev1"
+        let sourceIsAVC = plan.source.codecSubType == "avc1"
+        let hintMatches = encodeCodec == .hevc ? sourceIsHEVC : sourceIsAVC
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
-                                            sourceFormatHint: sdrConvert ? nil : hint)
+                                            sourceFormatHint: (sdrConvert || !hintMatches) ? nil : hint)
         videoInput.expectsMediaDataInRealTime = false
+        // Web-optimized MP4 structure (more aggressive interleaving) — the
+        // outputs are shared/streamed far more often than they are archived.
+        videoInput.shouldOptimizeForNetworkUse = true
         // Preserve rotation on every path EXCEPT the SDR composition path
         // (there the rotation is baked into the rendered pixels — applying
         // the transform again would rotate the video twice).
@@ -521,6 +533,11 @@ enum CompressionEngine {
                 kCVPixelBufferPixelFormatTypeKey as String: NSNumber(value: decodeFormat)
             ])
         }
+        // The pipes never retain a sample beyond the loop iteration that
+        // fetched it (appends copy synchronously), so the reader's defensive
+        // per-sample copy is wasted work — a full-frame memcpy per frame on
+        // the direct path.
+        videoOut.alwaysCopiesSampleData = false
         reader.add(videoOut)
 
         var scalePool: CVPixelBufferPool?
@@ -585,6 +602,10 @@ enum CompressionEngine {
             let candidateInput = AVAssetWriterInput(mediaType: .audio,
                                                     outputSettings: aSettings)
             candidateInput.expectsMediaDataInRealTime = false
+            candidateInput.shouldOptimizeForNetworkUse = true
+            // Same rationale as the video output: PCM blocks are consumed
+            // within their loop iteration — skip the defensive copy.
+            candidateOutput.alwaysCopiesSampleData = false
 
             if reader.canAdd(candidateOutput) && writer.canAdd(candidateInput) {
                 reader.add(candidateOutput)

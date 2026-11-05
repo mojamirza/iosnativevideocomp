@@ -54,11 +54,14 @@ enum AsyncTimeout {
                 if once.claim() { cont.resume(returning: v) }
             }
             Task.detached {
-                let start = Date()
+                // MONOTONIC timing: Date() jumps on NTP syncs and timezone
+                // changes — a forward jump could fire the deadline early, a
+                // backward one could mask it. systemUptime is monotonic.
+                let start = ProcessInfo.processInfo.systemUptime
                 while !once.isFired {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     if once.isFired { return }
-                    guard Date().timeIntervalSince(start) >= minimumWallClock else { continue }
+                    guard ProcessInfo.processInfo.systemUptime - start >= minimumWallClock else { continue }
                     if watchdog.stalled(seconds: stallSeconds) {
                         // Grace: an app that just resumed from suspension can
                         // beat a moment late — require the stall to persist.
@@ -76,17 +79,21 @@ enum AsyncTimeout {
 }
 
 /// Progress heartbeat source for stall watchdogs. Thread-safe.
+/// Timing is MONOTONIC (ProcessInfo.systemUptime), never Date(): wall-clock
+/// jumps (NTP, timezone) could fire a stall early or mask one, and a device
+/// sleep must not be misread as a stalled encode — systemUptime freezes
+/// while the device sleeps.
 final class StallWatchdog: @unchecked Sendable {
     private let lock = NSLock()
-    private var lastBeat = Date()
+    private var lastBeat = ProcessInfo.processInfo.systemUptime
 
     func beat() {
-        lock.lock(); lastBeat = Date(); lock.unlock()
+        lock.lock(); lastBeat = ProcessInfo.processInfo.systemUptime; lock.unlock()
     }
 
     /// True when no beat has arrived for `seconds`.
     func stalled(seconds: Double) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return Date().timeIntervalSince(lastBeat) >= seconds
+        return ProcessInfo.processInfo.systemUptime - lastBeat >= seconds
     }
 }
