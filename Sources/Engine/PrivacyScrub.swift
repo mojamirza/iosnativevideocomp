@@ -61,18 +61,19 @@ enum PrivacyScrub {
         }
         guard let date else { return [] }
         let item = AVMutableMetadataItem()
-        // COMMON identifier + explicit UTF-8 data type (Data value): the
-        // QuickTime-scoped identifier family is muxer-contingent, while
-        // AVFoundation maps the COMMON creation-date identifier onto whatever
-        // the target container supports (mp4 included). If even this
-        // combination is refused, the engine's startWriting guard fails the
-        // job as metadataRejected and retries once with NO metadata.
+        // COMMON identifier + UTF-8 data type with an NSString value and the
+        // "und" language tag — Apple's DOCUMENTED shape for UTF-8-typed
+        // common metadata. (A Data value is not that shape: if the writer
+        // refused it, the first dated job would trip metadataRejected, flip
+        // the kill switch, and every later file would silently ship
+        // date-less — the fallback hiding the bug instead of the metadata
+        // working.) If even the documented shape is refused, the engine's
+        // startWriting guard fails the job as metadataRejected and retries
+        // once with NO metadata.
         item.identifier = .commonIdentifierCreationDate
         item.dataType = kCMMetadataBaseDataType_UTF8 as String
-        guard let raw = ISO8601DateFormatter().string(from: date).data(using: .utf8) else {
-            return []
-        }
-        item.value = raw as NSData
+        item.value = ISO8601DateFormatter().string(from: date) as NSString
+        item.extendedLanguageTag = "und"
         return [item]
     }
 }
