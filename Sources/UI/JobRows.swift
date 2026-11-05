@@ -86,6 +86,10 @@ struct JobRowView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        // VoiceOver container: composed summary first, controls stay
+        // individually reachable.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(a11ySummary)
     }
 
     private var rowBody: some View {
@@ -200,13 +204,13 @@ struct JobRowView: View {
             HStack(spacing: 6) {
                 Image(systemName: "timer")
                     .font(.caption2)
-                Text("Queued").font(.caption2)
+                Text(queuePositionLabel).font(.caption2)
             }
             .foregroundStyle(.tertiary)
         case .analyzing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Analysing source…")
+                Text("Analyzing source…")
                     .font(.caption2)
             }
             .foregroundStyle(.tertiary)
@@ -371,10 +375,44 @@ struct JobRowView: View {
         }
     }
 
+    /// "Queued · next up" / "Queued · #3 in line" — workers pick the OLDEST
+    /// queued job first, so the position ranks by creation date.
+    private var queuePositionLabel: String {
+        guard job.state == .queued else { return "Queued" }
+        let queued = coordinator.jobs.filter { $0.state == .queued }
+            .sorted { $0.createdAt < $1.createdAt }
+        guard let rank = queued.firstIndex(where: { $0.id == job.id }) else {
+            return "Queued"
+        }
+        return rank == 0 ? "Queued · next up" : "Queued · #\(rank + 1) in line"
+    }
+
+    /// Container label for VoiceOver: a composed summary is announced before
+    /// the (still individually reachable) row controls — children: .combine
+    /// would hide the action buttons.
+    private var a11ySummary: String {
+        switch job.state {
+        case .compressing:
+            return "Compressing \(job.sourceName), \(Int(job.progress * 100)) percent, \(job.preset.name) preset"
+        case .queued:
+            return "\(job.sourceName), \(queuePositionLabel)"
+        case .verifying:
+            return "\(job.sourceName), verifying output integrity"
+        case .done:
+            return "Done: \(displayName), \(job.preset.name) preset"
+        case .failed:
+            return "Failed: \(displayName)\(job.errorMessage.map { ", \($0)" } ?? "")"
+        case .cancelled:
+            return "Cancelled: \(displayName)"
+        case .analyzing:
+            return "\(job.sourceName), analyzing source"
+        }
+    }
+
     private var stateLabel: String {
         switch job.state {
         case .queued: return "Queued"
-        case .analyzing: return "Analysing…"
+        case .analyzing: return "Analyzing…"
         case .compressing: return "Compressing"
         case .verifying: return "Verifying…"
         case .done: return "Done"
@@ -540,6 +578,9 @@ private struct SwipeToDeleteModifier: ViewModifier {
 
     private let revealWidth: CGFloat = 92
 
+    /// Respect Reduce Motion: snap without springing.
+    private var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
+
     /// Whether the delete button is fully revealed (row at max offset).
     private var revealed: Bool { offsetX <= -revealWidth + 2 }
 
@@ -563,7 +604,7 @@ private struct SwipeToDeleteModifier: ViewModifier {
     private var deleteButton: some View {
         Button {
             // Snap the row shut while the confirmation dialog appears.
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) {
                 offsetX = 0
             }
             onDelete()
@@ -615,7 +656,7 @@ private struct SwipeToDeleteModifier: ViewModifier {
                 // A quick flick opens fully even on a short drag; a slow
                 // drag needs to pass half the reveal width.
                 let flick = value.velocity.width < -900
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.9)) {
                     offsetX = (flick || offsetX < -revealWidth / 2) ? -revealWidth : 0
                 }
             }
@@ -691,6 +732,11 @@ struct ReportSheet: View {
                     if let out = job.outputURL {
                         ShareLink(item: out) { Label("Share", systemImage: "square.and.arrow.up") }
                     }
+                    // Plain-text export — verification results get pasted into
+                    // tickets; the sheet stays the visual source of truth.
+                    ShareLink(item: reportText) {
+                        Label("Share report", systemImage: "doc.text")
+                    }
                     Button(role: .destructive) {
                         confirmingDelete = true
                     } label: {
@@ -741,6 +787,22 @@ struct ReportSheet: View {
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground),
                     in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Plain-text form of the report for sharing.
+    private var reportText: String {
+        var lines: [String] = []
+        lines.append("VidCompress integrity report")
+        lines.append("Source: \(job.sourceName) · Preset: \(job.preset.name)")
+        let inS = ByteCountFormatter.string(fromByteCount: report.inBytes, countStyle: .file)
+        let outS = ByteCountFormatter.string(fromByteCount: report.outBytes, countStyle: .file)
+        let sign = report.grew ? "+" : "−"
+        lines.append("Input \(inS) → Output \(outS) (\(sign)\(String(format: "%.0f", abs(report.savingsPercent)))%)")
+        for item in report.items {
+            let mark = item.severity == .pass ? "✓" : (item.severity == .warn ? "⚠" : "✗")
+            lines.append("\(mark) \(item.title) — \(item.detail)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private var summaryCard: some View {
@@ -794,6 +856,9 @@ struct ReportSheet: View {
                     }
                 }
             }
+            Text("Checks: ✓ pass · ⚠ worth a look · ✗ failed. A warning means something to review — not that the file is broken.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             Text("Source: \(job.sourceName) · Preset: \(job.preset.name)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -950,9 +1015,11 @@ private struct OutputPlayerSheet: View {
     /// transform applied — portrait 4K stored as 3840×2160 is genuinely
     /// 9:16 on screen) instead of forcing every clip into 16:9.
     private func measureAspect(for item: AVPlayerItem?) {
-        guard let track = item?.asset
-            .tracks(withMediaType: .video).first else { return }
+        // ASYNC track load: the synchronous tracks(withMediaType:) is
+        // deprecated since iOS 15 and can block on slow containers.
         Task { @MainActor in
+            guard let tracks = try? await item?.asset.loadTracks(withMediaType: .video),
+                  let track = tracks.first else { return }
             let size: CGSize? = try? await track.load(.naturalSize)
             let transform: CGAffineTransform? = try? await track.load(.preferredTransform)
             guard let size, size.width > 0, size.height > 0 else { return }

@@ -408,7 +408,9 @@ private struct StorageFooter: View {
             }
         }
         .task {
-            usageText = Self.describe()
+            // Directory sizing is disk I/O — keep it off the main actor.
+            let text = await Task.detached { Self.describe() }.value
+            usageText = text
         }
     }
 
@@ -475,6 +477,10 @@ private struct EmptyState: View {
                 }
                 .buttonStyle(.bordered)
             }
+
+            Text("Or drag & drop videos here from Files or Photos while in Split View.")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
         }
     }
 }

@@ -94,7 +94,7 @@ struct SetupFlowView: View {
                         } else {
                             HStack {
                                 ProgressView()
-                                Text("Analysing \(videos.count) videos…")
+                                Text("Analyzing \(videos.count) videos…")
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 8)
@@ -104,7 +104,7 @@ struct SetupFlowView: View {
                     } else {
                         HStack {
                             ProgressView()
-                            Text("Analysing source…")
+                            Text("Analyzing source…")
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 8)
@@ -152,6 +152,8 @@ struct SetupFlowView: View {
             .onChange(of: keepCreationDate) { _, _ in
                 persistPrivacy()
             }
+            // Selection feedback: light tick on every preset change.
+            .sensoryFeedback(.selection, trigger: selectedPreset?.id)
         }
     }
 
@@ -355,7 +357,7 @@ struct SetupFlowView: View {
         probes.reduce(Int64(0)) { $0 + ($1?.fileSize ?? 0) }
     }
 
-    /// The single source's probe (nil for batches or while analysing).
+    /// The single source's probe (nil for batches or while analyzing).
     /// Previously `probes.first ?? nil` — in a batch it handed VIDEO 1's
     /// probe to everything that read it (preset rows then showed one video's
     /// estimate next to the batch total). A batch has NO single probe.
@@ -579,7 +581,7 @@ struct SetupFlowView: View {
     }
 
     private var buttonTitle: String {
-        if !analysisDone { return "Analysing…" }
+        if !analysisDone { return "Analyzing…" }
         guard selectedPreset != nil else { return "Choose a preset" }
         return isBatch ? "Compress \(videos.count) videos" : "Compress"
     }
@@ -642,23 +644,39 @@ struct SetupFlowView: View {
             let last = PresetStore.lastUsedPresetID()
             return availablePresets.first { $0.id == last } ?? Preset.builtIn[0]
         }()
+        // PARALLEL PROBES: a batch of N videos previously probed one-by-one
+        // (N × asset open + parse before the sheet became usable). A bounded
+        // task group keeps memory flat while cutting the wait to ~N/4.
         var failures = 0
-        for i in videos.indices {
-            do {
-                let p = try await ProbeResult.probe(url: videos[i].url)
-                if p.duration.isNaN || p.duration <= 0 {
-                    failures += 1
-                    continue
+        await withTaskGroup(of: (Int, ProbeResult?).self) { group in
+            var next = 0
+            let width = min(4, videos.count)
+            // Each completion pulls the next index into the group.
+            func addNext() {
+                guard next < videos.count else { return }
+                let i = next
+                next += 1
+                let url = videos[i].url
+                group.addTask {
+                    do {
+                        let p = try await ProbeResult.probe(url: url)
+                        return (i, (p.duration.isNaN || p.duration <= 0) ? nil : p)
+                    } catch {
+                        return (i, nil)
+                    }
                 }
-                probes[i] = p
-            } catch {
-                failures += 1
+            }
+            for _ in 0..<width { addNext() }
+            for await (i, result) in group {
+                probes[i] = result
+                if result == nil { failures += 1 }
+                addNext()
             }
         }
         if failures > 0 {
             errorText = failures == videos.count
-                ? "None of the selected files could be analysed; they may be unsupported."
-                : "\(failures) of \(videos.count) videos couldn't be analysed and will be skipped."
+                ? "None of the selected files could be analyzed; they may be unsupported."
+                : "\(failures) of \(videos.count) videos couldn't be analyzed and will be skipped."
         }
         analysisDone = true
         if let id = selectedPreset?.id {

@@ -367,7 +367,10 @@ struct PresetEditorView: View {
                     Toggle("Cap frame rate", isOn: $fpsCapEnabled)
                     if fpsCapEnabled {
                         HStack {
-                            Slider(value: $fpsCap, in: 10...60, step: 1)
+                            // 10–120 (step 5): covers lecture 15 / standard
+                            // 30–60 / high-fps 120; legacy caps above the band
+                            // collapse to 120 on save (behaviorally near-identical).
+                            Slider(value: $fpsCap, in: 10...120, step: 5)
                             Text("\(Int(fpsCap)) fps")
                                 .font(.callout.monospacedDigit())
                                 .frame(width: 80, alignment: .trailing)

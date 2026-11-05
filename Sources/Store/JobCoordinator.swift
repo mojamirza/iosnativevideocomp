@@ -194,7 +194,7 @@ final class JobCoordinator: ObservableObject {
 
         // analyzing
         setJob(jobID) { $0.state = .analyzing }
-        bgSubtitle("Analysing \(job.sourceName)…")
+        bgSubtitle("Analyzing \(job.sourceName)…")
         let encodeStart = Date()
 
         do {
@@ -1047,14 +1047,18 @@ final class JobCoordinator: ObservableObject {
         // so the user can still tell which preset produced which file
         // (resolution + bitrate appear right in the name) instead of a
         // useless pile of video_preset.mp4, video_preset (2).mp4, …
+        // The codec family rides along in every stamp: users producing both
+        // HEVC and H.264 variants of the same source can tell the files
+        // apart in Files without opening them.
+        let codecTag = "-\(preset.codec.rawValue)"
         if cleaned.isEmpty {
             let fallback = "\(preset.resolution.rawValue)-\(String(format: "%.1f", preset.fixedBitrateMbps))mbps"
                 .lowercased()
                 .replacingOccurrences(of: "[^a-z0-9-]", with: "-",
                                       options: .regularExpression)
-            return fallback.isEmpty ? "preset" : fallback
+            return (fallback.isEmpty ? "preset" : fallback) + codecTag
         }
-        return cleaned
+        return cleaned + codecTag
     }
 
     /// First output path not taken on disk: `name_stamp.mp4`, then

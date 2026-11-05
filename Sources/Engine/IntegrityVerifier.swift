@@ -399,7 +399,11 @@ enum IntegrityVerifier {
         if !plan.sdrConvert && !probe.tags.isHDR
             && fileSize > 0 && outDuration > 0.5 && plan.duration > 0.5
             && Date().timeIntervalSince(verifyStart) < 30 {
-            let fractions: [Double] = [0.15, 0.4, 0.65, 0.9]
+            // BUDGET-SCALED SAMPLING: fast storage finishes a 4-frame sample
+            // in seconds — spend leftover budget on up to 8 frames for a
+            // stabler score; the 18 s cutoff below still bounds slow runs
+            // at ~4 samples.
+            let fractions: [Double] = [0.15, 0.4, 0.65, 0.9, 0.05, 0.275, 0.525, 0.775]
             let t0 = Date()
             var psnrs = [Double]()
             var ssims = [Double]()

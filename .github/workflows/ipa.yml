@@ -153,7 +153,9 @@ jobs:
         run: |
           echo "$IOS_P12_BASE64" | base64 --decode > signing.p12
           KEYCHAIN_FILE=build.keychain
-          KEYCHAIN_PASS="${KEYCHAIN_PASSWORD:-build-ci-pass}"
+          # Fail fast when the secret is missing — a silent hardcoded default
+          # would mask a misconfigured signed job.
+          KEYCHAIN_PASS="${KEYCHAIN_PASSWORD:?KEYCHAIN_PASSWORD secret is required}"
           security create-keychain -p "$KEYCHAIN_PASS" $KEYCHAIN_FILE
           security default-keychain -s $KEYCHAIN_FILE
           security unlock-keychain -p "$KEYCHAIN_PASS" $KEYCHAIN_FILE
