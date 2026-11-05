@@ -21,18 +21,15 @@ struct RootView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    jobSections
-                }
-                .padding(.vertical)
-                // DESKTOP-CLASS WIDTH: a full-bleed single column on a 13"
-                // iPad reads as a stretched phone app — cap the content and
-                // center it (Split View's narrow widths are unaffected).
-                .frame(maxWidth: 720)
-                .frame(maxWidth: .infinity)
-            }
-            .background(Color(.systemGroupedBackground))
+            interactiveList
+        }
+    }
+
+    /// The root list with its INTERACTION layer: drop handling, toolbar and
+    /// import entry points. Second slice of the former body chain — the full
+    /// chain exceeded the type-checker's complexity budget (CI).
+    private var interactiveList: some View {
+        presentedList
             .onDrop(of: [UTType.movie],
                     isTargeted: { dropActive = $0; return true },
                     perform: handleDrop)
@@ -53,6 +50,12 @@ struct RootView: View {
                     Task { await importFromFiles(urls) }
                 }
             }
+    }
+
+    /// Alerts, the setup sheet and the lifecycle tasks. Third slice of the
+    /// former body chain.
+    private var presentedList: some View {
+        queueList
             .alert("Import failed", isPresented: Binding(
                 get: { importError != nil },
                 set: { if !$0 { importError = nil } })) {
@@ -106,7 +109,23 @@ struct RootView: View {
             // fired). Cancellations don't tick — the user did that.
             .sensoryFeedback(.success, trigger: coordinator.completionTick)
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
+    }
+
+    /// The scrollable queue/history list — base layer of the former body
+    /// chain (content lives in `jobSections` below).
+    private var queueList: some View {
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                jobSections
+            }
+            .padding(.vertical)
+            // DESKTOP-CLASS WIDTH: a full-bleed single column on a 13"
+            // iPad reads as a stretched phone app — cap the content and
+            // center it (Split View's narrow widths are unaffected).
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
         }
+        .background(Color(.systemGroupedBackground))
     }
 
     // MARK: body parts — extracted from `body` so the total expression stays
