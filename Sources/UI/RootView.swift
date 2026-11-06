@@ -470,26 +470,36 @@ struct RootView: View {
 /// history (every done record stores its in/out bytes), so the number is
 /// honest — negative deltas (outputs that grew) don't inflate it.
 private struct LifetimeStatsCard: View {
-    /// ALL-TIME totals, stored in UserDefaults — Clear Finished and row
-    /// deletes can no longer shrink "lifetime" savings (the old per-record
-    /// sum shrank whenever history was cleared). Seeded once from history.
-    @AppStorage("stats.lifetimeSavedBytes") private var savedBytes = 0
-    @AppStorage("stats.lifetimeVideos") private var videosCount = 0
+    // Sum of the CURRENT history: deleting rows (or the whole history)
+    // removes their savings too — the card always reflects what is in the
+    // app right now. (A persisted all-time counter read as stale after a
+    // history clear and was reverted by the user.)
     @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
     private var records: [JobRecord]
-    @State private var seeded = false
+
+    private var stats: (videos: Int, saved: Int64) {
+        var vids = 0
+        var saved: Int64 = 0
+        for r in records {
+            let delta = r.inBytes - r.outBytes
+            if delta > 0 { saved += delta; vids += 1 }
+            else if r.outBytes > 0 { vids += 1 }
+        }
+        return (vids, saved)
+    }
 
     var body: some View {
         Group {
-            if videosCount > 0, savedBytes > 0 {
+            let s = stats
+            if s.videos > 0, s.saved > 0 {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill")
                         .font(.callout)
                         .foregroundStyle(Color(UIColor.systemGreen))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: Int64(savedBytes), countStyle: .file))")
+                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
                             .font(.callout.weight(.semibold))
-                        Text("Lifetime total across \(videosCount) finished compression\(videosCount == 1 ? "" : "s").")
+                        Text("Lifetime total across \(s.videos) finished compression\(s.videos == 1 ? "" : "s").")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -500,21 +510,6 @@ private struct LifetimeStatsCard: View {
                             in: RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
             }
-        }
-        .task {
-            // One-time seed: adopt the savings already present in history so
-            // updating installs don't start the counter from zero. `max`
-            // keeps re-seeding from ever shrinking the counter.
-            guard !seeded else { return }
-            seeded = true
-            var vids = 0
-            var bytes = 0
-            for r in records where r.outBytes > 0 {
-                vids += 1
-                bytes += Int(max(0, r.inBytes - r.outBytes))
-            }
-            videosCount = max(videosCount, vids)
-            savedBytes = max(savedBytes, bytes)
         }
     }
 }

@@ -827,18 +827,6 @@ final class JobCoordinator: ObservableObject {
     /// suspends the process. RootView resumes on scenePhase == .active.
     @Published var bgPaused = false
 
-    /// All-time totals for the stats card (UserDefaults-backed — surviving
-    /// Clear Finished and row deletes). The card's @AppStorage reads the
-    /// same keys.
-    var lifetimeSavedBytes: Int {
-        get { UserDefaults.standard.integer(forKey: "stats.lifetimeSavedBytes") }
-        set { UserDefaults.standard.set(newValue, forKey: "stats.lifetimeSavedBytes") }
-    }
-    var lifetimeVideos: Int {
-        get { UserDefaults.standard.integer(forKey: "stats.lifetimeVideos") }
-        set { UserDefaults.standard.set(newValue, forKey: "stats.lifetimeVideos") }
-    }
-
     /// Per-run verification watchdog (cancelled when verification finishes
     /// or the row is retried — a fast Retry must not race the old watchdog).
     private var verifyWatchdog: Task<Void, Never>?
@@ -1222,16 +1210,6 @@ final class JobCoordinator: ObservableObject {
             inBytes = plan.source.fileSize
         } else {
             inBytes = ((try? FileManager.default.attributesOfItem(atPath: job.sourceURL.path))?[.size] as? Int64) ?? 0
-        }
-        // LIFETIME COUNTER: all-time totals live in UserDefaults (the stats
-        // card reads them) so Clear Finished and row deletes can't shrink
-        // history-derived savings.
-        if state == "done" {
-            let delta = max(0, inBytes - outBytes)
-            if delta > 0 || outBytes > 0 {
-                lifetimeSavedBytes += Int(delta)
-                lifetimeVideos += 1
-            }
         }
 
         let record = JobRecord(
