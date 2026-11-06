@@ -301,7 +301,7 @@ final class JobCoordinator: ObservableObject {
                     // smooth; completion is published explicitly below.
                     let now = Date()
                     guard now.timeIntervalSince(self.lastProgressPublish) >= 0.5 else { return }
-                    lastProgressPublish = now
+                    self.lastProgressPublish = now
                     // Monotonic: a stale engine emission (an earlier
                     // attempt, a re-anchored VFR source) must never drag
                     // the row backward mid-encode.
@@ -367,7 +367,7 @@ final class JobCoordinator: ObservableObject {
                             // Same 0.5 s throttle as the primary pass.
                             let now = Date()
                             guard now.timeIntervalSince(self.lastProgressPublish) >= 0.5 else { return }
-                            lastProgressPublish = now
+                            self.lastProgressPublish = now
                             self.setJob(jobID) { $0.progress = max($0.progress, progress) }
                             self.bgProgress(name: job.sourceName, fraction: progress)
                         }
