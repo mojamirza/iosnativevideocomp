@@ -224,41 +224,45 @@ struct RootView: View {
     }
 
     private var importToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarLeading) {
-            // SELECTION mode entry (native list-app pattern): batch save and
-            // batch delete for finished rows.
-            if !coordinator.jobs.isEmpty {
-                Button(coordinator.selectionMode ? "Cancel" : "Select") {
-                    if coordinator.selectionMode {
-                        coordinator.exitSelectionMode()
-                    } else {
-                        coordinator.enterSelectionMode()
+        // Single Group + explicit return: the two-group builder form
+        // defeated ToolbarContentBuilder inference (CI type-check error).
+        return Group {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                // SELECTION mode entry (native list-app pattern): batch save
+                // and batch delete for finished rows.
+                if !coordinator.jobs.isEmpty {
+                    Button(coordinator.selectionMode ? "Cancel" : "Select") {
+                        if coordinator.selectionMode {
+                            coordinator.exitSelectionMode()
+                        } else {
+                            coordinator.enterSelectionMode()
+                        }
                     }
                 }
             }
-        }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            if !coordinator.selectionMode {
-                // DIRECT toolbar buttons: a PhotosPicker nested inside a
-                // Menu is unreliable on device (the sheet can be swallowed
-                // by the menu's dismissal). The empty-state pickers — which
-                // work on device — are direct, so the toolbar matches that
-                // proven shape.
-                // preferredItemEncoding: .current — without it the picker
-                // may hand back a TRANSCODED HDR→SDR movie; the engine
-                // must see the original pixels to keep the color tags.
-                PhotosPicker(selection: $photoItems, matching: .videos,
-                             preferredItemEncoding: .current) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                }
-                .accessibilityLabel("Import from Photos")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !coordinator.selectionMode {
+                    // DIRECT toolbar buttons: a PhotosPicker nested inside a
+                    // Menu is unreliable on device (the sheet can be swallowed
+                    // by the menu's dismissal). The empty-state pickers — which
+                    // work on device — are direct, so the toolbar matches that
+                    // proven shape.
+                    // preferredItemEncoding: .current — without it the picker
+                    // may hand back a TRANSCODED HDR→SDR movie; the engine
+                    // must see the original pixels to keep the color tags.
+                    PhotosPicker(selection: $photoItems, matching: .videos,
+                                 preferredItemEncoding: .current) {
+                        Image(systemName: "photo.on.rectangle.angled")
+                    }
+                    .accessibilityLabel("Import from Photos")
 
-                Button {
-                    showFiles = true
-                } label: {
-                    Image(systemName: "folder.badge.plus")
+                    Button {
+                        showFiles = true
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .accessibilityLabel("Import from Files")
                 }
-                .accessibilityLabel("Import from Files")
             }
         }
     }
