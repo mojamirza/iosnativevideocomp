@@ -341,6 +341,23 @@ enum IntegrityVerifier {
                     }
                 }
             }
+
+            // POSTER verification: the user-picked artwork must survive the
+            // mux. Ground truth IN the app — Photos ignores embedded posters
+            // (it always generates its own video preview); macOS Finder, VLC
+            // and Plex honor them, so this check is the reliable test.
+            if plan.posterData != nil {
+                let hasArt = outMeta.contains {
+                    $0.identifier == .quickTimeMetadataArtwork
+                }
+                if hasArt {
+                    items.append(ReportItem("poster", "Poster embedded",
+                        "Your chosen thumbnail image is embedded as the file's artwork. Photos always generates its own video preview and ignores it — check Files on a Mac, VLC or Plex to see it.", .pass))
+                } else {
+                    items.append(ReportItem("poster", "Poster not embedded",
+                        "The chosen poster image didn't survive the mux. The video itself is complete.", .warn))
+                }
+            }
         }
 
         // 6. Bitrate & savings sanity.

@@ -60,7 +60,10 @@ struct AppMenuCommands: Commands {
     let coordinator: JobCoordinator
 
     var body: some Commands {
-        CommandMenu("File") {
+        // NOTE: no menu named "File" — iPadOS does NOT merge a custom
+        // "File" menu with the system one (it shows both), which produced
+        // a duplicate section. Unique menu names only.
+        CommandMenu("Import") {
             Button("Import from Files…") {
                 coordinator.requestFilesImport = true
             }
@@ -80,6 +83,11 @@ struct AppMenuCommands: Commands {
                 coordinator.cancelAllJobs()
             }
             .disabled(!coordinator.hasActiveJob && !coordinator.hasQueuedJob)
+            Divider()
+            Button("Clear Finished…") {
+                coordinator.requestClearFinished = true
+            }
+            .disabled(!coordinator.jobs.contains { [.done, .failed, .cancelled].contains($0.state) })
         }
         CommandMenu("Help") {
             Button("About & Settings…") {
