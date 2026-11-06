@@ -1185,7 +1185,7 @@ final class JobCoordinator: ObservableObject {
         if state == "done" {
             let delta = max(0, inBytes - outBytes)
             if delta > 0 || outBytes > 0 {
-                lifetimeSavedBytes += delta
+                lifetimeSavedBytes += Int(delta)
                 lifetimeVideos += 1
             }
         }

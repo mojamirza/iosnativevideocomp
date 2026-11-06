@@ -897,7 +897,7 @@ enum CompressionEngine {
                         // FrameCapper (unit-tested) — first accepted frame
                         // opens a slot, jitter tolerance inside it, VFR lag
                         // re-anchors.
-                        if let capper, !capper.shouldKeep(pts) {
+                        if let keep = capper?.shouldKeep(pts), !keep {
                             continue
                         }
 
