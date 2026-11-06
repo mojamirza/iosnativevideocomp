@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 import AVFoundation
+import Photos
 
 /// Raised BEFORE any bytes are written when the output volume can't hold the
 /// planned result (with a working margin) — a multi-GB encode onto a nearly
@@ -597,6 +598,81 @@ final class JobCoordinator: ObservableObject {
         removeRecord(jobID: jobID)
         withAnimation { jobs.remove(at: idx) }
         cancelFlags.removeValue(forKey: jobID)
+    }
+
+    // MARK: Batch selection (history)
+
+    /// Multi-select mode over finished rows (batch save to Photos / batch
+    /// delete). Entering clears any prior selection.
+    @Published var selectionMode = false
+    @Published var selectedIDs: Set<UUID> = []
+    /// Result notice for batch actions (surfaced as an alert by RootView).
+    @Published var batchNotice: String?
+
+    func enterSelectionMode() {
+        selectionMode = true
+        selectedIDs = []
+    }
+
+    func exitSelectionMode() {
+        selectionMode = false
+        selectedIDs = []
+    }
+
+    func toggleSelection(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
+    }
+
+    /// Select all finished rows (done/failed/cancelled).
+    func selectAllFinished() {
+        selectedIDs = Set(jobs
+            .filter { [.done, .failed, .cancelled].contains($0.state) }
+            .map(\.id))
+    }
+
+    /// Batch delete: every selected finished row (record + output + import
+    /// leftovers) goes through the same per-row delete as the ⋯ menu.
+    func deleteSelected() {
+        let ids = selectedIDs
+        for id in ids {
+            delete(jobID: id)
+        }
+        exitSelectionMode()
+    }
+
+    /// Batch save: every selected DONE row with a surviving output is
+    /// written to the photo library in ONE Photos change request.
+    func saveSelectedToPhotos() async {
+        let targets = jobs.filter {
+            selectedIDs.contains($0.id) && $0.state == .done && $0.outputURL != nil
+        }
+        guard !targets.isEmpty else { return }
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            batchNotice = "Photos access was denied. Allow it in Settings → Privacy → Photos → Add Photos Only."
+            return
+        }
+        var saved = 0
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                for job in targets {
+                    if let url = job.outputURL,
+                       FileManager.default.fileExists(atPath: url.path) {
+                        PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                        saved += 1
+                    }
+                }
+            }
+            batchNotice = "Saved \(saved) video\(saved == 1 ? "" : "s") to Photos."
+        } catch {
+            if !(error is CancellationError) {
+                batchNotice = "Couldn't save to Photos: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// Removes a job's row + record + partial output entirely (used by cancel

@@ -18,6 +18,7 @@ struct RootView: View {
     @State private var showFiles = false
     @State private var importError: String?
     @State private var dropActive = false
+    @State private var confirmingBatchDelete = false
 
     var body: some View {
         NavigationStack {
@@ -36,6 +37,29 @@ struct RootView: View {
             .overlay { dropTargetOverlay }
             .navigationTitle("VidCompress")
             .toolbar { importToolbar }
+            // Batch actions (selection mode): a bottom bar like native
+            // iPadOS list apps — Select all / Save / Delete.
+            .toolbar {
+                if coordinator.selectionMode {
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        Button("Select all") { coordinator.selectAllFinished() }
+                        Spacer()
+                        Button {
+                            coordinator.saveSelectedToPhotos()
+                        } label: {
+                            Label("Save", systemImage: "square.and.arrow.down")
+                        }
+                        .disabled(coordinator.selectedIDs.isEmpty)
+                        Spacer()
+                        Button(role: .destructive) {
+                            confirmingBatchDelete = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .disabled(coordinator.selectedIDs.isEmpty)
+                    }
+                }
+            }
             // Photos library selection (multi-select → batch)
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
@@ -73,6 +97,24 @@ struct RootView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("The system refused background processing for this install — this can happen after the app was re-signed. Compression still works normally; just keep the app open in the foreground until the queue finishes.")
+            }
+            // Batch save result notice (selection mode).
+            .alert("Batch save", isPresented: Binding(
+                get: { coordinator.batchNotice != nil },
+                set: { if !$0 { coordinator.batchNotice = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(coordinator.batchNotice ?? "")
+            }
+            // Fat-finger protection for the batch delete.
+            .confirmationDialog(
+                "Delete \(coordinator.selectedIDs.count) selected items?",
+                isPresented: $confirmingBatchDelete,
+                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { coordinator.deleteSelected() }
+                Button("Keep", role: .cancel) { }
+            } message: {
+                Text("The selected videos and their history entries will be removed. This cannot be undone.")
             }
             .sheet(isPresented: $showingSetup, onDismiss: {
                 setupSheetDismiss()
@@ -182,27 +224,42 @@ struct RootView: View {
     }
 
     private var importToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarLeading) {
+            // SELECTION mode entry (native list-app pattern): batch save and
+            // batch delete for finished rows.
+            if !coordinator.jobs.isEmpty {
+                Button(coordinator.selectionMode ? "Cancel" : "Select") {
+                    if coordinator.selectionMode {
+                        coordinator.exitSelectionMode()
+                    } else {
+                        coordinator.enterSelectionMode()
+                    }
+                }
+            }
+        }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            // DIRECT toolbar buttons: a PhotosPicker nested inside a
-            // Menu is unreliable on device (the sheet can be swallowed
-            // by the menu's dismissal). The empty-state pickers — which
-            // work on device — are direct, so the toolbar matches that
-            // proven shape.
-            // preferredItemEncoding: .current — without it the picker
-            // may hand back a TRANSCODED HDR→SDR movie; the engine
-            // must see the original pixels to keep the color tags.
-            PhotosPicker(selection: $photoItems, matching: .videos,
-                         preferredItemEncoding: .current) {
-                Image(systemName: "photo.on.rectangle.angled")
-            }
-            .accessibilityLabel("Import from Photos")
+            if !coordinator.selectionMode {
+                // DIRECT toolbar buttons: a PhotosPicker nested inside a
+                // Menu is unreliable on device (the sheet can be swallowed
+                // by the menu's dismissal). The empty-state pickers — which
+                // work on device — are direct, so the toolbar matches that
+                // proven shape.
+                // preferredItemEncoding: .current — without it the picker
+                // may hand back a TRANSCODED HDR→SDR movie; the engine
+                // must see the original pixels to keep the color tags.
+                PhotosPicker(selection: $photoItems, matching: .videos,
+                             preferredItemEncoding: .current) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                }
+                .accessibilityLabel("Import from Photos")
 
-            Button {
-                showFiles = true
-            } label: {
-                Image(systemName: "folder.badge.plus")
+                Button {
+                    showFiles = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .accessibilityLabel("Import from Files")
             }
-            .accessibilityLabel("Import from Files")
         }
     }
 

@@ -32,6 +32,15 @@ struct JobRowView: View {
 
     /// The row's title: for finished jobs, the OUTPUT's name (so renames
     /// are reflected); otherwise the source name.
+    /// Batch-selection state (finished rows only — active jobs are transient
+    /// and never selectable).
+    private var inSelectionMode: Bool {
+        coordinator.selectionMode && [.done, .failed, .cancelled].contains(job.state)
+    }
+    private var isSelectedRow: Bool {
+        coordinator.selectedIDs.contains(job.id)
+    }
+
     private var displayName: String {
         if job.state == .done, let out = job.outputURL {
             return (out.lastPathComponent as NSString).deletingPathExtension
@@ -41,8 +50,9 @@ struct JobRowView: View {
 
     var body: some View {
         // Finished rows can be swiped sideways to reveal Delete; active
-        // (queued/encoding) rows can't.
-        if [.done, .failed, .cancelled].contains(job.state) {
+        // (queued/encoding) rows can't. Swiping is disabled during batch
+        // selection (taps toggle selection instead).
+        if [.done, .failed, .cancelled].contains(job.state), !inSelectionMode {
             rowBody
                 .modifier(SwipeToDeleteModifier { confirmingDelete = true })
         } else {
@@ -56,10 +66,23 @@ struct JobRowView: View {
     private var baseCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
+                if inSelectionMode {
+                    Button {
+                        coordinator.toggleSelection(job.id)
+                    } label: {
+                        Image(systemName: isSelectedRow ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(isSelectedRow ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isSelectedRow ? "Deselect" : "Select")
+                }
                 thumbnail
                 titleBlock
                 Spacer()
-                actionButtons
+                if !inSelectionMode {
+                    actionButtons
+                }
             }
 
             stateSection
@@ -80,7 +103,7 @@ struct JobRowView: View {
                 }
             }
 
-            if job.state == .done {
+            if job.state == .done && !inSelectionMode {
                 reportRow
             }
         }
@@ -90,6 +113,12 @@ struct JobRowView: View {
         // individually reachable.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(a11ySummary)
+        // Batch selection: tapping anywhere toggles the row.
+        .onTapGesture {
+            if inSelectionMode {
+                coordinator.toggleSelection(job.id)
+            }
+        }
     }
 
     private var rowBody: some View {
@@ -294,7 +323,7 @@ struct JobRowView: View {
                     .overlay { Image(systemName: "film").foregroundStyle(.secondary) }
             }
         }
-        if isPlayable {
+        if isPlayable && !inSelectionMode {
             Button {
                 showingPlayer = true
             } label: {
