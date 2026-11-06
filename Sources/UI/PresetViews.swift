@@ -96,7 +96,7 @@ struct PresetEditorView: View {
         _resolution = State(initialValue: existing?.resolution ?? .keep)
         let mbps = existing?.fixedBitrateMbps ?? 4
         _fixedMbps = State(initialValue: mbps)
-        _bitrateText = State(initialValue: String(format: "%.1f", mbps))
+        _bitrateText = State(initialValue: SizeMath.mbpsLabel(mbps))
         _sliderPos = State(initialValue: Self.pos(fromMbps: mbps))
         _fpsCapEnabled = State(initialValue: existing?.fpsCap != nil)
         _fpsCap = State(initialValue: Double(existing?.fpsCap ?? 30))
@@ -239,7 +239,7 @@ struct PresetEditorView: View {
                                         // clobber what the user is typing.
                                         let typed = Double(normalizedDecimal(bitrateText)) ?? -1
                                         if abs(typed - mbps) > 0.05 {
-                                            bitrateText = String(format: "%.1f", mbps)
+                                            bitrateText = SizeMath.mbpsLabel(mbps)
                                         }
                                         fixedMbps = mbps
                                     }

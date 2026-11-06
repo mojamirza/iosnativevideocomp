@@ -28,6 +28,9 @@ struct CompressVideoIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         try await VideoInbox.stash(file: video)
+        // The app may already be active (openAppWhenRun): consume NOW, not
+        // at the next activation — the marker exists at this point.
+        await VideoInbox.consumeFromHost()
         return .result()
     }
 }
@@ -132,45 +135,59 @@ enum VideoInbox {
         return paths
     }
 
-    /// RootView consumes markers on launch: enqueues freshly marked videos
-    /// and deletes the stale markers. Runs on the main actor: the coordinator
-    /// (and its job queue) is main-actor isolated.
-    ///
-    /// NON-REENTRANT: at cold launch RootView's .task AND the scene-active
-    /// onChange can both call this while the first consumer is still
-    /// awaiting probes — both would list the same markers before either
-    /// deletes them, double-enqueueing every stashed video. The main-actor
-    /// flag makes the second call a no-op (the first consumer owns the pass).
+    /// One-shot request handoff: the Shortcuts intent can finish copying a
+    /// multi-GB file AFTER the app became active, so a single pass can miss
+    /// the marker — keep passing until the inbox is empty (bounded).
     @MainActor
     static func consume(with coordinator: JobCoordinator) async {
         guard !consumeInFlight else { return }
         consumeInFlight = true
         defer { consumeInFlight = false }
         let fm = FileManager.default
-        guard let markers = try? fm.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil) else { return }
-        for marker in markers where marker.pathExtension == "json" {
-            guard let payload = try? Data(contentsOf: marker),
-                  let decoded = try? JSONDecoder().decode(Marker.self, from: payload)
-            else {
-                try? fm.removeItem(at: marker)
-                continue
-            }
-            try? fm.removeItem(at: marker)
-            for rawPath in decoded.urls {
-                let url = URL(fileURLWithPath: rawPath)
-                guard fm.fileExists(atPath: url.path) else { continue }
-                guard let probe = try? await ProbeResult.probe(url: url) else {
-                    // Undecodable handoff: delete the copy, keep the app tidy.
-                    try? fm.removeItem(at: url)
+        var pass = 0
+        while pass < 3 {
+            pass += 1
+            guard let markers = try? fm.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil) else { return }
+            let jsons = markers.filter { $0.pathExtension == "json" }
+            guard !jsons.isEmpty else { return }
+            for marker in jsons {
+                guard let payload = try? Data(contentsOf: marker),
+                      let decoded = try? JSONDecoder().decode(Marker.self, from: payload)
+                else {
+                    try? fm.removeItem(at: marker)
                     continue
                 }
-                let preset = Preset.builtIn[0]   // "High quality"
-                let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
-                let thumb = await Thumbnails.make(url: url)
-                coordinator.enqueue(source: url, probe: probe, plan: plan,
-                                    preset: preset, thumbnail: thumb)
+                try? fm.removeItem(at: marker)
+                for rawPath in decoded.urls {
+                    let url = URL(fileURLWithPath: rawPath)
+                    guard fm.fileExists(atPath: url.path) else { continue }
+                    guard let probe = try? await ProbeResult.probe(url: url) else {
+                        // Undecodable handoff: delete the copy, keep the app tidy.
+                        try? fm.removeItem(at: url)
+                        continue
+                    }
+                    let preset = Preset.builtIn[0]   // "High quality"
+                    let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
+                    let thumb = await Thumbnails.make(url: url)
+                    coordinator.enqueue(source: url, probe: probe, plan: plan,
+                                        preset: preset, thumbnail: thumb)
+                }
             }
         }
     }
+
+    /// The Shortcuts intent calls this at the END of perform(): the app can
+    /// already be active by the time the multi-GB copy finishes, and without
+    /// this the marker would sit until the next activation. No-op when the
+    /// host coordinator isn't around yet.
+    @MainActor
+    static func consumeFromHost() async {
+        guard let coordinator = hostCoordinator else { return }
+        await consume(with: coordinator)
+    }
+
+    /// Set by RootView at launch (like BackgroundCompress.attach).
+    @MainActor
+    static weak var hostCoordinator: JobCoordinator?
 }

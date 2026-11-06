@@ -57,12 +57,15 @@ struct VidCompressApp: App {
 /// Menu items flip one-shot request flags on the coordinator; RootView
 /// owns the sheets and dialogs they trigger.
 struct AppMenuCommands: Commands {
-    let coordinator: JobCoordinator
+    // ObservedObject: menu items (disabled states, labels) must refresh when
+    // the coordinator's published state changes — a plain let never updates.
+    @ObservedObject var coordinator: JobCoordinator
 
     var body: some Commands {
         // NOTE: no menu named "File" — iPadOS does NOT merge a custom
         // "File" menu with the system one (it shows both), which produced
-        // a duplicate section. Unique menu names only.
+        // a duplicate section. Unique menu names only. Same story for
+        // "Help": items go INTO the system Help menu via CommandGroup.
         CommandMenu("Import") {
             Button("Import from Files…") {
                 coordinator.requestFilesImport = true
@@ -89,7 +92,7 @@ struct AppMenuCommands: Commands {
             }
             .disabled(!coordinator.jobs.contains { [.done, .failed, .cancelled].contains($0.state) })
         }
-        CommandMenu("Help") {
+        CommandGroup(after: .help) {
             Button("About & Settings…") {
                 coordinator.requestSettings = true
             }

@@ -53,6 +53,38 @@ final class EngineFlags: @unchecked Sendable {
     }
 }
 
+/// The fps-cap slot grid, extracted from the video pipe so the cadence math
+/// is unit-testable: the first accepted frame opens a slot one period wide;
+/// frames inside the open slot are dropped (a quarter-period tolerance
+/// absorbs timestamp jitter just above the cap); lag beyond a full period
+/// re-anchors the grid so VFR bursts stay capped.
+struct FrameCapper {
+    let cap: Int
+    private var nextSlot = CMTime.zero
+    private var slotActive = false
+
+    mutating func shouldKeep(_ pts: CMTime) -> Bool {
+        let period = CMTime(value: 1, timescale: CMTimeScale(cap))
+        let tol = CMTime(value: 1, timescale: CMTimeScale(cap * 4))
+        if !slotActive {
+            slotActive = true
+            nextSlot = CMTimeAdd(pts, period)
+            return true
+        }
+        if CMTimeCompare(pts, CMTimeSubtract(nextSlot, tol)) < 0 {
+            // Still inside the open slot (tolerance edge included) — drop.
+            return false
+        }
+        if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 2.0 / Double(cap) {
+            // Grid lagged more than a full period: re-anchor HERE.
+            nextSlot = CMTimeAdd(pts, period)
+            return true
+        }
+        nextSlot = CMTimeAdd(nextSlot, period)
+        return true
+    }
+}
+
 enum CompressionError: LocalizedError {
     case noVideoTrack
     case readerFailed(String)
@@ -161,19 +193,33 @@ enum CompressionEngine {
                          flags: EngineFlags,
                          onProgress: @escaping @Sendable (Double) -> Void) async throws -> Int {
         do {
+            // Attempt 1: creation date + poster (as configured).
             return try await compressImpl(source: source, output: output, preset: preset,
                                           plan: plan, flags: flags, onProgress: onProgress,
-                                          allowMetadata: !PrivacyScrub.sessionDisabled)
+                                          allowMetadata: !PrivacyScrub.sessionDisabled,
+                                          allowPoster: true)
         } catch CompressionError.metadataRejected {
-            // Session-wide kill switch: this writer refused to start with the
-            // scrubbed metadata — retry the encode ONCE with NO metadata so a
-            // muxer/metadata quirk can never fail every dated video of the
-            // session (a missing date is a report warning; a failed job is
-            // not). The writer is single-use, so the retry rebuilds it all.
+            // Something in the metadata was refused. Step DOWN, don't nuke:
+            // with a poster set, the POSTER is the prime suspect — retry once
+            // with the date still in place. Only when the date itself is
+            // refused does the session-wide kill switch flip (a missing date
+            // is a report warning; a failed job is not).
+            if plan.posterData != nil {
+                do {
+                    return try await compressImpl(source: source, output: output, preset: preset,
+                                                  plan: plan, flags: flags, onProgress: onProgress,
+                                                  allowMetadata: true, allowPoster: false)
+                } catch CompressionError.metadataRejected {
+                    PrivacyScrub.sessionDisabled = true
+                    return try await compressImpl(source: source, output: output, preset: preset,
+                                                  plan: plan, flags: flags, onProgress: onProgress,
+                                                  allowMetadata: false, allowPoster: false)
+                }
+            }
             PrivacyScrub.sessionDisabled = true
             return try await compressImpl(source: source, output: output, preset: preset,
                                           plan: plan, flags: flags, onProgress: onProgress,
-                                          allowMetadata: false)
+                                          allowMetadata: false, allowPoster: false)
         }
     }
 
@@ -183,7 +229,8 @@ enum CompressionEngine {
                              plan: OptimizerPlan,
                              flags: EngineFlags,
                              onProgress: @escaping @Sendable (Double) -> Void,
-                             allowMetadata: Bool) async throws -> Int {
+                             allowMetadata: Bool,
+                             allowPoster: Bool) async throws -> Int {
 
         // Stall watchdog — declared before the pipe functions so they can
         // capture it. Every progress report re-arms it; the deadline only
@@ -242,12 +289,13 @@ enum CompressionEngine {
         var metadata: [AVMetadataItem] = allowMetadata
             ? await PrivacyScrub.items(for: asset)
             : []
-        // The poster arrives normalized (JPEG ≤1024px) from setup, so the
-        // artwork's data type is always valid. Rejection by the writer is
-        // covered by the metadataRejected retry below.
-        if let poster = plan.posterData {
+        // The poster arrives normalized (JPEG ≤1024px) from setup. The
+        // COMMON artwork identifier maps onto the container's own cover-art
+        // representation (the QuickTime-scoped one was the on-device crash
+        // suspect for the sibling creation-date key).
+        if allowPoster, let poster = plan.posterData {
             let item = AVMutableMetadataItem()
-            item.identifier = .quickTimeMetadataArtwork
+            item.identifier = .commonIdentifierArtwork
             item.dataType = kCMMetadataBaseDataType_JPEG as String
             item.value = poster as NSData
             metadata.append(item)
@@ -257,11 +305,21 @@ enum CompressionEngine {
         // ------------------------------------------------------------------
         // VIDEO input settings — handed directly to VideoToolbox.
         // ------------------------------------------------------------------
+        // GOP: 2 s for camera content; 8 s when the lecture recipe is on
+        // (forced mono marks it) — static slides waste bits on frequent
+        // keyframes.
+        let gopSeconds: Double = (preset.audioChannels == 1) ? 8 : 2
         var props: [String: Any] = [
             AVVideoAverageBitRateKey: plan.videoBitrate,
-            AVVideoMaxKeyFrameIntervalKey: max(1, Int(plan.fps * 2)),
+            AVVideoMaxKeyFrameIntervalKey: max(1, Int(plan.fps * gopSeconds)),
             AVVideoExpectedSourceFrameRateKey: max(1, Int(plan.fps)),
             AVVideoAllowFrameReorderingKey: NSNumber(value: true),
+            // Peak cap: keep bitrate spikes at ~125% of the target (bytes/s
+            // over a 1 s window) so fewer jobs need the measured re-encode.
+            // VT accepts the "limit/duration" string form; invalid values are
+            // logged and ignored by the encoder.
+            kVTCompressionPropertyKey_DataRateLimits as String:
+                "\(Int((Double(plan.videoBitrate) / 8.0) * 1.25))/1",
             // NOTE: no explicit RealTime key here — expectsMediaDataInRealTime
             // = false (set on the input below) already drives the VideoToolbox
             // session into offline mode; kVTCompressionPropertyKey_RealTime
@@ -286,8 +344,9 @@ enum CompressionEngine {
         let encode10Bit = wants10Bit && !sdrConvert
         let encodeCodec: VideoCodec = (encode10Bit && preset.codec == .h264) ? .hevc : preset.codec
         if encodeCodec == .h264 {
-            // H.264: explicit down-to-earth profile (8-bit only).
-            props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
+            // H.264: High profile — better compression than Main at the same
+            // compatibility (High has decoded everywhere for a decade).
+            props[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
         } else if encode10Bit {
             // 10-bit/HDR sources: EXPLICIT Main10 instead of trusting the
             // auto-negotiation — and the verifier re-parses the output's own
@@ -775,8 +834,8 @@ enum CompressionEngine {
             await withCheckedContinuation { cont in
                 let resume = ResumeBox(cont)
                 let queue = DispatchQueue(label: "vidcompress.video.pipe")
-                var nextSlot = CMTime.zero
-                var slotActive = false
+                // Frame-rate cap state lives in FrameCapper (unit-tested).
+                var capper = preset.fpsCap.map { FrameCapper(cap: $0) }
 
                 // Count a silently lost frame and ABORT the encode the
                 // moment the budget is met. The check must live AT the drop
@@ -830,35 +889,12 @@ enum CompressionEngine {
 
                         let pts = CMSampleBufferGetPresentationTimeStamp(sb)
 
-                        // Frame-rate cap on a SLOT GRID with re-anchoring:
-                        // each accepted frame opens a slot 1/cap wide; frames
-                        // inside the open slot are dropped (first frame
-                        // anchors the grid). WITHOUT re-anchoring the grid
-                        // drifts: after a slower stretch (variable-rate screen
-                        // recordings) nextSlot lags behind and a later burst
-                        // passes entirely uncapped. A QUARTER-PERIOD tolerance
-                        // below the slot boundary absorbs the timestamp jitter
-                        // of a source hovering just above the cap (30.1 fps
-                        // at cap 30): without it, an early frame just past the
-                        // boundary ditches in and the cadence hitches.
-                        if let cap = preset.fpsCap, cap > 0 {
-                            let period = CMTime(value: 1, timescale: CMTimeScale(cap))
-                            let tol = CMTime(value: 1, timescale: CMTimeScale(cap * 4))
-                            if !slotActive {
-                                slotActive = true
-                                nextSlot = CMTimeAdd(pts, period)
-                            } else if CMTimeCompare(pts, CMTimeSubtract(nextSlot, tol)) < 0 {
-                                // Still inside the open slot (tolerance edge
-                                // included) — kept cadence, drop the frame.
-                                continue
-                            } else if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 2.0 / Double(cap) {
-                                // Grid lagged more than a full period: re-
-                                // anchor HERE so a follow-up burst is capped
-                                // again instead of sliding through.
-                                nextSlot = CMTimeAdd(pts, period)
-                            } else {
-                                nextSlot = CMTimeAdd(nextSlot, period)
-                            }
+                        // Frame-rate cap: the slot-grid cadence math lives in
+                        // FrameCapper (unit-tested) — first accepted frame
+                        // opens a slot, jitter tolerance inside it, VFR lag
+                        // re-anchors.
+                        if let capper, !capper.shouldKeep(pts) {
+                            continue
                         }
 
                         if sdrConvert {
@@ -1013,7 +1049,11 @@ enum CompressionEngine {
             }
         }
         if pipesDone == nil {
-            // Abort everything the stalled pipes left behind.
+            // Wake the pipes through their own queues FIRST (flags.fail runs
+            // every registered hook and the pipes unwind via their serial
+            // queues) — tearing the writer down mid-append is undefined.
+            flags.fail(CompressionError.writerFailed("Encoding stalled and was aborted."))
+            try? await Task.sleep(nanoseconds: 200_000_000)
             reader.cancelReading()
             if writer.status == .writing { writer.cancelWriting() }
             if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }

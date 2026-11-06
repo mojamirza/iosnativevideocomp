@@ -179,10 +179,20 @@ struct Preset: Identifiable, Codable, Hashable {
                    fixedBitrateMbps: 4, fpsCap: nil, audioBitrateKbps: 128),
             Preset(name: "Low (480p)", codec: .hevc, resolution: .sd,
                    fixedBitrateMbps: 1.5, fpsCap: nil, audioBitrateKbps: 96),
+            // Lecture recipes: static content wastes camera-style bitrates
+            // and frame rates — 15 fps + lean bitrate + mono voice.
+            Preset(name: "Lecture small (720p)", codec: .hevc, resolution: .hd,
+                   fixedBitrateMbps: 0.5, fpsCap: 15, audioBitrateKbps: 48,
+                   audioChannels: 1),
+            Preset(name: "Lecture sharp (1080p)", codec: .hevc, resolution: .fhd,
+                   fixedBitrateMbps: 0.9, fpsCap: 15, audioBitrateKbps: 48,
+                   audioChannels: 1),
         ]
         list[0].id = stableID("builtin.high")
         list[1].id = stableID("builtin.720p")
         list[2].id = stableID("builtin.480p")
+        list[3].id = stableID("builtin.lecture-small")
+        list[4].id = stableID("builtin.lecture-sharp")
         return list
     }()
 
@@ -239,9 +249,5 @@ struct Preset: Identifiable, Codable, Hashable {
                   targetSizeMB: target, audioChannels: channels,
                   hdrToSDR: hdrSDR)
         self.id = decodedID   // keep the stored identity
-    }
-
-    var modeSummary: String {
-        String(format: "%.1f Mbps", fixedBitrateMbps)
     }
 }

@@ -92,6 +92,9 @@ final class JobCoordinator: ObservableObject {
                       thumbnail: thumbnail,
                       createdAt: Date())
         jobs.insert(job, at: 0)
+        // QUEUE PERSISTENCE: a queued record means a crash/kill mid-batch
+        // resumes the job at launch instead of losing it.
+        saveRecord(jobID: job.id, outputName: nil, report: nil, state: "queued")
         runQueueIfNeeded()
     }
 
@@ -137,6 +140,9 @@ final class JobCoordinator: ObservableObject {
 
     /// The in-app worker — always the foreground executor (instant start).
     private func startForegroundWorker() {
+        // A background-task revocation pauses the queue until the app is
+        // active again (RootView lifts the pause on scenePhase == .active).
+        guard !bgPaused else { return }
         if #available(iOS 26.0, *) {
             // The BG driver owns the queue while its task is running — it
             // picks up new jobs itself. (Prevents two concurrent encodes.)
@@ -152,7 +158,11 @@ final class JobCoordinator: ObservableObject {
                 }
             }
             while !Task.isCancelled {
-                guard let self,
+                guard let self else { break }
+                // A background-task revocation pauses the queue: starting
+                // the next job while iOS suspends the process just burns it.
+                if self.bgPaused { break }
+                guard
                       // PICK ORDER: the array is newest-first (enqueue inserts
                       // at 0 for the history display), so the LAST queued
                       // entry is the OLDEST pick — batch jobs encode in the
@@ -344,8 +354,9 @@ final class JobCoordinator: ObservableObject {
             // jumps (NTP sync, timezone) could fire the backstop early or
             // late. systemUptime is monotonic.
             let verifyDeadline = ProcessInfo.processInfo.systemUptime
-            Task { [weak self] in
+            verifyWatchdog = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 75_000_000_000)
+                guard !Task.isCancelled else { return }
                 self?.forceVerifyTerminal(jobID: jobID, output: output,
                                           encodeSeconds: Date().timeIntervalSince(encodeStart),
                                           startedAt: verifyDeadline)
@@ -359,6 +370,9 @@ final class JobCoordinator: ObservableObject {
                 plan: plan,
                 encodeSeconds: Date().timeIntervalSince(encodeStart)
             )
+            // The watchdog is no longer needed — a fast Retry must not race
+            // it during the NEXT verification.
+            verifyWatchdog?.cancel()
             // Late wake-up guard: if forceVerifyTerminal fired while run()
             // was wedged (the very case that function exists for), the row
             // was already finalised AND the file promoted out of scratch.
@@ -568,6 +582,8 @@ final class JobCoordinator: ObservableObject {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
               [JobState.failed, .cancelled].contains(jobs[idx].state),
               FileManager.default.fileExists(atPath: jobs[idx].sourceURL.path) else { return }
+        // A stale verification watchdog must not fire into the new attempt.
+        verifyWatchdog?.cancel()
         // A failed run keeps its output (report rows can inspect it). This
         // fresh attempt REPLACES it: remove the old file up front so Retry
         // can't stack "name (2)" files beside a file the user already
@@ -741,8 +757,6 @@ final class JobCoordinator: ObservableObject {
         guard let final = promote(work, sourceName: jobs[idx].sourceName,
                                   preset: jobs[idx].preset) else { return }
         let report = jobs[idx].report
-        let name = jobs[idx].sourceName
-        let preset = jobs[idx].preset
         jobs[idx].state = .done
         jobs[idx].outputURL = final
         jobs[idx].errorMessage = nil
@@ -764,6 +778,15 @@ final class JobCoordinator: ObservableObject {
     }
 
     // MARK: Background task (iOS 26+) support
+
+    /// Set when iOS revokes the background task: no new jobs start until the
+    /// app is active again — each immediate start would just fail while iOS
+    /// suspends the process. RootView resumes on scenePhase == .active.
+    @Published var bgPaused = false
+
+    /// Per-run verification watchdog (cancelled when verification finishes
+    /// or the row is retried — a fast Retry must not race the old watchdog).
+    private var verifyWatchdog: Task<Void, Never>?
 
     private func bgSubtitle(_ subtitle: String) {
         if #available(iOS 26.0, *) {
@@ -787,6 +810,17 @@ final class JobCoordinator: ObservableObject {
             systemInterrupted.insert(job.id)
             cancelFlags[job.id]?.cancel()
         }
+        // Pause the queue: starting the next job while iOS suspends the
+        // process would fail it too. RootView resumes on scenePhase .active.
+        bgPaused = true
+    }
+
+    /// Lifts the background-revocation pause and restarts the worker (queued
+    /// jobs continue; interrupted rows stay failed with Retry).
+    func resumeIfBackgroundPaused() {
+        guard bgPaused else { return }
+        bgPaused = false
+        runQueueIfNeeded()
     }
 
     /// Free space on the volume holding `url`, per the "important usage"
@@ -1030,16 +1064,38 @@ final class JobCoordinator: ObservableObject {
             if kept.count < records.count { try? context.save() }
             var purgedRecords = false
             for r in kept {
-                guard let state = JobState(rawValue: r.stateRaw) else { continue }
-                guard state != .queued, state != .analyzing,
-                      state != .compressing, state != .verifying else { continue }
+                guard var state = JobState(rawValue: r.stateRaw) else { continue }
                 let srcURL = Self.importsDirectory().appendingPathComponent(r.sourceName)
-                // Storage management deletes a finished job's source copy, so
-                // only RETRYABLE rows (failed) must still have theirs.
-                if state == .failed {
+                // QUEUE PERSISTENCE: queued/in-flight records resume at launch
+                // (a crash, jetsam kill or relaunch no longer loses the
+                // batch). ONE auto-resume per record — a second relaunch
+                // before the job finishes means the encode itself crashes the
+                // app, so the row demotes to a retryable FAILED row instead
+                // of looping forever. Missing sources purge the record.
+                let isQueuelike = state == .queued || state == .analyzing
+                    || state == .compressing || state == .verifying
+                if isQueuelike {
+                    guard fm.fileExists(atPath: srcURL.path) else {
+                        context.delete(r)
+                        purgedRecords = true
+                        continue
+                    }
+                    if r.autoResumed {
+                        state = .failed
+                        r.stateRaw = JobState.failed.rawValue
+                        r.errorMessage = "Interrupted by relaunch — tap Retry."
+                        r.autoResumed = false
+                        purgedRecords = true
+                        try? context.save()
+                    } else {
+                        r.autoResumed = true
+                        try? context.save()
+                        state = .queued
+                    }
+                } else if state == .failed {
                     // A FAILED row is RETRYABLE — without its source it is
                     // junk the user can neither retry nor ever see (every
-                    // launch skips it) and it live'd on invisibly. PURGE the
+                    // launch skips it) and it lived on invisibly. PURGE the
                     // record instead.
                     guard fm.fileExists(atPath: srcURL.path) else {
                         context.delete(r)
@@ -1088,6 +1144,8 @@ final class JobCoordinator: ObservableObject {
         let existingIDs = Set(jobs.map { $0.id })
         jobs.append(contentsOf: out.filter { !existingIDs.contains($0.id) })
         cleanupOrphans()
+        // Resumed queued rows (queue persistence) need the worker started.
+        runQueueIfNeeded()
     }
 
     private func saveRecord(jobID: UUID, outputName: String?, report: Data?, state: String, errorText: String? = nil) {
@@ -1108,6 +1166,16 @@ final class JobCoordinator: ObservableObject {
             inBytes = plan.source.fileSize
         } else {
             inBytes = ((try? FileManager.default.attributesOfItem(atPath: job.sourceURL.path))?[.size] as? Int64) ?? 0
+        }
+        // LIFETIME COUNTER: all-time totals live in UserDefaults (the stats
+        // card reads them) so Clear Finished and row deletes can't shrink
+        // history-derived savings.
+        if state == "done" {
+            let delta = max(0, inBytes - outBytes)
+            if delta > 0 || outBytes > 0 {
+                lifetimeSavedBytes += delta
+                lifetimeVideos += 1
+            }
         }
 
         let record = JobRecord(

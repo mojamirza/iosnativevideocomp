@@ -51,15 +51,19 @@ enum PrivacyScrub {
             $0.commonKey == AVMetadataKey.commonKeyCreationDate
         }
         guard let srcItem = src else { return [] }
-        // The date can arrive typed (dateValue) or as a string (ISO-8601 /
-        // yyyy-MM-dd); accept both.
-        var date = srcItem.dateValue
-        if date == nil, let s = srcItem.stringValue {
-            date = ISO8601DateFormatter().date(from: s)
-                ?? DateFormatter.isoFormats().lazy
-                    .compactMap { $0.date(from: s) }.first
+        // TIMEZONE: reuse the source's own string when it parses (it carries
+        // the original UTC offset); only a typed dateValue falls back to
+        // being reformatted as UTC ISO-8601.
+        var dateString: String?
+        if let s = srcItem.stringValue,
+           ISO8601DateFormatter().date(from: s) != nil
+               || DateFormatter.isoFormats().contains(where: { $0.date(from: s) != nil }) {
+            dateString = s
         }
-        guard let date else { return [] }
+        if dateString == nil, let date = srcItem.dateValue {
+            dateString = ISO8601DateFormatter().string(from: date)
+        }
+        guard let dateString else { return [] }
         let item = AVMutableMetadataItem()
         // COMMON identifier + UTF-8 data type with an NSString value and the
         // "und" language tag — Apple's DOCUMENTED shape for UTF-8-typed
@@ -72,7 +76,7 @@ enum PrivacyScrub {
         // once with NO metadata.
         item.identifier = .commonIdentifierCreationDate
         item.dataType = kCMMetadataBaseDataType_UTF8 as String
-        item.value = ISO8601DateFormatter().string(from: date) as NSString
+        item.value = dateString as NSString
         item.extendedLanguageTag = "und"
         return [item]
     }

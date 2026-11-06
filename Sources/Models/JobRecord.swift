@@ -18,13 +18,17 @@ final class JobRecord {
     var codecLabel: String = ""
     var resolutionLabel: String = ""
     /// User-picked poster image (normalized JPEG); nil = automatic.
-    var posterData: Data?
+    /// External storage: binaries don't belong in the main store.
+    @Attribute(.externalStorage) var posterData: Data?
+    /// Set when a queued/in-flight row was auto-resumed at launch — bounds
+    /// the resume to ONE attempt so a crashing encode can't loop forever.
+    var autoResumed: Bool = false
 
     init(jobID: UUID, createdAt: Date, sourceName: String, presetName: String,
          outputFileName: String?, inBytes: Int64, outBytes: Int64, duration: Double,
          stateRaw: String, errorMessage: String?, reportJSON: Data?,
          presetJSON: Data? = nil, codecLabel: String, resolutionLabel: String,
-         posterData: Data? = nil) {
+         posterData: Data? = nil, autoResumed: Bool = false) {
         self.jobID = jobID
         self.createdAt = createdAt
         self.sourceName = sourceName
@@ -40,5 +44,6 @@ final class JobRecord {
         self.codecLabel = codecLabel
         self.resolutionLabel = resolutionLabel
         self.posterData = posterData
+        self.autoResumed = autoResumed
     }
 }

@@ -3,7 +3,7 @@ import CoreVideo
 
 // =====================================================================
 // QUALITY SCORING — the "how good is it really?" companion to the
-// target-size guarantee. Sampless a handful of frames from the SOURCE
+// target-size guarantee. Samples a handful of frames from the SOURCE
 // and the OUTPUT at identical fractions of the timeline, decodes both
 // to a small common luma grid, and computes PSNR + SSIM on real pixels.
 // Pure math lives in `psnr`/`ssim` (unit-tested); the decode/compare
@@ -24,8 +24,9 @@ enum QualityCheck {
         let time: Double
     }
 
-    /// Small enough to be cheap, large enough to score real detail.
-    static let sampleWidth = 320
+    /// Large enough to catch blockiness at lecture bitrates, small enough
+    /// to stay inside the verifier's time budget.
+    static let sampleWidth = 640
     /// Reader window for grabbing one frame (keyframe-safe: the reader may
     /// decode from the preceding GOP edge).
     static let readerWindowSeconds = 0.35

@@ -60,11 +60,12 @@ struct SetupFlowView: View {
 
     /// Applies the lecture recipe onto a COPY of the selected preset (built-
     /// ins are never mutated): 15 fps cap, a lean bitrate for the output
-    /// size, and a forced MONO voice track.
+    /// size, and a forced MONO 48 kbps voice track.
     private func applyLectureMode() {
         guard var preset = selectedPreset else { return }
         preset.fpsCap = 15
         preset.fixedBitrateMbps = max(0.6, min(preset.fixedBitrateMbps, 2.0))
+        preset.audioBitrateKbps = 48
         preset.audioChannels = 1
         selectedPreset = preset
     }
@@ -498,12 +499,17 @@ struct SetupFlowView: View {
 
     /// Poster normalization: ≤1024px JPEG so the embedded artwork's data
     /// type is always valid regardless of the picked format (HEIC/PNG/…).
+    /// The renderer format pins scale = 1 — a plain UIGraphicsImageRenderer
+    /// uses the SCREEN scale (3× on Pro displays) and quietly produces
+    /// 3072px images.
     private static func normalizedPoster(_ image: UIImage) -> Data? {
         let maxSide: CGFloat = 1024
         let scale = min(1, maxSide / max(image.size.width, image.size.height))
         let size = CGSize(width: (image.size.width * scale).rounded(),
                           height: (image.size.height * scale).rounded())
-        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
         }
         return rendered.jpegData(compressionQuality: 0.9)
@@ -680,9 +686,13 @@ struct SetupFlowView: View {
             }
 
             ForEach(availablePresets, id: \.id) { preset in
-                PresetRow(preset: preset,
+                // The SELECTED row renders the live variant (lecture-mode
+                // tweaks mutate a copy with the same id) so its numbers match
+                // the estimate bar.
+                let displayPreset = (selectedPreset?.id == preset.id) ? selectedPreset! : preset
+                PresetRow(preset: displayPreset,
                           isSelected: selectedPreset?.id == preset.id,
-                          probe: singleProbe,
+                          probe: singleProbe.map({ trimmed($0) }),
                           batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil,
                           batchAvgBitrate: isBatch ? batchAvgBitrate(for: preset) : nil) {
                     selectedPreset = preset
@@ -753,7 +763,7 @@ struct SetupFlowView: View {
 
     private var estimate: OptimizerPlan? {
         guard let probe = singleProbe, let preset = selectedPreset else { return nil }
-        return QualitySizeOptimizer.plan(preset: preset, probe: probe)
+        return QualitySizeOptimizer.plan(preset: preset, probe: trimmed(probe))
     }
 
     private var buttonTitle: String {
@@ -767,13 +777,29 @@ struct SetupFlowView: View {
         return probes.contains { $0 != nil }
     }
 
+    /// The probe as the trim window sees it: estimates, preset rows and
+    /// plans must all describe the TRIMMED output when a window is set —
+    /// otherwise target-size solves against the full length while the
+    /// encode runs the trimmed length.
+    private func trimmed(_ p: ProbeResult) -> ProbeResult {
+        var q = p
+        if trimEnd - trimStart >= 0.5,
+           trimStart > 0.05 || trimEnd < p.duration - 0.05 {
+            q.duration = trimEnd - trimStart
+        }
+        return q
+    }
+
     private func start() {
         guard let preset = selectedPreset, analysisDone else { return }
         // Commit-time truth for "last used": the preset that actually ran
         // (covers the lecture-mode variant too, which shares the base id).
         PresetStore.setLastUsedPreset(preset.id)
         for i in videos.indices {
-            guard let probe = probes[i] else { continue }
+            guard let rawProbe = probes[i] else { continue }
+            // Single video: plan against the TRIMMED window (estimates, the
+            // target-size solve and the encode must all agree).
+            let probe = isBatch ? rawProbe : trimmed(rawProbe)
             var plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
             if !isBatch {
                 // Per-video adjustments (single video only): rotation, the
@@ -784,7 +810,6 @@ struct SetupFlowView: View {
                    trimStart > 0.05 || trimEnd < probe.duration - 0.05 {
                     plan.trimStart = trimStart
                     plan.trimEnd = trimEnd
-                    plan.duration = max(0.5, trimEnd - trimStart)
                 }
                 // Poster: the user-picked image (nil = automatic frame).
                 plan.posterData = posterData

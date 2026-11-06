@@ -131,8 +131,16 @@ enum QualitySizeOptimizer {
         let srcArea = max(1.0, Double(probe.sourceSize.width) * Double(probe.sourceSize.height))
         let outArea = Double(outputSize.width) * Double(outputSize.height)
         let areaRatio = min(1.0, outArea / srcArea)
+        // CODEC-AWARE CEILING: transcoding H.264 → HEVC keeps quality at
+        // ~0.65x the source rate (Zoom/Teams recordings are H.264 — the old
+        // flat 0.95x ceiling made them trigger "Little to gain"); same-codec
+        // re-encodes stay conservative at 0.95x. Downscaling keeps the 1.25x
+        // encoder-variance headroom on top.
+        let codecGain: Double = (probe.codecSubType == "avc1" && preset.codec == .hevc)
+            ? 0.65 : 1.0
+        let headroom: Double = areaRatio < 1 ? 1.25 : 0.95
         let ceiling: Double = probe.videoDataRate > 0
-            ? probe.videoDataRate * areaRatio * (areaRatio < 1 ? 1.25 : 0.95)
+            ? probe.videoDataRate * areaRatio * headroom * codecGain
             : .infinity
         // Int(Double) TRAPS when the value isn't representable — and an
         // unknown source data rate leaves ceiling at INFINITY (the old

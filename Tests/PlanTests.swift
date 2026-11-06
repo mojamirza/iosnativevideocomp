@@ -27,10 +27,12 @@ final class PlanTests: XCTestCase {
 
     private func preset(fixedMbps: Double = 8.0,
                         resolution: ResolutionClass = .keep,
-                        targetMB: Double? = nil) -> Preset {
-        Preset(name: "test", codec: .h264, resolution: resolution,
-               fixedBitrateMbps: fixedMbps, audioBitrateKbps: 128,
-               targetSizeMB: targetMB)
+                        targetMB: Double? = nil,
+                        codecOverride: VideoCodec? = nil) -> Preset {
+        var p = Preset(name: "test", codec: codecOverride ?? .h264, resolution: resolution,
+                       fixedBitrateMbps: fixedMbps, audioBitrateKbps: 128,
+                       targetSizeMB: targetMB)
+        return p
     }
 
     // 3. A 3 Mbps source + an 8 Mbps preset: the source ceiling caps the
@@ -46,6 +48,17 @@ final class PlanTests: XCTestCase {
         XCTAssertEqual(plan.requestedVideoBitrate, 8_000_000)
         XCTAssertTrue(plan.targetFeasible)
         XCTAssertFalse(plan.sdrConvert, "SDR source → conversion off by default")
+    }
+
+    // 5. CODEC-AWARE CEILING: transcoding H.264 → HEVC keeps quality at
+    //    ~0.65× the source rate (Zoom/Teams recordings), so the ceiling for
+    //    an HEVC preset on an avc1 source is 0.95× × 0.65×, not 0.95× alone.
+    func testCodecAwareCeiling() {
+        let plan = QualitySizeOptimizer.plan(
+            preset: preset(codecOverride: .hevc), probe: probe(videoDataRate: 3_000_000))
+        XCTAssertEqual(Double(plan.videoBitrate), 1_950_000, accuracy: 1,
+                       "cap = source rate × 0.95 × 0.65 at keep-resolution")
+        XCTAssertTrue(plan.bitrateCapped)
     }
 
     // Target-SIZE mode: the plan's bitrate IS SizeMath's solve — one formula,

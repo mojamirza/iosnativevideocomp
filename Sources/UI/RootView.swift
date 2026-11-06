@@ -161,6 +161,7 @@ struct RootView: View {
                 if #available(iOS 26.0, *) {
                     BackgroundCompress.attach(coordinator: coordinator)
                 }
+                VideoInbox.hostCoordinator = coordinator
                 coordinator.loadHistory()
                 // Shortcuts handoff: videos added by "Compress video" while
                 // the app was away get enqueued now (history first, so the
@@ -174,8 +175,17 @@ struct RootView: View {
             // the moment the scene becomes active again (the launch .task
             // above only ever fires once per process).
             .onChange(of: scenePhase) { _, phase in
-                guard phase == .active, #available(iOS 17.0, *) else { return }
-                Task { await VideoInbox.consume(with: coordinator) }
+                guard phase == .active else { return }
+                // Lift a background-revocation pause (queued jobs continue).
+                coordinator.resumeIfBackgroundPaused()
+                if #available(iOS 17.0, *) {
+                    Task { await VideoInbox.consume(with: coordinator) }
+                }
+            }
+            // Keep the screen awake while any job is active — an auto-lock
+            // mid-encode suspends the app and kills the hardware encoder.
+            .onChange(of: coordinator.hasActiveJob) { _, active in
+                UIApplication.shared.isIdleTimerDisabled = active
             }
             // MENU BAR requests: the commands flip one-shot flags; RootView
             // consumes them and owns the sheets/dialogs they trigger.
@@ -460,35 +470,26 @@ struct RootView: View {
 /// history (every done record stores its in/out bytes), so the number is
 /// honest — negative deltas (outputs that grew) don't inflate it.
 private struct LifetimeStatsCard: View {
-    // @Query refreshes itself on every save of the context — the manual
-    // NotificationCenter listen was betting on a Core Data name that
-    // SwiftData does not re-export, and was never a reliable save-signal.
+    /// ALL-TIME totals, stored in UserDefaults — Clear Finished and row
+    /// deletes can no longer shrink "lifetime" savings (the old per-record
+    /// sum shrank whenever history was cleared). Seeded once from history.
+    @AppStorage("stats.lifetimeSavedBytes") private var savedBytes = 0
+    @AppStorage("stats.lifetimeVideos") private var videosCount = 0
     @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
     private var records: [JobRecord]
-
-    private var stats: (videos: Int, saved: Int64) {
-        var vids = 0
-        var saved: Int64 = 0
-        for r in records {
-            let delta = r.inBytes - r.outBytes
-            if delta > 0 { saved += delta; vids += 1 }
-            else if r.outBytes > 0 { vids += 1 }
-        }
-        return (vids, saved)
-    }
+    @State private var seeded = false
 
     var body: some View {
         Group {
-            let s = stats
-            if s.videos > 0, s.saved > 0 {
+            if videosCount > 0, savedBytes > 0 {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill")
                         .font(.callout)
                         .foregroundStyle(Color(UIColor.systemGreen))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
+                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: Int64(savedBytes), countStyle: .file))")
                             .font(.callout.weight(.semibold))
-                        Text("Lifetime total across \(s.videos) finished compression\(s.videos == 1 ? "" : "s").")
+                        Text("Lifetime total across \(videosCount) finished compression\(videosCount == 1 ? "" : "s").")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -499,6 +500,21 @@ private struct LifetimeStatsCard: View {
                             in: RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
             }
+        }
+        .task {
+            // One-time seed: adopt the savings already present in history so
+            // updating installs don't start the counter from zero. `max`
+            // keeps re-seeding from ever shrinking the counter.
+            guard !seeded else { return }
+            seeded = true
+            var vids = 0
+            var bytes = 0
+            for r in records where r.outBytes > 0 {
+                vids += 1
+                bytes += Int(max(0, r.inBytes - r.outBytes))
+            }
+            videosCount = max(videosCount, vids)
+            savedBytes = max(savedBytes, bytes)
         }
     }
 }

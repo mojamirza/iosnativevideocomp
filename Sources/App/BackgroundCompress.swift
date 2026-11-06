@@ -45,6 +45,7 @@ enum BackgroundCompress {
     /// Called once at launch, before any submission can happen.
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
+            submitPending = false
             guard let continued = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
@@ -72,7 +73,12 @@ enum BackgroundCompress {
     /// the system refuses (unsupported, profile without the capability,
     /// background refresh off, …) — purely informational: the in-app worker
     /// is always already running when this is called.
+    private static var submitPending = false
     static func submit(subtitle: String) -> Bool {
+        // Already requested and not started yet: treat as success instead of
+        // double-submitting (the second submit throws and would wrongly
+        // surface the "background unavailable" alert).
+        guard !submitPending else { return true }
         let request = BGContinuedProcessingTaskRequest(
             identifier: taskID,
             title: "Compressing videos",
@@ -80,6 +86,7 @@ enum BackgroundCompress {
         request.strategy = .fail
         do {
             try BGTaskScheduler.shared.submit(request)
+            submitPending = true
             return true
         } catch {
             return false
@@ -94,6 +101,8 @@ enum BackgroundCompress {
         Task { @MainActor in
             while !expiry.isExpired {
                 guard let coordinator else { break }
+                // A background-task revocation pauses the queue here too.
+                if coordinator.bgPaused { break }
                 // The in-app worker is the foreground executor (instant
                 // start). While it's alive it owns the work — wait for it to
                 // finish, then sweep anything still queued. The task staying

@@ -445,12 +445,14 @@ enum IntegrityVerifier {
             for fraction in fractions {
                 if Date().timeIntervalSince(t0) > 18 { break }
                 let tOut = fraction * outDuration
-                // Source time for an output position: anchor offset + the
-                // trim window start (the output timeline begins at the trim).
-                let tSrc = probe.startOffset + plan.trimStart + tOut
-                async let a = QualityCheck.lumaFrame(asset: srcAsset, at: tSrc)
+                // OUTPUT-FIRST SAMPLING: decode the OUTPUT frame, then fetch
+                // the SOURCE at that frame's actual timestamp (+ anchor +
+                // trim start) — fraction-matched frames can be a frame period
+                // apart under a fps cap, which scored motion scenes as weak.
                 async let b = QualityCheck.lumaFrame(asset: outAsset, at: tOut)
-                guard let fa = await a, let fb = await b else { continue }
+                guard let fb = await b else { continue }
+                let tSrc = probe.startOffset + plan.trimStart + fb.time
+                guard let fa = await QualityCheck.lumaFrame(asset: srcAsset, at: tSrc) else { continue }
                 sampled += 1
                 if let p = QualityCheck.psnr(fa, fb) { psnrs.append(p) }
                 if let s = QualityCheck.ssim(fa, fb) { ssims.append(s) }
