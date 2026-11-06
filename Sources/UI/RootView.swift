@@ -45,7 +45,7 @@ struct RootView: View {
                         Button("Select all") { coordinator.selectAllFinished() }
                         Spacer()
                         Button {
-                            coordinator.saveSelectedToPhotos()
+                            Task { await coordinator.saveSelectedToPhotos() }
                         } label: {
                             Label("Save", systemImage: "square.and.arrow.down")
                         }
