@@ -33,6 +33,8 @@ struct SetupFlowView: View {
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 0
     @State private var filmstrip: [UIImage] = []
+    /// Poster pick: index into the filmstrip (nil = automatic frame).
+    @State private var thumbIndex: Int?
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -363,16 +365,39 @@ struct SetupFlowView: View {
                     ForEach(filmstrip.indices, id: \.self) { i in
                         let t = probe.duration * (Double(i) + 0.5) / Double(filmstrip.count)
                         let inside = t >= trimStart && t <= trimEnd
-                        Image(uiImage: filmstrip[i])
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(height: 44)
-                            .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .opacity(inside ? 1 : 0.25)
+                        let selected = thumbIndex == i
+                        Button {
+                            thumbIndex = selected ? nil : i
+                        } label: {
+                            Image(uiImage: filmstrip[i])
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 44)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                                .opacity(inside ? 1 : 0.25)
+                                .overlay {
+                                    if selected {
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .strokeBorder(.tint, lineWidth: 2)
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.white, .tint)
+                                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                                            .padding(2)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!inside)
+                        .accessibilityLabel(selected
+                            ? "Poster frame \(i + 1), selected"
+                            : "Use frame \(i + 1) as poster")
                     }
                 }
             }
+            Text("Tap a frame to set the video's poster — it is embedded in the output and shown by Files and players.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             HStack {
                 Text("Start").font(.caption2).frame(width: 38, alignment: .leading)
@@ -702,14 +727,22 @@ struct SetupFlowView: View {
             guard let probe = probes[i] else { continue }
             var plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
             if !isBatch {
-                // Per-video adjustments (single video only): rotation and
-                // the trim window live on the plan, not the preset.
+                // Per-video adjustments (single video only): rotation, the
+                // trim window and the poster frame live on the plan, not the
+                // preset.
                 plan.rotationDegrees = rotation
                 if trimEnd - trimStart >= 0.5,
                    trimStart > 0.05 || trimEnd < probe.duration - 0.05 {
                     plan.trimStart = trimStart
                     plan.trimEnd = trimEnd
                     plan.duration = max(0.5, trimEnd - trimStart)
+                }
+                // Poster: only a frame INSIDE the trim window is valid.
+                if let idx = thumbIndex, !filmstrip.isEmpty {
+                    let t = probe.duration * (Double(idx) + 0.5) / Double(filmstrip.count)
+                    if t >= trimStart && t <= trimEnd {
+                        plan.thumbnailTime = t
+                    }
                 }
             }
             coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,

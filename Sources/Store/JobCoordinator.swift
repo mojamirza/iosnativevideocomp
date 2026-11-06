@@ -42,6 +42,9 @@ final class JobCoordinator: ObservableObject {
         /// row derives encode speed and ETA from this, proving the job is
         /// alive without inventing fake progress.
         var startedAt: Date?
+        /// User-picked poster frame (output-timeline seconds) — drives the
+        /// row thumbnail regeneration and is persisted in the record.
+        var thumbnailTime: Double?
     }
 
     @Published var jobs: [Job] = []
@@ -398,6 +401,17 @@ final class JobCoordinator: ObservableObject {
                     $0.state = .done
                     $0.report = report
                     $0.outputURL = promoted
+                    $0.thumbnailTime = plan.thumbnailTime
+                }
+                // Poster override: regenerate the row thumbnail from the
+                // user-picked frame (source time = anchor + chosen time).
+                if plan.thumbnailTime != nil {
+                    let url = job.sourceURL
+                    let raw = plan.source.startOffset + (plan.thumbnailTime ?? 0)
+                    Task { [weak self] in
+                        let img = await Thumbnails.make(url: url, at: raw)
+                        self?.setJob(jobID) { $0.thumbnail = img }
+                    }
                 }
                 // A cancel that landed during verification: honour it — remove
                 // the row entirely, unless iOS interrupted us (then keep a
@@ -784,9 +798,10 @@ final class JobCoordinator: ObservableObject {
             url = nil
         }
         guard let url else { return }
+        let at = jobs[idx].thumbnailTime
         thumbnailAttempts.insert(jobID)
         Task { [weak self] in
-            let thumb = await Thumbnails.make(url: url)
+            let thumb = await Thumbnails.make(url: url, at: at)
             self?.setJob(jobID) { $0.thumbnail = thumb }
         }
     }
@@ -942,7 +957,8 @@ final class JobCoordinator: ObservableObject {
                     errorMessage: r.errorMessage,
                     outputURL: outputURL,
                     thumbnail: nil,
-                    createdAt: r.createdAt
+                    createdAt: r.createdAt,
+                    thumbnailTime: r.thumbnailTime
                 ))
             }
             if purgedRecords { try? context.save() }
@@ -988,7 +1004,8 @@ final class JobCoordinator: ObservableObject {
             reportJSON: report,
             presetJSON: try? JSONEncoder().encode(job.preset),
             codecLabel: job.preset.codec.displayName,
-            resolutionLabel: job.preset.resolution.displayName
+            resolutionLabel: job.preset.resolution.displayName,
+            thumbnailTime: job.thumbnailTime
         )
         context.insert(record)
         try? context.save()

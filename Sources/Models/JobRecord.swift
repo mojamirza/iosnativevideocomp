@@ -17,11 +17,14 @@ final class JobRecord {
     var presetJSON: Data?
     var codecLabel: String = ""
     var resolutionLabel: String = ""
+    /// User-picked poster frame (output-timeline seconds); nil = automatic.
+    var thumbnailTime: Double?
 
     init(jobID: UUID, createdAt: Date, sourceName: String, presetName: String,
          outputFileName: String?, inBytes: Int64, outBytes: Int64, duration: Double,
          stateRaw: String, errorMessage: String?, reportJSON: Data?,
-         presetJSON: Data? = nil, codecLabel: String, resolutionLabel: String) {
+         presetJSON: Data? = nil, codecLabel: String, resolutionLabel: String,
+         thumbnailTime: Double? = nil) {
         self.jobID = jobID
         self.createdAt = createdAt
         self.sourceName = sourceName
@@ -36,5 +39,6 @@ final class JobRecord {
         self.presetJSON = presetJSON
         self.codecLabel = codecLabel
         self.resolutionLabel = resolutionLabel
+        self.thumbnailTime = thumbnailTime
     }
 }

@@ -633,7 +633,7 @@ struct SecurityScoped {
 }
 
 enum Thumbnails {
-    static func make(url: URL, maxDimension: CGFloat = 320) async -> UIImage? {
+    static func make(url: URL, maxDimension: CGFloat = 320, at time: Double? = nil) async -> UIImage? {
         let asset = AVURLAsset(url: url)
         let gen = AVAssetImageGenerator(asset: asset)
         gen.appliesPreferredTrackTransform = true
@@ -641,7 +641,7 @@ enum Thumbnails {
         gen.requestedTimeToleranceBefore = .positiveInfinity
         gen.requestedTimeToleranceAfter = .positiveInfinity
         let dur = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 1
-        let at = CMTime(seconds: dur > 2 ? dur * 0.15 : 0.1, preferredTimescale: 600)
+        let at = CMTime(seconds: time ?? (dur > 2 ? dur * 0.15 : 0.1), preferredTimescale: 600)
         guard let (img, _) = try? await gen.image(at: at) else { return nil }
         return UIImage(cgImage: img)
     }

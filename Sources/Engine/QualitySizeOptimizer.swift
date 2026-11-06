@@ -40,6 +40,11 @@ struct OptimizerPlan: Hashable {
     /// [startOffset + trimStart, startOffset + trimEnd]; nil = no trim.
     var trimStart: Double = 0
     var trimEnd: Double?
+    /// USER-PICKED poster frame (output-timeline seconds, from the setup
+    /// filmstrip). The engine grabs the source frame at the corresponding
+    /// raw time and embeds it as QuickTime artwork metadata; the row
+    /// thumbnail regenerates from the same frame. nil = automatic.
+    var thumbnailTime: Double?
 
     var expectedFrames: Int {
         max(1, Int(duration * Double(fps > 0 ? fps : 30)))

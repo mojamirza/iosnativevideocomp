@@ -375,40 +375,6 @@ struct JobRowView: View {
         }
     }
 
-    /// Exports a poster frame from the compressed output as a PNG into the
-    /// app's Files folder (Files → On My iPad → VidCompress).
-    private func saveThumbnail(_ output: URL) {
-        Task { @MainActor in
-            let asset = AVURLAsset(url: output)
-            let gen = AVAssetImageGenerator(asset: asset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 1080, height: 1080)
-            gen.requestedTimeToleranceBefore = .positiveInfinity
-            gen.requestedTimeToleranceAfter = .positiveInfinity
-            let dur = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? 1
-            let at = CMTime(seconds: max(0.1, dur * 0.25), preferredTimescale: 600)
-            guard let (cgImage, _) = try? await gen.image(at: at) else {
-                saveNotice = "Couldn't grab a frame from this video."
-                return
-            }
-            guard let data = UIImage(cgImage: cgImage).pngData() else { return }
-            let stem = (output.lastPathComponent as NSString).deletingPathExtension
-            var dest = JobCoordinator.outputsDirectory().appendingPathComponent("\(stem)-thumb.png")
-            var n = 1
-            while FileManager.default.fileExists(atPath: dest.path) {
-                dest = JobCoordinator.outputsDirectory().appendingPathComponent("\(stem)-thumb (\(n)).png")
-                n += 1
-            }
-            do {
-                try data.write(to: dest)
-                JobCoordinator.excludedFromBackup(dest)
-                saveNotice = "Thumbnail saved to Files → VidCompress."
-            } catch {
-                saveNotice = "Couldn't save the thumbnail: \(error.localizedDescription)"
-            }
-        }
-    }
-
     /// "Queued · next up" / "Queued · #3 in line" — workers pick the OLDEST
     /// queued job first, so the position ranks by creation date.
     private var queuePositionLabel: String {
@@ -568,11 +534,6 @@ struct JobRowView: View {
                         showingRename = true
                     } label: {
                         Label("Rename…", systemImage: "pencil")
-                    }
-                    Button {
-                        saveThumbnail(out)
-                    } label: {
-                        Label("Save thumbnail", systemImage: "photo")
                     }
                 } else {
                     Button {
