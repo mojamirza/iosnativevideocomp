@@ -47,7 +47,7 @@ struct VidCompressApp: App {
         }
         .modelContainer(container)
         .commands {
-            AppMenuCommands(coordinator: coordinator)
+            AppMenuCommands(menuState: coordinator.menuState, coordinator: coordinator)
         }
     }
 }
@@ -57,9 +57,11 @@ struct VidCompressApp: App {
 /// Menu items flip one-shot request flags on the coordinator; RootView
 /// owns the sheets and dialogs they trigger.
 struct AppMenuCommands: Commands {
-    // ObservedObject: menu items (disabled states, labels) must refresh when
-    // the coordinator's published state changes — a plain let never updates.
-    @ObservedObject var coordinator: JobCoordinator
+    // Menu items observe the LIGHTWEIGHT QueueMenuState snapshot — progress
+    // ticks never reach the menus (the old direct observation made the menu
+    // bar tick every update).
+    @ObservedObject var menuState: QueueMenuState
+    let coordinator: JobCoordinator
 
     var body: some Commands {
         // NOTE: no menu named "File" — iPadOS does NOT merge a custom
@@ -81,16 +83,16 @@ struct AppMenuCommands: Commands {
                 coordinator.cancelActiveJob()
             }
             .keyboardShortcut(".", modifiers: .command)
-            .disabled(!coordinator.hasActiveJob)
+            .disabled(!menuState.hasActive)
             Button("Cancel All Jobs") {
                 coordinator.cancelAllJobs()
             }
-            .disabled(!coordinator.hasActiveJob && !coordinator.hasQueuedJob)
+            .disabled(!menuState.hasActive && !menuState.hasQueued)
             Divider()
             Button("Clear Finished…") {
                 coordinator.requestClearFinished = true
             }
-            .disabled(!coordinator.jobs.contains { [.done, .failed, .cancelled].contains($0.state) })
+            .disabled(!menuState.hasFinished)
         }
         CommandGroup(after: .help) {
             Button("About & Settings…") {

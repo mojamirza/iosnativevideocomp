@@ -347,8 +347,15 @@ enum IntegrityVerifier {
             // (it always generates its own video preview); macOS Finder, VLC
             // and Plex honor them, so this check is the reliable test.
             if plan.posterData != nil {
+                // Match by COMMON KEY + every identifier the muxer might
+                // have chosen (quickTime/common/iTunes) — a narrow
+                // identifier comparison reported "not embedded" even when
+                // the artwork landed under a different-but-equivalent key.
                 let hasArt = outMeta.contains {
-                    $0.identifier == .quickTimeMetadataArtwork
+                    $0.commonKey == .commonKeyArtwork
+                        || $0.identifier == .quickTimeMetadataArtwork
+                        || $0.identifier == .commonIdentifierArtwork
+                        || $0.identifier == .iTunesMetadataCoverArt
                 }
                 if hasArt {
                     items.append(ReportItem("poster", "Poster embedded",

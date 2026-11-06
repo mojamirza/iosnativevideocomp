@@ -19,6 +19,15 @@ struct InsufficientSpaceError: LocalizedError {
     }
 }
 
+/// Lightweight published snapshot for the menu bar: only changes when the
+/// queue STRUCTURE changes — progress ticks never reach the menus (the old
+/// direct observation made the menu bar tick every progress update).
+final class QueueMenuState: ObservableObject {
+    @Published var hasActive = false
+    @Published var hasQueued = false
+    @Published var hasFinished = false
+}
+
 @MainActor
 final class JobCoordinator: ObservableObject {
 
@@ -80,6 +89,24 @@ final class JobCoordinator: ObservableObject {
         self.modelContext = context
     }
 
+    /// Menu bar state (see QueueMenuState) — refreshed on structural
+    /// changes only; progress ticks never touch it.
+    let menuState = QueueMenuState()
+    /// Progress publishes are throttled (see run()); the whole jobs array
+    /// republishes per tick, which made the page and menus visibly tick.
+    private var lastProgressPublish = Date.distantPast
+
+    /// Refreshes the menu-bar snapshot; assigns only on change so menu-bar
+    /// observation stays quiet during progress streams.
+    private func refreshMenuState() {
+        let active = jobs.contains { [.analyzing, .compressing, .verifying].contains($0.state) }
+        let queued = jobs.contains { $0.state == .queued }
+        let finished = jobs.contains { [.done, .failed, .cancelled].contains($0.state) }
+        if menuState.hasActive != active { menuState.hasActive = active }
+        if menuState.hasQueued != queued { menuState.hasQueued = queued }
+        if menuState.hasFinished != finished { menuState.hasFinished = finished }
+    }
+
     // MARK: Import / enqueue
 
     func enqueue(source url: URL, probe: ProbeResult, plan: OptimizerPlan, preset: Preset, thumbnail: UIImage?) {
@@ -95,6 +122,7 @@ final class JobCoordinator: ObservableObject {
         // QUEUE PERSISTENCE: a queued record means a crash/kill mid-batch
         // resumes the job at launch instead of losing it.
         saveRecord(jobID: job.id, outputName: nil, report: nil, state: "queued")
+        refreshMenuState()
         runQueueIfNeeded()
     }
 
@@ -266,11 +294,19 @@ final class JobCoordinator: ObservableObject {
                 flags: flags
             ) { [weak self] progress in
                 Task { @MainActor in
+                    guard let self else { return }
+                    // THROTTLE: every tick republishes the whole jobs array,
+                    // which used to make the entire page AND the menu bar
+                    // visibly tick during encodes. 0.5 s keeps the bar
+                    // smooth; completion is published explicitly below.
+                    let now = Date()
+                    guard now.timeIntervalSince(self.lastProgressPublish) >= 0.5 else { return }
+                    lastProgressPublish = now
                     // Monotonic: a stale engine emission (an earlier
                     // attempt, a re-anchored VFR source) must never drag
                     // the row backward mid-encode.
-                    self?.setJob(jobID) { $0.progress = max($0.progress, progress) }
-                    self?.bgProgress(name: job.sourceName, fraction: progress)
+                    self.setJob(jobID) { $0.progress = max($0.progress, progress) }
+                    self.bgProgress(name: job.sourceName, fraction: progress)
                 }
             }
             plan.audioBitrate = audioApplied
@@ -327,8 +363,13 @@ final class JobCoordinator: ObservableObject {
                         flags: flags
                     ) { [weak self] progress in
                         Task { @MainActor in
-                            self?.setJob(jobID) { $0.progress = max($0.progress, progress) }
-                            self?.bgProgress(name: job.sourceName, fraction: progress)
+                            guard let self else { return }
+                            // Same 0.5 s throttle as the primary pass.
+                            let now = Date()
+                            guard now.timeIntervalSince(self.lastProgressPublish) >= 0.5 else { return }
+                            lastProgressPublish = now
+                            self.setJob(jobID) { $0.progress = max($0.progress, progress) }
+                            self.bgProgress(name: job.sourceName, fraction: progress)
                         }
                     }
                     next.audioBitrate = audioApplied
@@ -570,6 +611,7 @@ final class JobCoordinator: ObservableObject {
             // Caches/Imports until the next sweep.
             deleteSourceImport(jobs[idx])
             withAnimation { jobs.remove(at: idx) }
+            refreshMenuState()
         } else if let flags = cancelFlags[jobID] {
             // Active job: the engine's cancel hooks abort the encode at once;
             // run() then removes the row entirely (cancelled jobs leave no
@@ -741,6 +783,7 @@ final class JobCoordinator: ObservableObject {
             deleteSourceImport(jobs[idx])
             withAnimation { jobs.remove(at: idx) }
         }
+        refreshMenuState()
     }
 
     /// "Keep anyway" on a failed-integrity row: the verifier is software and
@@ -1156,6 +1199,7 @@ final class JobCoordinator: ObservableObject {
         let existingIDs = Set(jobs.map { $0.id })
         jobs.append(contentsOf: out.filter { !existingIDs.contains($0.id) })
         cleanupOrphans()
+        refreshMenuState()
         // Resumed queued rows (queue persistence) need the worker started.
         runQueueIfNeeded()
     }
@@ -1233,6 +1277,7 @@ final class JobCoordinator: ObservableObject {
         if jobs[idx].state != oldState {
             noteTerminalTick(jobs[idx].state)
         }
+        refreshMenuState()
     }
 
     /// Haptic ticks for terminal transitions. The old per-row
