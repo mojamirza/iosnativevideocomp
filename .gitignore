@@ -15,3 +15,5 @@ joblog.txt
 
 # CI debug logs
 ci-log*.txt
+
+ci-iconlog.txt
