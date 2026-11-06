@@ -16,6 +16,12 @@ targets:
       path: Support/Info.plist
       properties:
         CFBundleDisplayName: VidCompress
+        # Version keys resolve from the TARGET BUILD SETTINGS at build time
+        # (literal defaults here would override MARKETING_VERSION /
+        # CURRENT_PROJECT_VERSION — CI proved the bundle shipped 1.0(1)
+        # despite the settings saying otherwise).
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         # MULTITASKING: Split View / Stage Manager supported (also the
         # prerequisite for drag-and-drop import from Files). Multitasking
