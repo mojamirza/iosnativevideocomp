@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 import AVFoundation
 
 /// One imported video on its way into the setup flow (batch-capable).
@@ -28,13 +29,15 @@ struct SetupFlowView: View {
     /// Privacy scrub: keep the source's creation date (location is NEVER
     /// kept). Persisted so the choice sticks across sessions.
     @State private var keepCreationDate = PrivacyScrub.keepCreationDate
-    // ADJUST (single video): rotate + trim with a thumbnail filmstrip.
+    // ADJUST (single video): rotate + trim with a thumbnail filmstrip,
+    // plus a custom poster image (embedded as the output's artwork).
     @State private var rotation: Int = 0
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 0
     @State private var filmstrip: [UIImage] = []
-    /// Poster pick: index into the filmstrip (nil = automatic frame).
-    @State private var thumbIndex: Int?
+    @State private var posterItem: PhotosPickerItem?
+    @State private var posterData: Data?
+    @State private var posterPreview: UIImage?
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -165,6 +168,20 @@ struct SetupFlowView: View {
             }
             // Selection feedback: light tick on every preset change.
             .sensoryFeedback(.selection, trigger: selectedPreset?.id)
+            // Poster image picked: normalize to JPEG ≤1024px so the embedded
+            // artwork's data type is valid regardless of source format
+            // (HEIC/PNG/whatever the library hands over).
+            .onChange(of: posterItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let raw = try? await item.loadTransferable(type: Data.self),
+                       let img = UIImage(data: raw),
+                       let poster = Self.normalizedPoster(img) {
+                        posterData = poster
+                        posterPreview = UIImage(data: poster)
+                    }
+                }
+            }
         }
     }
 
@@ -365,39 +382,16 @@ struct SetupFlowView: View {
                     ForEach(filmstrip.indices, id: \.self) { i in
                         let t = probe.duration * (Double(i) + 0.5) / Double(filmstrip.count)
                         let inside = t >= trimStart && t <= trimEnd
-                        let selected = thumbIndex == i
-                        Button {
-                            thumbIndex = selected ? nil : i
-                        } label: {
-                            Image(uiImage: filmstrip[i])
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(height: 44)
-                                .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 3))
-                                .opacity(inside ? 1 : 0.25)
-                                .overlay {
-                                    if selected {
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .strokeBorder(.tint, lineWidth: 2)
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.white, .tint)
-                                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                                            .padding(2)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!inside)
-                        .accessibilityLabel(selected
-                            ? "Poster frame \(i + 1), selected"
-                            : "Use frame \(i + 1) as poster")
+                        Image(uiImage: filmstrip[i])
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(height: 44)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .opacity(inside ? 1 : 0.25)
                     }
                 }
             }
-            Text("Tap a frame to set the video's poster — it is embedded in the output and shown by Files and players.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
 
             HStack {
                 Text("Start").font(.caption2).frame(width: 38, alignment: .leading)
@@ -431,6 +425,48 @@ struct SetupFlowView: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 320)
             }
+
+            // CUSTOM POSTER: any image the user picks is normalized to
+            // JPEG ≤1024px and embedded as the output's QuickTime artwork —
+            // Files/Finder and players show it as the video's thumbnail.
+            HStack(spacing: 12) {
+                Group {
+                    if let preview = posterPreview {
+                        Image(uiImage: preview)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        ZStack {
+                            Rectangle().fill(.quaternary)
+                            Image(systemName: "photo")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(width: 64, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(posterPreview == nil ? "Poster: automatic frame" : "Custom poster set")
+                        .font(.caption.weight(.semibold))
+                    HStack(spacing: 10) {
+                        PhotosPicker(selection: $posterItem, matching: .images) {
+                            Text("Choose image…")
+                                .font(.caption.weight(.semibold))
+                        }
+                        if posterPreview != nil {
+                            Button("Use automatic") {
+                                posterItem = nil
+                                posterData = nil
+                                posterPreview = nil
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+            }
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
@@ -458,6 +494,19 @@ struct SetupFlowView: View {
             }
         }
         filmstrip = imgs
+    }
+
+    /// Poster normalization: ≤1024px JPEG so the embedded artwork's data
+    /// type is always valid regardless of the picked format (HEIC/PNG/…).
+    private static func normalizedPoster(_ image: UIImage) -> Data? {
+        let maxSide: CGFloat = 1024
+        let scale = min(1, maxSide / max(image.size.width, image.size.height))
+        let size = CGSize(width: (image.size.width * scale).rounded(),
+                          height: (image.size.height * scale).rounded())
+        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return rendered.jpegData(compressionQuality: 0.9)
     }
 
     private var batchCard: some View {
@@ -737,13 +786,8 @@ struct SetupFlowView: View {
                     plan.trimEnd = trimEnd
                     plan.duration = max(0.5, trimEnd - trimStart)
                 }
-                // Poster: only a frame INSIDE the trim window is valid.
-                if let idx = thumbIndex, !filmstrip.isEmpty {
-                    let t = probe.duration * (Double(idx) + 0.5) / Double(filmstrip.count)
-                    if t >= trimStart && t <= trimEnd {
-                        plan.thumbnailTime = t
-                    }
-                }
+                // Poster: the user-picked image (nil = automatic frame).
+                plan.posterData = posterData
             }
             coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,
                                 preset: preset, thumbnail: videos[i].thumbnail)

@@ -43,9 +43,9 @@ final class JobCoordinator: ObservableObject {
         /// row derives encode speed and ETA from this, proving the job is
         /// alive without inventing fake progress.
         var startedAt: Date?
-        /// User-picked poster frame (output-timeline seconds) — drives the
-        /// row thumbnail regeneration and is persisted in the record.
-        var thumbnailTime: Double?
+        /// User-picked poster image (normalized JPEG) — drives the row
+        /// thumbnail and is persisted in the record.
+        var posterData: Data?
     }
 
     @Published var jobs: [Job] = []
@@ -402,17 +402,12 @@ final class JobCoordinator: ObservableObject {
                     $0.state = .done
                     $0.report = report
                     $0.outputURL = promoted
-                    $0.thumbnailTime = plan.thumbnailTime
+                    $0.posterData = plan.posterData
                 }
-                // Poster override: regenerate the row thumbnail from the
-                // user-picked frame (source time = anchor + chosen time).
-                if plan.thumbnailTime != nil {
-                    let url = job.sourceURL
-                    let raw = plan.source.startOffset + (plan.thumbnailTime ?? 0)
-                    Task { [weak self] in
-                        let img = await Thumbnails.make(url: url, at: raw)
-                        self?.setJob(jobID) { $0.thumbnail = img }
-                    }
+                // Poster override: the row thumbnail becomes the user-picked
+                // image (decoded from the normalized data).
+                if let data = plan.posterData {
+                    setJob(jobID) { $0.thumbnail = UIImage(data: data) }
                 }
                 // A cancel that landed during verification: honour it — remove
                 // the row entirely, unless iOS interrupted us (then keep a
@@ -874,10 +869,16 @@ final class JobCoordinator: ObservableObject {
             url = nil
         }
         guard let url else { return }
-        let at = jobs[idx].thumbnailTime
+        // A custom poster persists across relaunches (stored in the record);
+        // otherwise decode a frame from the source/output.
+        if let data = jobs[idx].posterData {
+            thumbnailAttempts.insert(jobID)
+            setJob(jobID) { $0.thumbnail = UIImage(data: data) }
+            return
+        }
         thumbnailAttempts.insert(jobID)
         Task { [weak self] in
-            let thumb = await Thumbnails.make(url: url, at: at)
+            let thumb = await Thumbnails.make(url: url)
             self?.setJob(jobID) { $0.thumbnail = thumb }
         }
     }
@@ -1034,7 +1035,7 @@ final class JobCoordinator: ObservableObject {
                     outputURL: outputURL,
                     thumbnail: nil,
                     createdAt: r.createdAt,
-                    thumbnailTime: r.thumbnailTime
+                    posterData: r.posterData
                 ))
             }
             if purgedRecords { try? context.save() }
@@ -1081,7 +1082,7 @@ final class JobCoordinator: ObservableObject {
             presetJSON: try? JSONEncoder().encode(job.preset),
             codecLabel: job.preset.codec.displayName,
             resolutionLabel: job.preset.resolution.displayName,
-            thumbnailTime: job.thumbnailTime
+            posterData: job.posterData
         )
         context.insert(record)
         try? context.save()

@@ -1,6 +1,5 @@
 import AVFoundation
 import VideoToolbox
-import UIKit
 
 /// Cooperative cancellation + error signalling shared between the UI and the
 /// encoder thread(s).
@@ -232,10 +231,9 @@ enum CompressionEngine {
         // creation date as a side effect. The output gets the source's
         // creation date — never a location tag. GPS would only land here via
         // a copied metadata track; none is copied.
-        // POSTER FRAME: when the user picked a thumbnail in setup, the frame
-        // is grabbed from the SOURCE at the corresponding raw time and
-        // embedded as QuickTime artwork — Files/Finder use it as the video's
-        // icon, players as the poster.
+        // POSTER: a user-picked image from setup is embedded as QuickTime
+        // artwork — Files/Finder use it as the video's icon, players as the
+        // poster.
         // Loaded ASYNC here (this engine runs off the main actor); and if the
         // writer refuses to start with the items, compress()'s wrapper
         // retries once with NO metadata and flips the session-wide kill
@@ -244,11 +242,15 @@ enum CompressionEngine {
         var metadata: [AVMetadataItem] = allowMetadata
             ? await PrivacyScrub.items(for: asset)
             : []
-        if let thumbTime = plan.thumbnailTime {
-            if let art = await Self.artworkItem(
-                source: asset, at: plan.source.startOffset + thumbTime) {
-                metadata.append(art)
-            }
+        // The poster arrives normalized (JPEG ≤1024px) from setup, so the
+        // artwork's data type is always valid. Rejection by the writer is
+        // covered by the metadataRejected retry below.
+        if let poster = plan.posterData {
+            let item = AVMutableMetadataItem()
+            item.identifier = .quickTimeMetadataArtwork
+            item.dataType = kCMMetadataBaseDataType_JPEG as String
+            item.value = poster as NSData
+            metadata.append(item)
         }
         writer.metadata = metadata
 
@@ -1081,26 +1083,6 @@ enum CompressionEngine {
         return audioInput != nil
             ? (audioSettings?[AVEncoderBitRateKey] as? NSNumber)?.intValue ?? 0
             : 0
-    }
-
-    /// Builds the QuickTime artwork metadata item from a source frame
-    /// (JPEG, ≤1024px). nil when the frame can't be decoded.
-    private static func artworkItem(source: AVAsset, at seconds: Double) async -> AVMetadataItem? {
-        let gen = AVAssetImageGenerator(asset: source)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 1024, height: 1024)
-        gen.requestedTimeToleranceBefore = .positiveInfinity
-        gen.requestedTimeToleranceAfter = .positiveInfinity
-        guard let (cgImage, _) = try? await gen.image(
-            at: CMTime(seconds: max(0, seconds), preferredTimescale: 600)),
-            let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.9) else {
-            return nil
-        }
-        let item = AVMutableMetadataItem()
-        item.identifier = .quickTimeMetadataArtwork
-        item.dataType = kCMMetadataBaseDataType_JPEG as String
-        item.value = data as NSData
-        return item
     }
 
     /// Fetch a destination pixel buffer from a pool (falling back to a plain
