@@ -63,6 +63,10 @@ struct FrameCapper {
     private var nextSlot = CMTime.zero
     private var slotActive = false
 
+    init(cap: Int) {
+        self.cap = cap
+    }
+
     mutating func shouldKeep(_ pts: CMTime) -> Bool {
         let period = CMTime(value: 1, timescale: CMTimeScale(cap))
         let tol = CMTime(value: 1, timescale: CMTimeScale(cap * 4))
@@ -311,7 +315,7 @@ enum CompressionEngine {
         let gopSeconds: Double = (preset.audioChannels == 1) ? 8 : 2
         var props: [String: Any] = [
             AVVideoAverageBitRateKey: plan.videoBitrate,
-            AVVideoMaxKeyFrameIntervalKey: max(1, Int(plan.fps * gopSeconds)),
+            AVVideoMaxKeyFrameIntervalKey: max(1, Int(Double(plan.fps) * gopSeconds)),
             AVVideoExpectedSourceFrameRateKey: max(1, Int(plan.fps)),
             AVVideoAllowFrameReorderingKey: NSNumber(value: true),
             // Peak cap: keep bitrate spikes at ~125% of the target (bytes/s

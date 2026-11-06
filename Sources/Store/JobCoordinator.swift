@@ -784,6 +784,18 @@ final class JobCoordinator: ObservableObject {
     /// suspends the process. RootView resumes on scenePhase == .active.
     @Published var bgPaused = false
 
+    /// All-time totals for the stats card (UserDefaults-backed — surviving
+    /// Clear Finished and row deletes). The card's @AppStorage reads the
+    /// same keys.
+    var lifetimeSavedBytes: Int {
+        get { UserDefaults.standard.integer(forKey: "stats.lifetimeSavedBytes") }
+        set { UserDefaults.standard.set(newValue, forKey: "stats.lifetimeSavedBytes") }
+    }
+    var lifetimeVideos: Int {
+        get { UserDefaults.standard.integer(forKey: "stats.lifetimeVideos") }
+        set { UserDefaults.standard.set(newValue, forKey: "stats.lifetimeVideos") }
+    }
+
     /// Per-run verification watchdog (cancelled when verification finishes
     /// or the row is retried — a fast Retry must not race the old watchdog).
     private var verifyWatchdog: Task<Void, Never>?
