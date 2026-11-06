@@ -19,6 +19,9 @@ struct RootView: View {
     @State private var importError: String?
     @State private var dropActive = false
     @State private var confirmingBatchDelete = false
+    @State private var showPresetEditor = false
+    @State private var showAboutSettings = false
+    @State private var confirmingClearFinished = false
 
     var body: some View {
         NavigationStack {
@@ -116,12 +119,42 @@ struct RootView: View {
             } message: {
                 Text("The selected videos and their history entries will be removed. This cannot be undone.")
             }
+            // Fat-finger protection for Clear Finished (menu bar).
+            .confirmationDialog(
+                "Delete all finished rows?",
+                isPresented: $confirmingClearFinished,
+                titleVisibility: .visible) {
+                Button("Delete \(coordinator.jobs.filter { [.done, .failed, .cancelled].contains($0.state) }.count) finished items", role: .destructive) {
+                    coordinator.clearFinished()
+                }
+                Button("Keep", role: .cancel) { }
+            } message: {
+                Text("Outputs and history entries of finished jobs will be removed. This cannot be undone.")
+            }
             .sheet(isPresented: $showingSetup, onDismiss: {
                 setupSheetDismiss()
             }) {
                 SetupFlowView(videos: importedVideos,
                               onDone: { showingSetup = false })
                     .presentationDetents([.large])
+            }
+            // MENU BAR sheets (File → New Preset, Help → About & Settings).
+            .sheet(isPresented: $showPresetEditor) {
+                PresetEditorView { newPreset in
+                    var customs = PresetStore.loadCustom()
+                    if let idx = customs.firstIndex(where: { $0.id == newPreset.id }) {
+                        customs[idx] = newPreset
+                    } else {
+                        customs.append(newPreset)
+                    }
+                    PresetStore.saveCustom(customs)
+                    PresetStore.setLastUsedPreset(newPreset.id)
+                }
+                .presentationDetents([.large])
+            }
+            .sheet(isPresented: $showAboutSettings) {
+                AboutSettingsSheet()
+                    .presentationDetents([.medium, .large])
             }
             .task {
                 coordinator.attach(context: modelContext)
@@ -143,6 +176,32 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active, #available(iOS 17.0, *) else { return }
                 Task { await VideoInbox.consume(with: coordinator) }
+            }
+            // MENU BAR requests: the commands flip one-shot flags; RootView
+            // consumes them and owns the sheets/dialogs they trigger.
+            .onChange(of: coordinator.requestFilesImport) { _, requested in
+                if requested {
+                    coordinator.requestFilesImport = false
+                    showFiles = true
+                }
+            }
+            .onChange(of: coordinator.requestPresetEditor) { _, requested in
+                if requested {
+                    coordinator.requestPresetEditor = false
+                    showPresetEditor = true
+                }
+            }
+            .onChange(of: coordinator.requestSettings) { _, requested in
+                if requested {
+                    coordinator.requestSettings = false
+                    showAboutSettings = true
+                }
+            }
+            .onChange(of: coordinator.requestClearFinished) { _, requested in
+                if requested {
+                    coordinator.requestClearFinished = false
+                    confirmingClearFinished = true
+                }
             }
             // Haptic polish, ONE source of truth: the coordinator's ticks
             // fire on terminal transitions regardless of which row a job
@@ -492,6 +551,42 @@ private struct StorageFooter: View {
             total += Int64(size)
         }
         return total
+    }
+}
+
+/// About & Settings sheet: the menu bar's About/Settings destination.
+/// The privacy toggle binds to the same UserDefaults key PrivacyScrub
+/// reads, so it stays in sync with the setup-sheet toggle.
+private struct AboutSettingsSheet: View {
+    @AppStorage("privacy.keepCreationDate") private var keepCreationDate = true
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Privacy") {
+                    Toggle("Keep creation date", isOn: $keepCreationDate)
+                    Text("Outputs never carry location data. The creation date is embedded only while this is on.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section("About") {
+                    LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                    LabeledContent("Build", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—")
+                    LabeledContent("Engine", value: "VideoToolbox · H.264 / HEVC")
+                }
+                Section("Project") {
+                    Link("VidCompress on GitHub", destination: URL(string: "https://github.com/mojamirza/iosnativevideocomp")!)
+                }
+            }
+            .navigationTitle("About & Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 

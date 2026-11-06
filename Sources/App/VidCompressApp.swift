@@ -46,5 +46,48 @@ struct VidCompressApp: App {
                 .environmentObject(coordinator)
         }
         .modelContainer(container)
+        .commands {
+            AppMenuCommands(coordinator: coordinator)
+        }
+    }
+}
+
+/// Menu bar for iPadOS 26 windowed mode (and keyboard shortcuts with any
+/// hardware keyboard): File / Queue / Help menus beside the system menus.
+/// Menu items flip one-shot request flags on the coordinator; RootView
+/// owns the sheets and dialogs they trigger.
+struct AppMenuCommands: Commands {
+    let coordinator: JobCoordinator
+
+    var body: some Commands {
+        CommandMenu("File") {
+            Button("Import from Files…") {
+                coordinator.requestFilesImport = true
+            }
+            .keyboardShortcut("o", modifiers: .command)
+            Button("New Preset…") {
+                coordinator.requestPresetEditor = true
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+        CommandMenu("Queue") {
+            Button("Cancel Active Job") {
+                coordinator.cancelActiveJob()
+            }
+            .keyboardShortcut(".", modifiers: .command)
+            .disabled(!coordinator.hasActiveJob)
+            Button("Cancel All Jobs") {
+                coordinator.cancelAllJobs()
+            }
+            .disabled(!coordinator.hasActiveJob && !coordinator.hasQueuedJob)
+        }
+        CommandMenu("Help") {
+            Button("About & Settings…") {
+                coordinator.requestSettings = true
+            }
+            .keyboardShortcut(",", modifiers: .command)
+            Divider()
+            Link("Project Page", destination: URL(string: "https://github.com/mojamirza/iosnativevideocomp")!)
+        }
     }
 }

@@ -670,6 +670,49 @@ final class JobCoordinator: ObservableObject {
         }
     }
 
+    // MARK: Menu bar (iPadOS 26 windowed mode / keyboard shortcuts)
+
+    /// One-shot request flags consumed by RootView: menu items can only
+    /// flip state — RootView owns the sheets, pickers and dialogs.
+    @Published var requestFilesImport = false
+    @Published var requestPresetEditor = false
+    @Published var requestSettings = false
+    @Published var requestClearFinished = false
+
+    var hasActiveJob: Bool {
+        jobs.contains { [.analyzing, .compressing, .verifying].contains($0.state) }
+    }
+
+    var hasQueuedJob: Bool {
+        jobs.contains { $0.state == .queued }
+    }
+
+    /// Cancels the currently active job (analyzing/compressing/verifying).
+    func cancelActiveJob() {
+        guard let job = jobs.first(where: {
+            [.analyzing, .compressing, .verifying].contains($0.state)
+        }) else { return }
+        cancel(jobID: job.id)
+    }
+
+    /// Cancels the active job and removes every queued row.
+    func cancelAllJobs() {
+        for job in jobs where job.state == .queued {
+            cancel(jobID: job.id)
+        }
+        cancelActiveJob()
+    }
+
+    /// Deletes every finished row (same per-row delete as the ⋯ menu).
+    func clearFinished() {
+        let ids = jobs
+            .filter { [.done, .failed, .cancelled].contains($0.state) }
+            .map(\.id)
+        for id in ids {
+            delete(jobID: id)
+        }
+    }
+
     /// Removes a job's row + record + partial output entirely (used by cancel
     /// and by the watchdogs). Cancelled jobs leave nothing behind.
     private func removeRow(jobID: UUID) {
