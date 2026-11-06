@@ -112,18 +112,15 @@ struct RootView: View {
     }
 
     /// The scrollable queue/history list — base layer of the former body
-    /// chain (content lives in `jobSections` below).
+    /// chain (content lives in `jobSections` below). Full-width on purpose:
+    /// that is the native iPadOS look in fullscreen, and Split View narrow
+    /// widths adapt on their own.
     private var queueList: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 jobSections
             }
             .padding(.vertical)
-            // DESKTOP-CLASS WIDTH: a full-bleed single column on a 13"
-            // iPad reads as a stretched phone app — cap the content and
-            // center it (Split View's narrow widths are unaffected).
-            .frame(maxWidth: 720)
-            .frame(maxWidth: .infinity)
         }
         .background(Color(.systemGroupedBackground))
     }

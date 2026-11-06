@@ -49,8 +49,8 @@ targets:
       base:
         PRODUCT_NAME: VidCompress
         PRODUCT_BUNDLE_IDENTIFIER: com.example.vidcompress
-        MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "1.1.1"
+        CURRENT_PROJECT_VERSION: "3"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "2"          # iPad-focused
         DEVELOPMENT_TEAM: ""                  # set locally in Xcode, or via CI secrets
