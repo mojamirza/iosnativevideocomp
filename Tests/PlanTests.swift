@@ -56,8 +56,8 @@ final class PlanTests: XCTestCase {
     func testCodecAwareCeiling() {
         let plan = QualitySizeOptimizer.plan(
             preset: preset(codecOverride: .hevc), probe: probe(videoDataRate: 3_000_000))
-        XCTAssertEqual(Double(plan.videoBitrate), 1_950_000, accuracy: 1,
-                       "cap = source rate × 0.95 × 0.65 at keep-resolution")
+        XCTAssertEqual(Double(plan.videoBitrate), 1_852_500, accuracy: 1,
+                       "cap = source rate × 0.95 headroom × 0.65 codec gain at keep-resolution")
         XCTAssertTrue(plan.bitrateCapped)
     }
 
