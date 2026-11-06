@@ -28,6 +28,11 @@ struct SetupFlowView: View {
     /// Privacy scrub: keep the source's creation date (location is NEVER
     /// kept). Persisted so the choice sticks across sessions.
     @State private var keepCreationDate = PrivacyScrub.keepCreationDate
+    // ADJUST (single video): rotate + trim with a thumbnail filmstrip.
+    @State private var rotation: Int = 0
+    @State private var trimStart: Double = 0
+    @State private var trimEnd: Double = 0
+    @State private var filmstrip: [UIImage] = []
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -108,6 +113,10 @@ struct SetupFlowView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 8)
+                    }
+
+                    if !isBatch, let probe = singleProbe, probe.duration >= 1.0 {
+                        adjustSection(probe)
                     }
 
                     presetSection
@@ -333,6 +342,99 @@ struct SetupFlowView: View {
     // MARK: subviews
 
     /// Batch header: count + total input size.
+    // MARK: adjust (single video)
+
+    /// Rotate + trim controls with a thumbnail filmstrip: 8 evenly spaced
+    /// frames; the ones outside the trim window dim so the selection is
+    /// visible without a scrubber.
+    private func adjustSection(_ probe: ProbeResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Adjust").font(.caption.bold()).foregroundStyle(.secondary)
+
+            HStack(spacing: 2) {
+                if filmstrip.isEmpty {
+                    ForEach(0..<8, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(.quaternary)
+                            .frame(height: 44)
+                            .frame(maxWidth: .infinity)
+                    }
+                } else {
+                    ForEach(filmstrip.indices, id: \.self) { i in
+                        let t = probe.duration * (Double(i) + 0.5) / Double(filmstrip.count)
+                        let inside = t >= trimStart && t <= trimEnd
+                        Image(uiImage: filmstrip[i])
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(height: 44)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                            .opacity(inside ? 1 : 0.25)
+                    }
+                }
+            }
+
+            HStack {
+                Text("Start").font(.caption2).frame(width: 38, alignment: .leading)
+                Slider(value: $trimStart, in: 0...max(0, trimEnd - 0.5))
+                    .accessibilityLabel("Trim start")
+                Text(timeString(trimStart))
+                    .font(.caption2.monospacedDigit())
+                    .frame(width: 44, alignment: .trailing)
+            }
+            HStack {
+                Text("End").font(.caption2).frame(width: 38, alignment: .leading)
+                Slider(value: $trimEnd, in: min(trimStart + 0.5, probe.duration)...probe.duration)
+                    .accessibilityLabel("Trim end")
+                Text(timeString(trimEnd))
+                    .font(.caption2.monospacedDigit())
+                    .frame(width: 44, alignment: .trailing)
+            }
+            Text("Keeping \(timeString(trimEnd - trimStart)) of \(timeString(probe.duration))")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Text("Rotate").font(.caption2)
+                Spacer()
+                Picker("Rotate", selection: $rotation) {
+                    Text("Native").tag(0)
+                    Text("90°").tag(90)
+                    Text("180°").tag(180)
+                    Text("270°").tag(270)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func timeString(_ s: Double) -> String {
+        String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
+    }
+
+    /// 8 evenly spaced frames via AVAssetImageGenerator (keyframe-tolerant,
+    /// small). Failures just leave placeholders.
+    private func loadFilmstrip(_ probe: ProbeResult, url: URL) async {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 240, height: 240)
+        gen.requestedTimeToleranceBefore = .positiveInfinity
+        gen.requestedTimeToleranceAfter = .positiveInfinity
+        var imgs: [UIImage] = []
+        let count = 8
+        for i in 0..<count {
+            let t = CMTime(seconds: probe.duration * (Double(i) + 0.5) / Double(count),
+                           preferredTimescale: 600)
+            if let (img, _) = try? await gen.image(at: t) {
+                imgs.append(UIImage(cgImage: img))
+            }
+        }
+        filmstrip = imgs
+    }
+
     private var batchCard: some View {
         HStack(spacing: 12) {
             Image(systemName: "square.stack.3d.up.fill")
@@ -598,7 +700,18 @@ struct SetupFlowView: View {
         PresetStore.setLastUsedPreset(preset.id)
         for i in videos.indices {
             guard let probe = probes[i] else { continue }
-            let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
+            var plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
+            if !isBatch {
+                // Per-video adjustments (single video only): rotation and
+                // the trim window live on the plan, not the preset.
+                plan.rotationDegrees = rotation
+                if trimEnd - trimStart >= 0.5,
+                   trimStart > 0.05 || trimEnd < probe.duration - 0.05 {
+                    plan.trimStart = trimStart
+                    plan.trimEnd = trimEnd
+                    plan.duration = max(0.5, trimEnd - trimStart)
+                }
+            }
             coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,
                                 preset: preset, thumbnail: videos[i].thumbnail)
         }
@@ -672,6 +785,12 @@ struct SetupFlowView: View {
                 if result == nil { failures += 1 }
                 addNext()
             }
+        }
+        // Single video: initialize the trim window to the full duration and
+        // pull the filmstrip for the adjust section.
+        if !isBatch, let p = probes.compactMap({ $0 }).first {
+            trimEnd = p.duration
+            await loadFilmstrip(p, url: videos[0].url)
         }
         if failures > 0 {
             errorText = failures == videos.count

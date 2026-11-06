@@ -141,7 +141,28 @@ The play button appears on every terminal row. `OutputPlayerSheet.load()` (`Sour
 
 ---
 
-## 6. Suggested order of work
+## Addendum (round 3, release 1.2.0) — VideoToolbox capability audit
+
+Audit of the framework's documented feature families vs. app coverage, driving release 1.2.0:
+
+| VideoToolbox / AVFoundation capability | App status |
+|---|---|
+| Hardware H.264/HEVC encode, offline session, profiles (Main/Main10) | ✅ covered since v1 |
+| Pixel-transfer scaling (bit-depth preserving) | ✅ covered since v1 |
+| HDR→SDR tone-map (composition), rotation preservation | ✅ covered since v1 |
+| Target-size budget + measured re-encode passes | ✅ covered (VideoToolbox has no 2-pass/CRF on iOS) |
+| **Trim** (`AVAssetReader.timeRange` bounds video AND audio) | ✅ **added 1.2.0** — setup-flow Adjust section (single video), filmstrip UI, session anchor moves to the window start, verifier samples the source inside the window |
+| **User rotation** (track-transform composition) | ✅ **added 1.2.0** — 90/180/270 in display space; encoded pixels untouched, SDR path composes the rotation instead of double-applying |
+| **Thumbnail export** (`AVAssetImageGenerator`) | ✅ **added 1.2.0** — filmstrip in Adjust + "Save thumbnail" PNG on finished rows |
+| ProRes output (`AVVideoCodecType.proRes422/.proRes4444`) | ⏳ deferred — supported on iOS but produces enormous files; fits an "editing handoff" preset, not a compressor's default set |
+| Audio passthrough (nil outputSettings on reader/writer) | ⏳ deferred — avoids AAC generation loss, but MP4 muxing compatibility for non-AAC codecs needs per-format handling |
+| Multi-track audio (keep all tracks) | ⏳ deferred — app intentionally takes the first track |
+| Chapter markers / timed metadata | ⏳ deferred |
+| Alpha-channel HEVC | ⏳ deferred (niche) |
+| Decoder-side direct VT (VTDecompressionSession) | ✅ no gap — AVAssetReader is the right abstraction here |
+| Batch analysis concurrency, stall watchdogs, bounded verification | ✅ covered in earlier rounds |
+
+---
 
 | Priority | Items |
 |---|---|

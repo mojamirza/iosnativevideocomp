@@ -30,6 +30,16 @@ struct OptimizerPlan: Hashable {
     /// (10-bit decode → CI tone-map → 8-bit 709 encode) and the verifier
     /// expects an 8-bit 709 output instead of a 10-bit HDR one.
     var sdrConvert: Bool = false
+    /// USER ROTATION (degrees clockwise, applied in display space on top of
+    /// the source's own transform). 0/90/180/270; 0 = keep native
+    /// orientation. The encoded frame geometry is unchanged — rotation is a
+    /// track-transform, not a pixel operation.
+    var rotationDegrees: Int = 0
+    /// TRIM window on the OUTPUT timeline (seconds). The engine bounds the
+    /// whole read (video AND audio) to
+    /// [startOffset + trimStart, startOffset + trimEnd]; nil = no trim.
+    var trimStart: Double = 0
+    var trimEnd: Double?
 
     var expectedFrames: Int {
         max(1, Int(duration * Double(fps > 0 ? fps : 30)))

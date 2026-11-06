@@ -428,7 +428,9 @@ enum IntegrityVerifier {
             for fraction in fractions {
                 if Date().timeIntervalSince(t0) > 18 { break }
                 let tOut = fraction * outDuration
-                let tSrc = probe.startOffset + tOut
+                // Source time for an output position: anchor offset + the
+                // trim window start (the output timeline begins at the trim).
+                let tSrc = probe.startOffset + plan.trimStart + tOut
                 async let a = QualityCheck.lumaFrame(asset: srcAsset, at: tSrc)
                 async let b = QualityCheck.lumaFrame(asset: outAsset, at: tOut)
                 guard let fa = await a, let fb = await b else { continue }

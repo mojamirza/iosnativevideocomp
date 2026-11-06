@@ -311,6 +311,25 @@ enum CompressionEngine {
                                       * 180 / .pi).rounded())
         let swapsDims = rotationDegrees % 180 == 90
 
+        // USER ROTATION matrix (display space): maps the scaled display
+        // frame into the rotated canvas without negative coordinates. The
+        // encoded frame geometry is NOT changed by rotation — it rides in
+        // the track transform and players apply it at playback.
+        let userRotation: CGAffineTransform
+        switch plan.rotationDegrees {
+        case 90:
+            userRotation = CGAffineTransform(a: 0, b: 1, c: -1, d: 0,
+                                             tx: plan.outputSize.height, ty: 0)
+        case 180:
+            userRotation = CGAffineTransform(a: -1, b: 0, c: 0, d: -1,
+                                             tx: plan.outputSize.width, ty: plan.outputSize.height)
+        case 270:
+            userRotation = CGAffineTransform(a: 0, b: -1, c: 1, d: 0,
+                                             tx: 0, ty: plan.outputSize.width)
+        default:
+            userRotation = .identity
+        }
+
         let targetW = Int(plan.outputSize.width)
         let targetH = Int(plan.outputSize.height)
         var encodeW = swapsDims ? targetH : targetW
@@ -396,11 +415,19 @@ enum CompressionEngine {
                                             outputSettings: settings,
                                             sourceFormatHint: (sdrConvert || !hintMatches) ? nil : hint)
         videoInput.expectsMediaDataInRealTime = false
-        // Preserve rotation on every path EXCEPT the SDR composition path
-        // (there the rotation is baked into the rendered pixels — applying
-        // the transform again would rotate the video twice).
-        if !sdrConvert, !preferredTransform.isIdentity {
-            videoInput.transform = preferredTransform
+        // TRANSFORM: the source's own rotation is preserved on every path
+        // EXCEPT the SDR composition path (there it is baked into the
+        // rendered pixels — applying the transform again would rotate the
+        // video twice). The USER rotation composes on top in display space:
+        // encoded frame → source transform → user rotation.
+        if sdrConvert {
+            if plan.rotationDegrees != 0 {
+                videoInput.transform = userRotation
+            }
+        } else if !preferredTransform.isIdentity {
+            videoInput.transform = preferredTransform.concatenating(userRotation)
+        } else if plan.rotationDegrees != 0 {
+            videoInput.transform = userRotation
         }
         writer.add(videoInput)
 
@@ -664,6 +691,16 @@ enum CompressionEngine {
                                                         sourcePixelBufferAttributes: poolAttrs)
         }() : nil
 
+        // TRIM: bound the WHOLE read (video AND audio) to the user's window
+        // on the raw timeline (output timeline + the probe's anchor offset).
+        // Must be set before the reader starts.
+        if let trimEnd = plan.trimEnd {
+            let rawStart = plan.source.startOffset + plan.trimStart
+            let rawEnd = plan.source.startOffset + trimEnd
+            reader.timeRange = CMTimeRange(
+                start: CMTime(seconds: max(0, rawStart), preferredTimescale: 600),
+                end: CMTime(seconds: rawEnd, preferredTimescale: 600))
+        }
         guard reader.startReading() else {
             throw CompressionError.readerFailed(reader.error?.localizedDescription ?? "could not start reading")
         }
@@ -691,10 +728,18 @@ enum CompressionEngine {
         if let aTrack = audioTrack {
             audioStart = (try? await aTrack.load(.timeRange))?.start
         }
+        var sessionStart = SessionAnchor.start(video: videoStart, audio: audioStart)
+        // TRIM: the session anchor moves to the trimmed window start — never
+        // before it (that would add lead-in), and never earlier than the
+        // natural anchor (tracks starting after the window keep their offset).
+        if plan.trimEnd != nil {
+            let rawStart = plan.source.startOffset + plan.trimStart
+            let natural = CMTimeGetSeconds(sessionStart)
+            sessionStart = CMTime(seconds: max(rawStart, natural), preferredTimescale: 600)
+        }
         // ONE anchor, computed once and reused: the session AND the progress
         // math (raw pts would otherwise run ahead on anchored/trimmed clips,
         // reaching 99% before the encode finishes).
-        let sessionStart = SessionAnchor.start(video: videoStart, audio: audioStart)
         let sessionStartSeconds = CMTimeGetSeconds(sessionStart)
         writer.startSession(atSourceTime: sessionStart)
 
