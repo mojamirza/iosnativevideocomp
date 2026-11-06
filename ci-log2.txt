@@ -1,0 +1,901 @@
+﻿2026-11-05T20:16:05.6174340Z Current runner version: '2.338.2'
+2026-11-05T20:16:05.6189630Z ##[group]Runner Image Provisioner
+2026-11-05T20:16:05.6190140Z Hosted Compute Agent
+2026-11-05T20:16:05.6190510Z Version: 20261103.629
+2026-11-05T20:16:05.6190940Z Commit: 15dbd9ccb5dbf34fae002b6ed1a2670f52df37bc
+2026-11-05T20:16:05.6191540Z Build Date: 2026-11-03T17:26:59Z
+2026-11-05T20:16:05.6191980Z Worker ID: {486d4bab-2a13-41e9-8b47-e29d613d7d3f}
+2026-11-05T20:16:05.6192830Z Region: westus
+2026-11-05T20:16:05.6193240Z Cloud: MacCloud
+2026-11-05T20:16:05.6193700Z ##[endgroup]
+2026-11-05T20:16:05.6194900Z ##[group]Operating System
+2026-11-05T20:16:05.6195300Z macOS
+2026-11-05T20:16:05.6195630Z 15.8.2
+2026-11-05T20:16:05.6195970Z 24H232
+2026-11-05T20:16:05.6196310Z ##[endgroup]
+2026-11-05T20:16:05.6196680Z ##[group]Runner Image
+2026-11-05T20:16:05.6197060Z Image: macos-15-arm64
+2026-11-05T20:16:05.6197450Z Version: 20261104.0514.1
+2026-11-05T20:16:05.6198300Z Included Software: https://github.com/actions/runner-images/blob/macos-15-arm64/20261104.0514/images/macos/macos-15-arm64-Readme.md
+2026-11-05T20:16:05.6199350Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15-arm64%2F20261104.0514
+2026-11-05T20:16:05.6200010Z ##[endgroup]
+2026-11-05T20:16:05.6200830Z ##[group]GITHUB_TOKEN Permissions
+2026-11-05T20:16:05.6202400Z Contents: read
+2026-11-05T20:16:05.6202820Z Metadata: read
+2026-11-05T20:16:05.6203180Z Packages: read
+2026-11-05T20:16:05.6203560Z ##[endgroup]
+2026-11-05T20:16:05.6205150Z Secret source: Actions
+2026-11-05T20:16:05.6205740Z Cache mode: write
+2026-11-05T20:16:05.6206190Z Prepare workflow directory
+2026-11-05T20:16:05.6530510Z Prepare all required actions
+2026-11-05T20:16:05.6570490Z Getting action download info
+2026-11-05T20:16:06.1165850Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-05T20:16:06.6194950Z Complete job name: Unit tests (iPhone simulator)
+2026-11-05T20:16:06.7100230Z ##[group]Run actions/checkout@v4
+2026-11-05T20:16:06.7100990Z with:
+2026-11-05T20:16:06.7101370Z   repository: mojamirza/iosnativevideocomp
+2026-11-05T20:16:06.7104340Z   token: ***
+2026-11-05T20:16:06.7104660Z   ssh-strict: true
+2026-11-05T20:16:06.7104990Z   ssh-user: git
+2026-11-05T20:16:06.7105330Z   persist-credentials: true
+2026-11-05T20:16:06.7105700Z   clean: true
+2026-11-05T20:16:06.7106040Z   sparse-checkout-cone-mode: true
+2026-11-05T20:16:06.7106420Z   fetch-depth: 1
+2026-11-05T20:16:06.7106750Z   fetch-tags: false
+2026-11-05T20:16:06.7107090Z   show-progress: true
+2026-11-05T20:16:06.7107420Z   lfs: false
+2026-11-05T20:16:06.7107740Z   submodules: false
+2026-11-05T20:16:06.7108080Z   set-safe-directory: true
+2026-11-05T20:16:06.7108460Z   allow-unsafe-pr-checkout: false
+2026-11-05T20:16:06.7108980Z ##[endgroup]
+2026-11-05T20:16:07.2764140Z Syncing repository: mojamirza/iosnativevideocomp
+2026-11-05T20:16:07.2766980Z ##[group]Getting Git version info
+2026-11-05T20:16:07.2770140Z Working directory is '/Users/runner/work/iosnativevideocomp/iosnativevideocomp'
+2026-11-05T20:16:07.2774320Z [command]/opt/homebrew/bin/git version
+2026-11-05T20:16:07.3098970Z git version 2.56.0
+2026-11-05T20:16:07.3121060Z ##[endgroup]
+2026-11-05T20:16:07.3128990Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/48c40109-0be6-40bb-86cb-478515364693/.gitconfig'
+2026-11-05T20:16:07.3140850Z Temporarily overriding HOME='/Users/runner/work/_temp/48c40109-0be6-40bb-86cb-478515364693' before making global git config changes
+2026-11-05T20:16:07.3143330Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T20:16:07.3150300Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:16:07.3314330Z Deleting the contents of '/Users/runner/work/iosnativevideocomp/iosnativevideocomp'
+2026-11-05T20:16:07.3319040Z ##[group]Initializing the repository
+2026-11-05T20:16:07.3325100Z [command]/opt/homebrew/bin/git init /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:16:07.3733770Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-05T20:16:07.3738270Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-05T20:16:07.3749860Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-05T20:16:07.3751590Z hint: call:
+2026-11-05T20:16:07.3752420Z hint:
+2026-11-05T20:16:07.3753390Z hint: 	git config --global init.defaultBranch <name>
+2026-11-05T20:16:07.3754530Z hint:
+2026-11-05T20:16:07.3755620Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-05T20:16:07.3757330Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-05T20:16:07.3758700Z hint:
+2026-11-05T20:16:07.3759530Z hint: 	git branch -m <name>
+2026-11-05T20:16:07.3760460Z hint:
+2026-11-05T20:16:07.3761710Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-05T20:16:07.3766550Z Initialized empty Git repository in /Users/runner/work/iosnativevideocomp/iosnativevideocomp/.git/
+2026-11-05T20:16:07.3778760Z [command]/opt/homebrew/bin/git remote add origin https://github.com/mojamirza/iosnativevideocomp
+2026-11-05T20:16:07.3874770Z ##[endgroup]
+2026-11-05T20:16:07.3878270Z ##[group]Disabling automatic garbage collection
+2026-11-05T20:16:07.3881320Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-11-05T20:16:07.3957440Z ##[endgroup]
+2026-11-05T20:16:07.3958750Z ##[group]Setting up auth
+2026-11-05T20:16:07.3960750Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T20:16:07.4050310Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-05T20:16:07.5503840Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T20:16:07.5601300Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-05T20:16:07.6787290Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T20:16:07.6908090Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-05T20:16:07.8194500Z [command]/opt/homebrew/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-05T20:16:07.8280870Z ##[endgroup]
+2026-11-05T20:16:07.8282650Z ##[group]Fetching the repository
+2026-11-05T20:16:07.8296710Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +92af46229eceb27e6787a2f1f136ef2e14a259cb:refs/remotes/origin/main
+2026-11-05T20:16:08.5129120Z From https://github.com/mojamirza/iosnativevideocomp
+2026-11-05T20:16:08.5138040Z  * [new ref]         92af46229eceb27e6787a2f1f136ef2e14a259cb -> origin/main
+2026-11-05T20:16:08.5143390Z ##[endgroup]
+2026-11-05T20:16:08.5144290Z ##[group]Determining the checkout info
+2026-11-05T20:16:08.5151600Z ##[endgroup]
+2026-11-05T20:16:08.5152170Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-11-05T20:16:08.5234950Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-05T20:16:08.5381340Z ##[group]Checking out the ref
+2026-11-05T20:16:08.5382340Z [command]/opt/homebrew/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-11-05T20:16:08.5698790Z Switched to a new branch 'main'
+2026-11-05T20:16:08.5702090Z branch 'main' set up to track 'origin/main'.
+2026-11-05T20:16:08.5708000Z ##[endgroup]
+2026-11-05T20:16:08.5940610Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-11-05T20:16:08.6108040Z 92af46229eceb27e6787a2f1f136ef2e14a259cb
+2026-11-05T20:16:08.6996620Z ##[group]Run brew list xcodegen &>/dev/null || brew install xcodegen
+2026-11-05T20:16:08.6997590Z [36;1mbrew list xcodegen &>/dev/null || brew install xcodegen[0m
+2026-11-05T20:16:08.7042770Z shell: /bin/bash -e {0}
+2026-11-05T20:16:08.7043130Z ##[endgroup]
+2026-11-05T20:16:12.7529000Z [32m==>[0m [1mDownloading bottle manifests[0m
+2026-11-05T20:16:12.7715350Z ✔︎ Bottle Manifest xcodegen (2.46.0)
+2026-11-05T20:16:12.7841470Z [32m==>[0m [1mFetching downloads for: [32mxcodegen[39m[0m
+2026-11-05T20:16:15.2556270Z ✔︎ Bottle xcodegen (2.46.0)
+2026-11-05T20:16:15.3274890Z [34m==>[0m [1mPouring xcodegen--2.46.0.arm64_sequoia.bottle.1.tar.gz[0m
+2026-11-05T20:16:16.3813970Z 🍺  /opt/homebrew/Cellar/xcodegen/2.46.0: 38 files, 7.5MB
+2026-11-05T20:16:16.4097360Z ##[group]Run X26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)
+2026-11-05T20:16:16.4099070Z [36;1mX26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)[0m
+2026-11-05T20:16:16.4100020Z [36;1mif [ -n "$X26" ]; then[0m
+2026-11-05T20:16:16.4101190Z [36;1m  sudo xcode-select -s "$X26"[0m
+2026-11-05T20:16:16.4101840Z [36;1melse[0m
+2026-11-05T20:16:16.4103070Z [36;1m  sudo xcode-select -s "/Applications/Xcode_16.4.app" 2>/dev/null || sudo xcode-select -s /Applications/Xcode.app[0m
+2026-11-05T20:16:16.4104320Z [36;1mfi[0m
+2026-11-05T20:16:16.4105070Z [36;1mxcodebuild -version[0m
+2026-11-05T20:16:16.4164510Z shell: /bin/bash -e {0}
+2026-11-05T20:16:16.4164820Z ##[endgroup]
+2026-11-05T20:16:21.5762650Z Xcode 26.3
+2026-11-05T20:16:21.5765780Z Build version 17C529
+2026-11-05T20:16:21.6052120Z ##[group]Run xcodegen generate
+2026-11-05T20:16:21.6052470Z [36;1mxcodegen generate[0m
+2026-11-05T20:16:21.6090860Z shell: /bin/bash -e {0}
+2026-11-05T20:16:21.6091150Z ##[endgroup]
+2026-11-05T20:16:21.7050260Z ⚙️  Generating plists...
+2026-11-05T20:16:21.7066140Z ⚙️  Generating project...
+2026-11-05T20:16:21.7192700Z ⚙️  Writing project...
+2026-11-05T20:16:21.7329560Z Created project at /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:16:21.7412410Z ##[group]Run # Destination by UDID, iPad first — verified quirk of these
+2026-11-05T20:16:21.7413080Z [36;1m# Destination by UDID, iPad first — verified quirk of these[0m
+2026-11-05T20:16:21.7413540Z [36;1m# runners: simctl advertises iPhone devices that xcodebuild then[0m
+2026-11-05T20:16:21.7414010Z [36;1m# REFUSES as scheme destinations (round 41946543925 and its retry[0m
+2026-11-05T20:16:21.7414400Z [36;1m# both proved it), while iPad sims are always available. Fall[0m
+2026-11-05T20:16:21.7414790Z [36;1m# back to iPhone only when no iPad exists.[0m
+2026-11-05T20:16:21.7415210Z [36;1mLINE=$(xcrun simctl list devices available | grep -m1 -E "iPad")[0m
+2026-11-05T20:16:21.7415650Z [36;1mif [ -z "$LINE" ]; then[0m
+2026-11-05T20:16:21.7416000Z [36;1m  LINE=$(xcrun simctl list devices available | grep -m1 -E "iPhone")[0m
+2026-11-05T20:16:21.7416430Z [36;1mfi[0m
+2026-11-05T20:16:21.7416970Z [36;1mSIMID=$(echo "$LINE" | grep -oE "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}" | head -n1)[0m
+2026-11-05T20:16:21.7417540Z [36;1mecho "Simulator: $LINE -> $SIMID"[0m
+2026-11-05T20:16:21.7417870Z [36;1mif [ -z "$SIMID" ]; then[0m
+2026-11-05T20:16:21.7418260Z [36;1m  xcrun simctl list devices available[0m
+2026-11-05T20:16:21.7418570Z [36;1m  echo "No iPhone/iPad simulator found on this runner" >&2[0m
+2026-11-05T20:16:21.7418930Z [36;1m  exit 1[0m
+2026-11-05T20:16:21.7419130Z [36;1mfi[0m
+2026-11-05T20:16:21.7419390Z [36;1mxcodebuild \[0m
+2026-11-05T20:16:21.7419620Z [36;1m  -project VidCompress.xcodeproj \[0m
+2026-11-05T20:16:21.7419860Z [36;1m  -scheme VidCompress \[0m
+2026-11-05T20:16:21.7420160Z [36;1m  -configuration Debug \[0m
+2026-11-05T20:16:21.7420500Z [36;1m  -destination "platform=iOS Simulator,id=$SIMID" \[0m
+2026-11-05T20:16:21.7420950Z [36;1m  -derivedDataPath build/DerivedData \[0m
+2026-11-05T20:16:21.7421260Z [36;1m  CODE_SIGNING_ALLOWED=NO \[0m
+2026-11-05T20:16:21.7421530Z [36;1m  test[0m
+2026-11-05T20:16:21.7464960Z shell: /bin/bash -e {0}
+2026-11-05T20:16:21.7465220Z env:
+2026-11-05T20:16:21.7465550Z   CODE_SIGNING_ALLOWED: NO
+2026-11-05T20:16:21.7465890Z ##[endgroup]
+2026-11-05T20:17:37.2228440Z Simulator:     iPad Pro 11-inch (M4) (4958D4DC-061A-4B2E-8FCB-F5711F024581) (Shutdown)  -> 4958D4DC-061A-4B2E-8FCB-F5711F024581
+2026-11-05T20:17:43.0197280Z Command line invocation:
+2026-11-05T20:17:43.0220820Z     /Applications/Xcode_26.3.app/Contents/Developer/usr/bin/xcodebuild -project VidCompress.xcodeproj -scheme VidCompress -configuration Debug -destination "platform=iOS Simulator,id=4958D4DC-061A-4B2E-8FCB-F5711F024581" -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO test
+2026-11-05T20:17:43.0231120Z 
+2026-11-05T20:17:43.0232050Z Build settings from command line:
+2026-11-05T20:17:43.0247310Z     CODE_SIGNING_ALLOWED = NO
+2026-11-05T20:17:43.0247750Z 
+2026-11-05T20:17:46.4243960Z --- xcodebuild: WARNING: Using the first of multiple matching destinations:
+2026-11-05T20:17:46.4411470Z { platform:iOS Simulator, arch:arm64, id:4958D4DC-061A-4B2E-8FCB-F5711F024581, OS:18.5, name:iPad Pro 11-inch (M4) }
+2026-11-05T20:17:46.4530430Z { platform:iOS Simulator, arch:x86_64, id:4958D4DC-061A-4B2E-8FCB-F5711F024581, OS:18.5, name:iPad Pro 11-inch (M4) }
+2026-11-05T20:17:53.3657240Z ComputePackagePrebuildTargetDependencyGraph
+2026-11-05T20:17:53.5510060Z 
+2026-11-05T20:17:53.5720560Z Prepare packages
+2026-11-05T20:17:53.5734350Z 
+2026-11-05T20:17:53.5781280Z CreateBuildRequest
+2026-11-05T20:17:53.5882680Z 
+2026-11-05T20:17:53.5985500Z SendProjectDescription
+2026-11-05T20:17:53.6087830Z 
+2026-11-05T20:17:53.6189960Z CreateBuildOperation
+2026-11-05T20:17:53.6494980Z 
+2026-11-05T20:17:53.6623120Z ComputeTargetDependencyGraph
+2026-11-05T20:17:53.6968480Z note: Building targets in dependency order
+2026-11-05T20:17:53.6982110Z note: Target dependency graph (2 targets)
+2026-11-05T20:17:53.6984410Z     Target 'VidCompressTests' in project 'VidCompress'
+2026-11-05T20:17:53.6987840Z         ➜ Explicit dependency on target 'VidCompress' in project 'VidCompress'
+2026-11-05T20:17:53.6988880Z     Target 'VidCompress' in project 'VidCompress' (no dependencies)
+2026-11-05T20:17:53.6991230Z 
+2026-11-05T20:17:53.6991600Z GatherProvisioningInputs
+2026-11-05T20:17:53.6991930Z 
+2026-11-05T20:17:53.7028010Z CreateBuildDescription
+2026-11-05T20:17:53.7496290Z 
+2026-11-05T20:17:53.7502370Z ExecuteExternalTool /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+2026-11-05T20:17:54.3133350Z 
+2026-11-05T20:17:54.3135550Z ExecuteExternalTool /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -x c -c /dev/null
+2026-11-05T20:17:54.3579820Z 
+2026-11-05T20:17:54.3785280Z ExecuteExternalTool /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+2026-11-05T20:17:54.6040960Z 
+2026-11-05T20:17:54.6377790Z Build description signature: 8802209e602a28e35ebd8dda0a0405d0
+2026-11-05T20:17:54.6380890Z Build description path: /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/XCBuildData/8802209e602a28e35ebd8dda0a0405d0.xcbuilddata
+2026-11-05T20:17:54.6912980Z ClangStatCache /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache
+2026-11-05T20:17:54.6960780Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:54.6963590Z     /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache
+2026-11-05T20:17:59.7340150Z 
+2026-11-05T20:17:59.7351380Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products
+2026-11-05T20:17:59.7353120Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7356670Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products
+2026-11-05T20:17:59.7383040Z 
+2026-11-05T20:17:59.7384480Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex
+2026-11-05T20:17:59.7398710Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7401540Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex
+2026-11-05T20:17:59.7403140Z 
+2026-11-05T20:17:59.7413050Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator
+2026-11-05T20:17:59.7414930Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7417400Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator
+2026-11-05T20:17:59.7418230Z 
+2026-11-05T20:17:59.7434300Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress-d47d881fb54e3f45da5fa6c68234ade5-VFS-iphonesimulator/all-product-headers.yaml
+2026-11-05T20:17:59.7437580Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7438670Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress-d47d881fb54e3f45da5fa6c68234ade5-VFS-iphonesimulator/all-product-headers.yaml
+2026-11-05T20:17:59.7439610Z 
+2026-11-05T20:17:59.7440160Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+2026-11-05T20:17:59.7440960Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7441850Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+2026-11-05T20:17:59.7442450Z 
+2026-11-05T20:17:59.7442930Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/ExplicitPrecompiledModules
+2026-11-05T20:17:59.7443660Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7445150Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/ExplicitPrecompiledModules
+2026-11-05T20:17:59.7445760Z 
+2026-11-05T20:17:59.7446200Z CreateBuildDirectory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator
+2026-11-05T20:17:59.7447160Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp/VidCompress.xcodeproj
+2026-11-05T20:17:59.7448070Z     builtin-create-build-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator
+2026-11-05T20:17:59.7449400Z 
+2026-11-05T20:17:59.7450280Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/empty-VidCompressTests.plist (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7451700Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7452540Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/empty-VidCompressTests.plist
+2026-11-05T20:17:59.7453290Z 
+2026-11-05T20:17:59.7454110Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7455380Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7456290Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.hmap
+2026-11-05T20:17:59.7457020Z 
+2026-11-05T20:17:59.7458020Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.DependencyStaticMetadataFileList (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7459240Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7460160Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.DependencyStaticMetadataFileList
+2026-11-05T20:17:59.7461030Z 
+2026-11-05T20:17:59.7462350Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.DependencyMetadataFileList (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7463540Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7464440Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests.DependencyMetadataFileList
+2026-11-05T20:17:59.7465270Z 
+2026-11-05T20:17:59.7466090Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-project-headers.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7467130Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7468200Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-project-headers.hmap
+2026-11-05T20:17:59.7468970Z 
+2026-11-05T20:17:59.7469860Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-own-target-headers.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7470980Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7471930Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-own-target-headers.hmap
+2026-11-05T20:17:59.7472750Z 
+2026-11-05T20:17:59.7473930Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-generated-files.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7475220Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7476040Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-generated-files.hmap
+2026-11-05T20:17:59.7476710Z 
+2026-11-05T20:17:59.7477670Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-all-target-headers.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7478690Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7479520Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-all-target-headers.hmap
+2026-11-05T20:17:59.7480230Z 
+2026-11-05T20:17:59.7481080Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-all-non-framework-target-headers.hmap (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7482180Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7745090Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-all-non-framework-target-headers.hmap
+2026-11-05T20:17:59.7747340Z 
+2026-11-05T20:17:59.7750640Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests_const_extract_protocols.json (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7755540Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7756610Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests_const_extract_protocols.json
+2026-11-05T20:17:59.7757390Z 
+2026-11-05T20:17:59.7758240Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.SwiftFileList (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7759320Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7760160Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.SwiftFileList
+2026-11-05T20:17:59.7760890Z 
+2026-11-05T20:17:59.7761740Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.SwiftConstValuesFileList (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7762820Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7763680Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.SwiftConstValuesFileList
+2026-11-05T20:17:59.7765060Z 
+2026-11-05T20:17:59.7774860Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.LinkFileList (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7778160Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7780620Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.LinkFileList
+2026-11-05T20:17:59.7783150Z 
+2026-11-05T20:17:59.7785620Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests-OutputFileMap.json (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7788570Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7791130Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests-OutputFileMap.json
+2026-11-05T20:17:59.7793250Z 
+2026-11-05T20:17:59.7795240Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7797800Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7801810Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.hmap
+2026-11-05T20:17:59.7804060Z 
+2026-11-05T20:17:59.7806250Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.DependencyStaticMetadataFileList (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7809030Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7811480Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.DependencyStaticMetadataFileList
+2026-11-05T20:17:59.7813690Z 
+2026-11-05T20:17:59.7816070Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.DependencyMetadataFileList (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7819210Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7821730Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress.DependencyMetadataFileList
+2026-11-05T20:17:59.7823690Z 
+2026-11-05T20:17:59.7831040Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-project-headers.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7832320Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7833320Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-project-headers.hmap
+2026-11-05T20:17:59.7834630Z 
+2026-11-05T20:17:59.7835470Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-own-target-headers.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7838120Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7839030Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-own-target-headers.hmap
+2026-11-05T20:17:59.7839780Z 
+2026-11-05T20:17:59.7840620Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-generated-files.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7841750Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7842640Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-generated-files.hmap
+2026-11-05T20:17:59.7843330Z 
+2026-11-05T20:17:59.7844100Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-target-headers.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7845050Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7845820Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-target-headers.hmap
+2026-11-05T20:17:59.7846830Z 
+2026-11-05T20:17:59.7847640Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-non-framework-target-headers.hmap (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7848730Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7849710Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-non-framework-target-headers.hmap
+2026-11-05T20:17:59.7850510Z 
+2026-11-05T20:17:59.7851290Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-DebugDylibPath-normal-arm64.txt (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7852370Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7853350Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-DebugDylibPath-normal-arm64.txt
+2026-11-05T20:17:59.7854160Z 
+2026-11-05T20:17:59.7855040Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-DebugDylibInstallName-normal-arm64.txt (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7856140Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7857040Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-DebugDylibInstallName-normal-arm64.txt
+2026-11-05T20:17:59.7858120Z 
+2026-11-05T20:17:59.7859040Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_const_extract_protocols.json (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7860140Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7861150Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_const_extract_protocols.json
+2026-11-05T20:17:59.7861960Z 
+2026-11-05T20:17:59.7862760Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftFileList (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7863890Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7864780Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftFileList
+2026-11-05T20:17:59.7865440Z 
+2026-11-05T20:17:59.7866340Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftConstValuesFileList (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7867530Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7868750Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftConstValuesFileList
+2026-11-05T20:17:59.7869590Z 
+2026-11-05T20:17:59.7870440Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.LinkFileList (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7871580Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7872460Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.LinkFileList
+2026-11-05T20:17:59.7873130Z 
+2026-11-05T20:17:59.7873920Z WriteAuxiliaryFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-OutputFileMap.json (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7875080Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7875890Z     write-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-OutputFileMap.json
+2026-11-05T20:17:59.7876580Z 
+2026-11-05T20:17:59.7877180Z MkDir /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/PlugIns/VidCompressTests.xctest (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:17:59.7878000Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7878850Z     /bin/mkdir -p /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/PlugIns/VidCompressTests.xctest
+2026-11-05T20:17:59.7879690Z 
+2026-11-05T20:17:59.7880220Z MkDir /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/PlugIns (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7880940Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7881750Z     /bin/mkdir -p /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/PlugIns
+2026-11-05T20:17:59.7882300Z 
+2026-11-05T20:17:59.7882830Z MkDir /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7883710Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7884400Z     /bin/mkdir -p /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7884870Z 
+2026-11-05T20:17:59.7885450Z MkDir /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7886310Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7886960Z     /bin/mkdir -p /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app
+2026-11-05T20:17:59.7887490Z 
+2026-11-05T20:17:59.7888110Z Ld /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/__preview.dylib normal (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7888850Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7892680Z     /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios17.0-simulator -dynamiclib -isysroot /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -O0 -L/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -F/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -install_name @rpath/VidCompress.debug.dylib -dead_strip -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -Xlinker -dependency_info -Xlinker /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_dependency_info.dat -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/__preview.dylib
+2026-11-05T20:17:59.7896390Z 
+2026-11-05T20:17:59.7897290Z ProcessInfoPlistFile /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Info.plist /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Support/Info.plist (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7898470Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7900550Z     builtin-infoPlistUtility /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Support/Info.plist -producttype com.apple.product-type.application -genpkginfo /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Info.plist
+2026-11-05T20:17:59.7902160Z 
+2026-11-05T20:17:59.7903250Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/libXCTestSwiftSupport.dylib /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7905140Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7906660Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7908040Z 
+2026-11-05T20:17:59.7909110Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/libXCTestBundleInject.dylib /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestBundleInject.dylib (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7910290Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7929610Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestBundleInject.dylib /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7933630Z 
+2026-11-05T20:17:59.7937750Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCUnit.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCUnit.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7941720Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7946070Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCUnit.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7949940Z 
+2026-11-05T20:17:59.7955730Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCUIAutomation.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCUIAutomation.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7959560Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7963930Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCUIAutomation.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7968430Z 
+2026-11-05T20:17:59.7971390Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCTestSupport.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestSupport.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7976420Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7980920Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestSupport.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.7985050Z 
+2026-11-05T20:17:59.7988120Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCTestCore.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestCore.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.7991840Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.7996270Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestCore.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.8000120Z 
+2026-11-05T20:17:59.8009660Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCTest.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCTest.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.8012560Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.8014280Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCTest.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.8015630Z 
+2026-11-05T20:17:59.8016880Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/XCTAutomationSupport.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.8018360Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.8020230Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.8021650Z 
+2026-11-05T20:17:59.8022720Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks/Testing.framework /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/Testing.framework (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.8024610Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.8026050Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/Testing.framework /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.app/Frameworks
+2026-11-05T20:17:59.8027380Z 
+2026-11-05T20:17:59.8027700Z SwiftDriver VidCompress normal arm64 com.apple.xcode.tools.swift.compiler (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:17:59.8028330Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:17:59.8044000Z     builtin-SwiftDriver -- /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name VidCompress -Onone -enforce-exclusivity\=checked @/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftFileList -DDEBUG -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -F /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -c -j3 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache -output-file-map /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -sdk-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftmodule -validate-clang-modules-once -clang-build-session-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Session.modulevalidation -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_const_extract_protocols.json -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-generated-files.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-own-target-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-project-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/include -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-Swift.h -working-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp -experimental-emit-module-separately -disable-cmo
+2026-11-05T20:18:04.3572080Z 
+2026-11-05T20:18:04.4449470Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_SwiftConcurrencyShims-M9CP5LLAEUARLJRB3O3AEDVM.pcm
+2026-11-05T20:18:04.7676880Z 
+2026-11-05T20:18:04.7770510Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_stdarg-7BT2WJNXEJR7FI9TGGD9PNHAM.pcm
+2026-11-05T20:18:04.8265160Z 
+2026-11-05T20:18:04.8369250Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_float-2AXQP9OGGYXQR7YD4X35NHO8V.pcm
+2026-11-05T20:18:04.8484000Z 
+2026-11-05T20:18:04.8587040Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_stddef-CJ2MG1F91E4VHSZOLGRRG2Q62.pcm
+2026-11-05T20:18:04.8690510Z 
+2026-11-05T20:18:04.8792300Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_AvailabilityInternal-1W7E3GIEZYLDYRK0P3SZ03AXY.pcm
+2026-11-05T20:18:04.9097560Z 
+2026-11-05T20:18:04.9201460Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/SwiftShims-92BKU86UBC3P77DTRYJJ8E51M.pcm
+2026-11-05T20:18:04.9445120Z 
+2026-11-05T20:18:04.9573250Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/ptrcheck-W4PZQ6H990WBM3YR0A4R0DC1.pcm
+2026-11-05T20:18:05.0055620Z 
+2026-11-05T20:18:05.0196760Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/ptrauth-5QRU6MYODKUWO4ENABD35LAS8.pcm
+2026-11-05T20:18:05.0454160Z 
+2026-11-05T20:18:05.0570480Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_stdbool-D6JCMM8Q9ZWQOFTX85YO4I6FP.pcm
+2026-11-05T20:18:05.0877670Z 
+2026-11-05T20:18:05.1176200Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/DeveloperToolsSupport-AIJE8KGSAD7A2XHFBKMRL4QQY.pcm
+2026-11-05T20:18:05.1320880Z 
+2026-11-05T20:18:05.1573840Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_DarwinFoundation1-3EDCQ1AYVYHRF1MOJ59XLHBHY.pcm
+2026-11-05T20:18:05.2076920Z 
+2026-11-05T20:18:05.2181130Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/ExtensionFoundation-3HVYV4VM54OTHG3QL3PT3Z33D.pcm
+2026-11-05T20:18:05.2848560Z 
+2026-11-05T20:18:05.2950230Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_DarwinFoundation2-4GKKJK9833XIY4NDXF13YR1FX.pcm
+2026-11-05T20:18:05.3941560Z 
+2026-11-05T20:18:05.4046630Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_limits-43HOSBHSD85H954KRL991KM7J.pcm
+2026-11-05T20:18:05.4150100Z 
+2026-11-05T20:18:05.4265690Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/sys_types-86PB1GS92O2SCMZ9533ZUF962.pcm
+2026-11-05T20:18:05.4701830Z 
+2026-11-05T20:18:05.4803580Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_tgmath-DYGDYIP04I3N1PAS5700ACOJS.pcm
+2026-11-05T20:18:05.5003450Z 
+2026-11-05T20:18:05.5125060Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_stdint-C58QPT4D662CYFCKBOYDW8R6D.pcm
+2026-11-05T20:18:05.5227950Z 
+2026-11-05T20:18:05.5332170Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_stdatomic-57PXP5A6LSDQG8KJZVL0RJPW4.pcm
+2026-11-05T20:18:05.5452320Z 
+2026-11-05T20:18:05.5553960Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_intrinsics-5WAG2AEBQ2Y64PE5BUMDEE5PE.pcm
+2026-11-05T20:18:05.8459050Z 
+2026-11-05T20:18:05.8560530Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_DarwinFoundation3-1HLH0HR5RCVHFS7M86YLU96JM.pcm
+2026-11-05T20:18:05.8662870Z 
+2026-11-05T20:18:05.8761750Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_Builtin_inttypes-483XLLJV6SW90PP4VNPIJXO3X.pcm
+2026-11-05T20:18:05.8863400Z 
+2026-11-05T20:18:05.8868680Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Darwin-9LRRAZ8AFNZPU44VQ9QX10P1S.pcm
+2026-11-05T20:18:06.0792900Z 
+2026-11-05T20:18:06.0795780Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/simd-9IGGXF6SYO45HVC5SPA4W6BYE.pcm
+2026-11-05T20:18:06.4030240Z 
+2026-11-05T20:18:06.4052490Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/ObjectiveC-7JM9FOHQRD2S2S510K5WWAQ79.pcm
+2026-11-05T20:18:06.4066240Z 
+2026-11-05T20:18:06.4092460Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/MachO-AP71UULJ0EQ2WHNNNTMAXE10.pcm
+2026-11-05T20:18:06.4114050Z 
+2026-11-05T20:18:06.4115310Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/os_object-BSLO0N08T3U0GXJWCAIC5VHTL.pcm
+2026-11-05T20:18:06.4116660Z 
+2026-11-05T20:18:06.4117360Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/os_workgroup-9HB5TYM5JLM88JZWHSP76KJQ8.pcm
+2026-11-05T20:18:06.4118090Z 
+2026-11-05T20:18:06.4118730Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Dispatch-B80NVKOV37RZFOBMYCBPHVMZJ.pcm
+2026-11-05T20:18:06.4947060Z 
+2026-11-05T20:18:06.5048840Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Spatial-6PNBQOSBRO31VRBX62BPTNFR7.pcm
+2026-11-05T20:18:06.7720460Z 
+2026-11-05T20:18:06.7822260Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreFoundation-77V91B4V17MMRDDOVH1LD3A4K.pcm
+2026-11-05T20:18:06.7923030Z 
+2026-11-05T20:18:06.8033530Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/dnssd-7HV6P8CK1X7I10WBYNS21IO7T.pcm
+2026-11-05T20:18:06.8140360Z 
+2026-11-05T20:18:06.8243630Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/XPC-CTQ8I5YVLVF5QS1P7LOCFQSTR.pcm
+2026-11-05T20:18:06.8342690Z 
+2026-11-05T20:18:06.8444590Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CFNetwork-B4JPAQ8R20WWNE8VHTWRFG1IG.pcm
+2026-11-05T20:18:06.8546250Z 
+2026-11-05T20:18:06.8648030Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Security-4MMK0WZO21WFO9QHDBQSZ8C76.pcm
+2026-11-05T20:18:06.8749030Z 
+2026-11-05T20:18:06.8851510Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/os-A6F5TZ3J40EDCGI2NP0BBXUOO.pcm
+2026-11-05T20:18:06.8950940Z 
+2026-11-05T20:18:06.9054320Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreAudioTypes-EKDA2MEJ6Q01MJKPUB7X41EVG.pcm
+2026-11-05T20:18:06.9154090Z 
+2026-11-05T20:18:06.9255100Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreGraphics-B7Y4EWC9YUEGMNKV3D8W0XPBR.pcm
+2026-11-05T20:18:06.9468350Z 
+2026-11-05T20:18:06.9600940Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Foundation-72J29TOD33OF3WG7CYFQ96GJF.pcm
+2026-11-05T20:18:07.2509360Z 
+2026-11-05T20:18:07.2610840Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreAudio-25YO22CVX5PFY5DDRE46DTPOD.pcm
+2026-11-05T20:18:07.2712330Z 
+2026-11-05T20:18:07.2815190Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreText-16CK5FWL3HLETLHX824T29MJL.pcm
+2026-11-05T20:18:07.2917970Z 
+2026-11-05T20:18:07.3025660Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/ImageIO-7CTM29W3HWG7OMGT2PQ0AB2VL.pcm
+2026-11-05T20:18:07.3149550Z 
+2026-11-05T20:18:07.3252430Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/OpenGLES-82TDT7LKEY5H7WQLI4MVP6WT.pcm
+2026-11-05T20:18:07.3588270Z 
+2026-11-05T20:18:07.3689370Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/FileProvider-EMT11HBZHEJ3RKW1W3WWE2W7J.pcm
+2026-11-05T20:18:07.3789800Z 
+2026-11-05T20:18:07.3891270Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Network-CLZH6T7TZT0IIN5Y9YT8HQHV6.pcm
+2026-11-05T20:18:07.3991990Z 
+2026-11-05T20:18:07.4094140Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/BackgroundTasks-12GFZ8F1E17UOFARMKK9XJISA.pcm
+2026-11-05T20:18:07.4358710Z 
+2026-11-05T20:18:07.4461310Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/RelevanceKit-1J42YM7IIVB2JPBJ1X622TCYH.pcm
+2026-11-05T20:18:07.4562400Z 
+2026-11-05T20:18:07.4665110Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreTransferable-C4U4C8P49BBNCCWHSOMM3QMR5.pcm
+2026-11-05T20:18:07.4764580Z 
+2026-11-05T20:18:07.4877130Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/UniformTypeIdentifiers-AYRD4MAIASHSBYUXHDPJ9QQTQ.pcm
+2026-11-05T20:18:07.5583720Z 
+2026-11-05T20:18:07.5686570Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/IOSurface-AA361O03ABGGN853NOJD11ZIK.pcm
+2026-11-05T20:18:07.5789660Z 
+2026-11-05T20:18:07.5900960Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AppIntents-BSKU0P5VBDQQY2HFM57P4IW7Y.pcm
+2026-11-05T20:18:07.6004540Z 
+2026-11-05T20:18:07.6118980Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/DataDetection-3BOCK0TSOOVLMEL27LSJG67KL.pcm
+2026-11-05T20:18:07.6327280Z 
+2026-11-05T20:18:07.6430180Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreData-A0HOQYPAK6FVS76GCACX1UGC5.pcm
+2026-11-05T20:18:07.7619170Z 
+2026-11-05T20:18:07.7750830Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Metal-CUQ6ML38IM5VKNO0YSKA2ZB70.pcm
+2026-11-05T20:18:07.8205900Z 
+2026-11-05T20:18:07.8312760Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreSpotlight-9SAKZO4YKW9146B7I289N63FG.pcm
+2026-11-05T20:18:07.8420010Z 
+2026-11-05T20:18:07.8532140Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/_LocationEssentials-29YKAYI9N1IVGTJK9MI9X4FCC.pcm
+2026-11-05T20:18:07.8645160Z 
+2026-11-05T20:18:07.8774960Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/OSLog-7EY4NGCEG8USMLGVM58TJB7IO.pcm
+2026-11-05T20:18:07.8876610Z 
+2026-11-05T20:18:07.8985610Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Symbols-CLLQW5UJJGI6L8VG9HJGDAV9B.pcm
+2026-11-05T20:18:07.9106590Z 
+2026-11-05T20:18:07.9209520Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreVideo-6W3I4JQ4QWCVBPSFZ6ELQ18T4.pcm
+2026-11-05T20:18:07.9617980Z 
+2026-11-05T20:18:07.9721040Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreLocation-1QF2BV1NV1EY7FREE4YSBCVW6.pcm
+2026-11-05T20:18:07.9924450Z 
+2026-11-05T20:18:08.0025890Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Accessibility-96DQ1G0ZDCSIE8BMPKW8G3PB9.pcm
+2026-11-05T20:18:08.0668020Z 
+2026-11-05T20:18:08.0771580Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/UIUtilities-28X1I9HUYK0ZVWYKV9B5BH1HV.pcm
+2026-11-05T20:18:08.0875220Z 
+2026-11-05T20:18:08.0978110Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreImage-EHIUV06SONYDC5D1LLSBN7LS3.pcm
+2026-11-05T20:18:08.2113250Z 
+2026-11-05T20:18:08.2215240Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/QuartzCore-AI5J4CC592YMO77D589LM78E9.pcm
+2026-11-05T20:18:08.2331860Z 
+2026-11-05T20:18:08.2436850Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreMedia-1UOOYMIKGTSCJW0H0YDSIWES2.pcm
+2026-11-05T20:18:08.2561900Z 
+2026-11-05T20:18:08.2673550Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AVRouting-1FMC9BO30X8PIHJO0WMXRV7ZX.pcm
+2026-11-05T20:18:08.3061880Z 
+2026-11-05T20:18:08.3175790Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/CoreMIDI-1MSW8F9I9T0R75ZPLW3EU5K8C.pcm
+2026-11-05T20:18:08.3596720Z 
+2026-11-05T20:18:08.3700420Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/SwiftUICore-B2T2S64KD28DI1Z56GBVQ463P.pcm
+2026-11-05T20:18:08.3803980Z 
+2026-11-05T20:18:08.3908370Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/VideoToolbox-C1LCMJUSCE4IK8T49BEPBAUQB.pcm
+2026-11-05T20:18:08.4774390Z 
+2026-11-05T20:18:08.4876170Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/UserNotifications-A7ZAJ97PNJUSS10MI2IWALZRP.pcm
+2026-11-05T20:18:08.4977710Z 
+2026-11-05T20:18:08.5082040Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AudioToolbox-CR8Z1F6XW0NF5BB88WSMZ91EV.pcm
+2026-11-05T20:18:08.5866700Z 
+2026-11-05T20:18:08.5968190Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/UIKit-DIELX1KXXF654RGE4C2DRF6HD.pcm
+2026-11-05T20:18:09.6144670Z 
+2026-11-05T20:18:09.6255300Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AVFAudio-CQU9H5V6OAF32W16QIQHJ3D3O.pcm
+2026-11-05T20:18:09.6390080Z 
+2026-11-05T20:18:09.6515910Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/MediaToolbox-CPXW7JQD8Q4B3JBVLOYFA73CI.pcm
+2026-11-05T20:18:09.6623550Z 
+2026-11-05T20:18:09.6781780Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AVFoundation-DY3UBF19OLWFRUR9PR29XWNDB.pcm
+2026-11-05T20:18:09.6895280Z 
+2026-11-05T20:18:09.7037780Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Photos-3QBY4D3HDS4S70WXNDGLT9LQZ.pcm
+2026-11-05T20:18:09.7161460Z 
+2026-11-05T20:18:09.7303040Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/SwiftUI-BR10ISG7U2GKDZTJJ8K2UPDEP.pcm
+2026-11-05T20:18:09.7405080Z 
+2026-11-05T20:18:09.7515280Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/PhotosUI-6TRNP9LEH62G1QV0SZANHQ1ED.pcm
+2026-11-05T20:18:09.7721760Z 
+2026-11-05T20:18:09.7823440Z SwiftExplicitDependencyGeneratePcm arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/AVKit-87PHJ45I46YW9DSSDPHSK08FS.pcm
+2026-11-05T20:18:09.7926480Z 
+2026-11-05T20:18:09.8031880Z SwiftEmitModule normal arm64 Emitting\ module\ for\ VidCompress (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:09.8731350Z 
+2026-11-05T20:18:09.8851530Z EmitSwiftModule normal arm64 (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:09.8958560Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:09.9060650Z     
+2026-11-05T20:18:11.3650180Z 
+2026-11-05T20:18:11.3764320Z SwiftCompile normal arm64 Compiling\ AsyncTimeout.swift,\ BackgroundCompress.swift,\ CompressVideoIntent.swift,\ CompressionEngine.swift,\ IntegrityReport.swift,\ IntegrityVerifier.swift,\ JobCoordinator.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/AsyncTimeout.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/BackgroundCompress.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/IntegrityReport.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:11.3870790Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/AsyncTimeout.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:11.3978400Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:11.4080310Z     
+2026-11-05T20:18:21.5311480Z 
+2026-11-05T20:18:21.5432840Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/BackgroundCompress.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:21.5555480Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:21.5661910Z     
+2026-11-05T20:18:21.5763950Z 
+2026-11-05T20:18:21.5872810Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:21.5977920Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:21.6081780Z     
+2026-11-05T20:18:21.6214650Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift:103:27: warning: result of call to 'coordinatedCopy(from:to:)' is unused
+2026-11-05T20:18:21.6317830Z             ImportHelpers.coordinatedCopy(from: src, to: target)
+2026-11-05T20:18:21.6401510Z                           ^              ~~~~~~~~~~~~~~~~~~~~~~~
+2026-11-05T20:18:21.6504070Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift:107:24: warning: no calls to throwing functions occur within 'try' expression
+2026-11-05T20:18:21.6613250Z             let data = try file.data
+2026-11-05T20:18:21.6715640Z                        ^
+2026-11-05T20:18:21.6820040Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift:103:13: error: missing return in closure expected to return 'Bool'
+2026-11-05T20:18:21.7005090Z             ImportHelpers.coordinatedCopy(from: src, to: target)
+2026-11-05T20:18:21.7006090Z             ^
+2026-11-05T20:18:21.7111270Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift:103:13: note: did you mean to return the last expression?
+2026-11-05T20:18:21.7213760Z             ImportHelpers.coordinatedCopy(from: src, to: target)
+2026-11-05T20:18:21.7317020Z             ^
+2026-11-05T20:18:21.7419690Z             return 
+2026-11-05T20:18:21.7523910Z 
+2026-11-05T20:18:21.7632150Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:21.7775950Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:21.7878720Z     
+2026-11-05T20:18:21.8008240Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:921:13: warning: constant 'pipesDone' inferred to have type '()?', which may be unexpected
+2026-11-05T20:18:21.8111310Z         let pipesDone = await AsyncTimeout.runWithHeartbeat(
+2026-11-05T20:18:21.8252920Z             ^
+2026-11-05T20:18:21.8254780Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:921:13: note: add an explicit type annotation to silence this warning
+2026-11-05T20:18:21.8257070Z         let pipesDone = await AsyncTimeout.runWithHeartbeat(
+2026-11-05T20:18:21.8260550Z             ^
+2026-11-05T20:18:21.8262730Z                      : ()?
+2026-11-05T20:18:21.8266920Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:974:17: warning: constant 'finalizeOK' inferred to have type 'Void?', which may be unexpected
+2026-11-05T20:18:21.8270160Z             let finalizeOK = await AsyncTimeout.run(seconds: 120) {
+2026-11-05T20:18:21.8272420Z                 ^
+2026-11-05T20:18:21.8273570Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:974:17: note: add an explicit type annotation to silence this warning
+2026-11-05T20:18:21.8275390Z             let finalizeOK = await AsyncTimeout.run(seconds: 120) {
+2026-11-05T20:18:21.8276170Z                 ^
+2026-11-05T20:18:21.8276710Z                           : Void?
+2026-11-05T20:18:21.8278510Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:718:35: warning: capture of 'resume' with non-Sendable type 'CompressionEngine.ResumeBox?' in a '@Sendable' closure
+2026-11-05T20:18:21.8281860Z                     queue.async { resume?.resumeOnce() }
+2026-11-05T20:18:21.8286060Z                                   ^
+2026-11-05T20:18:21.8288980Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:102:25: note: class 'ResumeBox' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.8289870Z     private final class ResumeBox {
+2026-11-05T20:18:21.8290160Z                         ^
+2026-11-05T20:18:21.8290970Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:722:24: warning: capture of 'resume' with non-Sendable type 'CompressionEngine.ResumeBox' in a '@Sendable' closure
+2026-11-05T20:18:21.8291840Z                     if resume.isDone { return }
+2026-11-05T20:18:21.8292110Z                        ^
+2026-11-05T20:18:21.8292800Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:102:25: note: class 'ResumeBox' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.8293450Z     private final class ResumeBox {
+2026-11-05T20:18:21.8293890Z                         ^
+2026-11-05T20:18:21.8294630Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:723:27: warning: capture of 'videoInput' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure
+2026-11-05T20:18:21.8295510Z                     while videoInput.isReadyForMoreMediaData {
+2026-11-05T20:18:21.8295830Z                           ^
+2026-11-05T20:18:21.8296820Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.8297900Z @interface AVAssetWriterInput : NSObject
+2026-11-05T20:18:21.8298140Z            ^
+2026-11-05T20:18:21.8298950Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:728:69: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure
+2026-11-05T20:18:21.8368180Z                         if flags.cancelled || flags.error != nil || writer.status == .failed {
+2026-11-05T20:18:21.8467810Z                                                                     ^
+2026-11-05T20:18:21.8571610Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.8675230Z @interface AVAssetWriter : NSObject
+2026-11-05T20:18:21.8776900Z            ^
+2026-11-05T20:18:21.8877780Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:729:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure
+2026-11-05T20:18:21.8980260Z                             reader.cancelReading()
+2026-11-05T20:18:21.9082310Z                             ^
+2026-11-05T20:18:21.9185770Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.9298790Z @interface AVAssetReader : NSObject
+2026-11-05T20:18:21.9397780Z            ^
+2026-11-05T20:18:21.9510430Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:733:40: warning: capture of 'videoOut' with non-Sendable type 'AVAssetReaderOutput' in a '@Sendable' closure
+2026-11-05T20:18:21.9611070Z                         guard let sb = videoOut.copyNextSampleBuffer() else {
+2026-11-05T20:18:21.9713970Z                                        ^
+2026-11-05T20:18:21.9824510Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:43:12: note: class 'AVAssetReaderOutput' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:21.9918890Z @interface AVAssetReaderOutput : NSObject
+2026-11-05T20:18:22.0022270Z            ^
+2026-11-05T20:18:22.0124050Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:799:50: warning: capture of 'transferSession' with non-Sendable type 'VTPixelTransferSession?' in a '@Sendable' closure
+2026-11-05T20:18:22.0243970Z                             guard let transfer = transferSession else {
+2026-11-05T20:18:22.0345600Z                                                  ^
+2026-11-05T20:18:22.0448280Z Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.0550530Z @frozen public enum Optional<Wrapped> : ~Copyable, ~Escapable where Wrapped : ~Copyable, Wrapped : ~Escapable {
+2026-11-05T20:18:22.0652630Z                     ^
+2026-11-05T20:18:22.0754790Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:804:37: warning: capture of 'scalePool' with non-Sendable type 'CVPixelBufferPool?' in a '@Sendable' closure
+2026-11-05T20:18:22.0863480Z                                     scalePool, width: encodeW, height: encodeH,
+2026-11-05T20:18:22.0960440Z                                     ^
+2026-11-05T20:18:22.1061700Z Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.1164870Z @frozen public enum Optional<Wrapped> : ~Copyable, ~Escapable where Wrapped : ~Copyable, Wrapped : ~Escapable {
+2026-11-05T20:18:22.1258680Z                     ^
+2026-11-05T20:18:22.1362720Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:822:34: warning: capture of 'adaptor' with non-Sendable type 'AVAssetWriterInputPixelBufferAdaptor?' in a '@Sendable' closure
+2026-11-05T20:18:22.1476980Z                             if !(adaptor?.append(dst, withPresentationTime: pts) ?? false) {
+2026-11-05T20:18:22.1583430Z                                  ^
+2026-11-05T20:18:22.1714340Z Swift.Optional:1:21: note: generic enum 'Optional' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.1818020Z @frozen public enum Optional<Wrapped> : ~Copyable, ~Escapable where Wrapped : ~Copyable, Wrapped : ~Escapable {
+2026-11-05T20:18:22.1920760Z                     ^
+2026-11-05T20:18:22.2021550Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:876:35: warning: capture of 'resume' with non-Sendable type 'CompressionEngine.ResumeBox?' in a '@Sendable' closure
+2026-11-05T20:18:22.2121320Z                     queue.async { resume?.resumeOnce() }
+2026-11-05T20:18:22.2223430Z                                   ^
+2026-11-05T20:18:22.2326070Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:102:25: note: class 'ResumeBox' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.2435830Z     private final class ResumeBox {
+2026-11-05T20:18:22.2538270Z                         ^
+2026-11-05T20:18:22.2652880Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:879:24: warning: capture of 'resume' with non-Sendable type 'CompressionEngine.ResumeBox' in a '@Sendable' closure
+2026-11-05T20:18:22.2759810Z                     if resume.isDone { return }
+2026-11-05T20:18:22.2869480Z                        ^
+2026-11-05T20:18:22.2972280Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:102:25: note: class 'ResumeBox' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.3074150Z     private final class ResumeBox {
+2026-11-05T20:18:22.3176140Z                         ^
+2026-11-05T20:18:22.3322170Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:880:27: warning: capture of 'aIn' with non-Sendable type 'AVAssetWriterInput' in a '@Sendable' closure
+2026-11-05T20:18:22.3425660Z                     while aIn.isReadyForMoreMediaData {
+2026-11-05T20:18:22.3638770Z                           ^
+2026-11-05T20:18:22.3642020Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriterInput.h:39:12: note: class 'AVAssetWriterInput' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.3744770Z @interface AVAssetWriterInput : NSObject
+2026-11-05T20:18:22.3888250Z            ^
+2026-11-05T20:18:22.4014230Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:883:69: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure
+2026-11-05T20:18:22.4162150Z                         if flags.cancelled || flags.error != nil || writer.status == .failed {
+2026-11-05T20:18:22.4313220Z                                                                     ^
+2026-11-05T20:18:22.4428020Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.4538110Z @interface AVAssetWriter : NSObject
+2026-11-05T20:18:22.4655670Z            ^
+2026-11-05T20:18:22.4767330Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:884:29: warning: capture of 'reader' with non-Sendable type 'AVAssetReader' in a '@Sendable' closure
+2026-11-05T20:18:22.4937420Z                             reader.cancelReading()
+2026-11-05T20:18:22.5096510Z                             ^
+2026-11-05T20:18:22.5220720Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReader.h:63:12: note: class 'AVAssetReader' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.5331700Z @interface AVAssetReader : NSObject
+2026-11-05T20:18:22.5440760Z            ^
+2026-11-05T20:18:22.5549930Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:888:40: warning: capture of 'aOut' with non-Sendable type 'AVAssetReaderTrackOutput' in a '@Sendable' closure
+2026-11-05T20:18:22.5653140Z                         guard let sb = aOut.copyNextSampleBuffer() else {
+2026-11-05T20:18:22.5754340Z                                        ^
+2026-11-05T20:18:22.5867200Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetReaderOutput.h:201:12: note: class 'AVAssetReaderTrackOutput' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.5988930Z @interface AVAssetReaderTrackOutput : AVAssetReaderOutput
+2026-11-05T20:18:22.6131470Z            ^
+2026-11-05T20:18:22.6246930Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:690:14: warning: concurrently-executed local function 'pipeVideo()' must be marked as '@Sendable'; this is an error in the Swift 6 language mode
+2026-11-05T20:18:22.6350260Z         func pipeVideo() async {
+2026-11-05T20:18:22.6460300Z              ^
+2026-11-05T20:18:22.6563190Z         @Sendable 
+2026-11-05T20:18:22.6677160Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:867:14: warning: concurrently-executed local function 'pipeAudio()' must be marked as '@Sendable'; this is an error in the Swift 6 language mode
+2026-11-05T20:18:22.6791530Z         func pipeAudio() async {
+2026-11-05T20:18:22.6921600Z              ^
+2026-11-05T20:18:22.7048070Z         @Sendable 
+2026-11-05T20:18:22.7161660Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:975:23: warning: capture of 'writer' with non-Sendable type 'AVAssetWriter' in a '@Sendable' closure; this is an error in the Swift 6 language mode
+2026-11-05T20:18:22.7298360Z                 await writer.finishWriting()
+2026-11-05T20:18:22.7425090Z                       ^
+2026-11-05T20:18:22.7538680Z /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVFoundation.framework/Headers/AVAssetWriter.h:66:12: note: class 'AVAssetWriter' does not conform to the 'Sendable' protocol
+2026-11-05T20:18:22.7644580Z @interface AVAssetWriter : NSObject
+2026-11-05T20:18:22.7748000Z            ^
+2026-11-05T20:18:22.7850380Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift:1012:26: warning: conditional cast from 'CVImageBuffer' (aka 'CVBuffer') to 'CVPixelBuffer' (aka 'CVBuffer') always succeeds
+2026-11-05T20:18:22.7858340Z                 return b as? CVPixelBuffer
+2026-11-05T20:18:22.7960320Z                          ^
+2026-11-05T20:18:22.8061780Z 
+2026-11-05T20:18:22.8187300Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/IntegrityReport.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:22.8305820Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:22.8422750Z     
+2026-11-05T20:18:22.8525470Z 
+2026-11-05T20:18:22.8626700Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:22.8729200Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:22.8838270Z     
+2026-11-05T20:18:22.8955520Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift:112:75: warning: reference to captured var 'outDuration' in concurrently-executing code; this is an error in the Swift 6 language mode
+2026-11-05T20:18:22.9057780Z                 await Self.decodesPixelData(asset: outAsset, at: min(0.1, outDuration * 0.1))
+2026-11-05T20:18:22.9164510Z                                                                           ^
+2026-11-05T20:18:22.9232150Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift:116:70: warning: reference to captured var 'outDuration' in concurrently-executing code; this is an error in the Swift 6 language mode
+2026-11-05T20:18:22.9336650Z                     await Self.decodesPixelData(asset: outAsset, at: outDuration - 0.3)
+2026-11-05T20:18:22.9438860Z                                                                      ^
+2026-11-05T20:18:22.9541070Z 
+2026-11-05T20:18:22.9642620Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:22.9746290Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:22.9850060Z     
+2026-11-05T20:18:22.9952060Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:542:13: warning: result of call to 'withAnimation' is unused
+2026-11-05T20:18:23.0055250Z             withAnimation { jobs.remove(at: idx) }
+2026-11-05T20:18:23.0157180Z             ^             ~~~~~~~~~~~~~~~~~~~~~~~~
+2026-11-05T20:18:23.0292130Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:578:9: warning: result of call to 'withAnimation' is unused
+2026-11-05T20:18:23.0422280Z         withAnimation { jobs.remove(at: idx) }
+2026-11-05T20:18:23.0541210Z         ^             ~~~~~~~~~~~~~~~~~~~~~~~~
+2026-11-05T20:18:23.0651000Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:592:13: warning: result of call to 'withAnimation' is unused
+2026-11-05T20:18:23.0753660Z             withAnimation { jobs.remove(at: idx) }
+2026-11-05T20:18:23.0863880Z             ^             ~~~~~~~~~~~~~~~~~~~~~~~~
+2026-11-05T20:18:23.0975510Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:610:13: warning: initialization of immutable value 'name' was never used; consider replacing with assignment to '_' or removing it
+2026-11-05T20:18:23.1106280Z         let name = jobs[idx].sourceName
+2026-11-05T20:18:23.1230810Z         ~~~~^~~~
+2026-11-05T20:18:23.1354880Z         _
+2026-11-05T20:18:23.1480060Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:611:13: warning: initialization of immutable value 'preset' was never used; consider replacing with assignment to '_' or removing it
+2026-11-05T20:18:23.1579710Z         let preset = jobs[idx].preset
+2026-11-05T20:18:23.1639560Z         ~~~~^~~~~~
+2026-11-05T20:18:23.1740560Z         _
+2026-11-05T20:18:23.1844240Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift:829:13: warning: variable 'finalName' was never mutated; consider changing to 'let' constant
+2026-11-05T20:18:23.1948790Z         var finalName = ext.isEmpty ? stem : "\(stem).\(ext)"
+2026-11-05T20:18:23.2051660Z         ~~~ ^
+2026-11-05T20:18:23.2152940Z         let
+2026-11-05T20:18:23.2254250Z 
+2026-11-05T20:18:23.2356960Z Failed frontend command:
+2026-11-05T20:18:23.2546510Z /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/AsyncTimeout.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/BackgroundCompress.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/IntegrityReport.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift -primary-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/JobRecord.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/JobRows.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/Preset.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/PresetViews.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/PrivacyScrub.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualityCheck.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualitySizeOptimizer.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/RootView.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/SetupFlow.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/SizeMath.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/VidCompressApp.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/VideoProbe.swift -supplementary-output-file-map /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/supplementaryOutputs-1 -target arm64-apple-ios17.0-simulator -disable-cross-import-overlay-search -swift-module-cross-import AVKit /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/AVKit.framework/Modules/AVKit.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import AVKit /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AVKit.framework/Modules/AVKit.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import AppIntents /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/AppIntents.framework/Modules/AppIntents.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import AppIntents /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/AppIntents.framework/Modules/AppIntents.swiftcrossimport/UIKit.swiftoverlay -swift-module-cross-import AppIntents /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AppIntents.framework/Modules/AppIntents.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import AppIntents /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/AppIntents.framework/Modules/AppIntents.swiftcrossimport/UIKit.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/WidgetKit.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/WidgetKit.swiftoverlay -swift-module-cross-import RelevanceKit /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/RelevanceKit.framework/Modules/RelevanceKit.swiftcrossimport/MapKit.swiftoverlay -swift-module-cross-import RelevanceKit /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/RelevanceKit.framework/Modules/RelevanceKit.swiftcrossimport/MapKit.swiftoverlay -swift-module-cross-import SwiftData /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/SwiftData.framework/Modules/SwiftData.swiftcrossimport/CoreData.swiftoverlay -swift-module-cross-import SwiftData /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/System/Library/Frameworks/SwiftData.framework/Modules/SwiftData.swiftcrossimport/SwiftUI.swiftoverlay -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libAppIntentsMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#AppIntentsMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libFoundationMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#FoundationMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libObservationMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#ObservationMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libPreviewsMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#PreviewsMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftDataMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftDataMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftUIMacros -load-resolved-plugin /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libTipKitMacros.dylib\#/Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#TipKitMacros -disable-implicit-swift-modules -Xcc -fno-implicit-modules -Xcc -fno-implicit-module-maps -explicit-swift-module-map-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-dependencies-1.json -Xllvm -aarch64-use-tbi -enable-objc-interop -sdk /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -I /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -F /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -no-color-diagnostics -Xcc -fno-color-diagnostics -enable-testing -g -debug-info-format\=dwarf -dwarf-version\=4 -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -swift-version 5 -enforce-exclusivity\=checked -Onone -D DEBUG -serialize-debugging-options -const-gather-protocols-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_const_extract_protocols.json -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -empty-abi-descriptor -validate-clang-modules-once -clang-build-session-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Session.modulevalidation -Xcc -working-directory -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp -enable-anonymous-context-mangled-names -file-compilation-dir /Users/runner/work/iosnativevideocomp/iosnativevideocomp -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -Xcc -ivfsstatcache -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/swift-overrides.hmap -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-generated-files.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-own-target-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-project-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/include -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources -Xcc -DDEBUG\=1 -no-auto-bridging-header-chaining -module-name VidCompress -frontend-parseable-output -disable-clang-spi -target-sdk-version 26.2 -target-sdk-name iphonesimulator26.2 -clang-target arm64-apple-ios26.2-simulator -in-process-plugin-server-path /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/libSwiftInProcPluginServer.dylib -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/AsyncTimeout.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/BackgroundCompress.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/CompressVideoIntent.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/CompressionEngine.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/IntegrityReport.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/IntegrityVerifier.o -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/JobCoordinator.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/AsyncTimeout.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/BackgroundCompress.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/CompressVideoIntent.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/CompressionEngine.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/IntegrityReport.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/IntegrityVerifier.o -index-unit-output-path /VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/JobCoordinator.o -index-store-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Index.noindex/DataStore -index-system-modules
+2026-11-05T20:18:23.2666080Z SwiftCompile normal arm64 Compiling\ QualitySizeOptimizer.swift,\ RootView.swift,\ SetupFlow.swift,\ SizeMath.swift,\ VidCompressApp.swift,\ VideoProbe.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualitySizeOptimizer.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/RootView.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/SetupFlow.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/SizeMath.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/VidCompressApp.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/VideoProbe.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2674530Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualitySizeOptimizer.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2677150Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2677570Z     
+2026-11-05T20:18:23.2677650Z 
+2026-11-05T20:18:23.2678120Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/RootView.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2678920Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2679240Z     
+2026-11-05T20:18:23.2679370Z 
+2026-11-05T20:18:23.2679840Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/SetupFlow.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2680500Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2680870Z     
+2026-11-05T20:18:23.2681020Z 
+2026-11-05T20:18:23.2681500Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/SizeMath.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2682180Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2682570Z     
+2026-11-05T20:18:23.2682640Z 
+2026-11-05T20:18:23.2683510Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/VidCompressApp.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2684980Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2685360Z     
+2026-11-05T20:18:23.2685490Z 
+2026-11-05T20:18:23.2686020Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/VideoProbe.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2686720Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2687020Z     
+2026-11-05T20:18:23.2687140Z 
+2026-11-05T20:18:23.2689930Z SwiftCompile normal arm64 Compiling\ JobRecord.swift,\ JobRows.swift,\ Preset.swift,\ PresetViews.swift,\ PrivacyScrub.swift,\ QualityCheck.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/JobRecord.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/JobRows.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/Preset.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/PresetViews.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/PrivacyScrub.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualityCheck.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2692120Z 
+2026-11-05T20:18:23.2692600Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/JobRecord.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2693280Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2693570Z     
+2026-11-05T20:18:23.2693640Z 
+2026-11-05T20:18:23.2694120Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/JobRows.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2694790Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2695100Z     
+2026-11-05T20:18:23.2695920Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/JobRows.swift:511:20: warning: immutable value 'out' was never used; consider replacing with '_' or removing it
+2026-11-05T20:18:23.2696580Z                let out = job.outputURL,
+2026-11-05T20:18:23.2696820Z                ~~~~^~~
+2026-11-05T20:18:23.2697080Z                _
+2026-11-05T20:18:23.2697720Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/JobRows.swift:933:14: warning: 'tracks(withMediaType:)' was deprecated in iOS 16.0: Use loadTracks(withMediaType:) instead
+2026-11-05T20:18:23.2698490Z             .tracks(withMediaType: .video).first else { return }
+2026-11-05T20:18:23.2698770Z              ^
+2026-11-05T20:18:23.2698920Z 
+2026-11-05T20:18:23.2699500Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/Preset.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2700630Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2701030Z     
+2026-11-05T20:18:23.2701110Z 
+2026-11-05T20:18:23.2702320Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/UI/PresetViews.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2703140Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2704370Z     
+2026-11-05T20:18:23.2704470Z 
+2026-11-05T20:18:23.2708670Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/PrivacyScrub.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2710540Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2710840Z     
+2026-11-05T20:18:23.2711480Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/PrivacyScrub.swift:56:28: warning: 'dateValue' was deprecated in iOS 16.0: Use load(.dateValue) instead
+2026-11-05T20:18:23.2712120Z         var date = srcItem.dateValue
+2026-11-05T20:18:23.2712330Z                            ^
+2026-11-05T20:18:23.2713450Z /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/PrivacyScrub.swift:57:41: warning: 'stringValue' was deprecated in iOS 16.0: Use load(.stringValue) instead
+2026-11-05T20:18:23.2714330Z         if date == nil, let s = srcItem.stringValue {
+2026-11-05T20:18:23.2716900Z                                         ^
+2026-11-05T20:18:23.2719560Z 
+2026-11-05T20:18:23.2720160Z SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/QualityCheck.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2749270Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2750020Z     
+2026-11-05T20:18:23.2750220Z 
+2026-11-05T20:18:23.2751020Z SwiftDriverJobDiscovery normal arm64 Emitting module for VidCompress (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2752050Z 
+2026-11-05T20:18:23.2753150Z SwiftDriver\ Compilation\ Requirements VidCompress normal arm64 com.apple.xcode.tools.swift.compiler (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2754770Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2797350Z     builtin-Swift-Compilation-Requirements -- /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name VidCompress -Onone -enforce-exclusivity\=checked @/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.SwiftFileList -DDEBUG -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -F /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -c -j3 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache -output-file-map /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -sdk-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftmodule -validate-clang-modules-once -clang-build-session-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Session.modulevalidation -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress_const_extract_protocols.json -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-generated-files.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-own-target-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/VidCompress-project-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/include -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-Swift.h -working-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp -experimental-emit-module-separately -disable-cmo
+2026-11-05T20:18:23.2813000Z 
+2026-11-05T20:18:23.2813550Z SwiftDriverJobDiscovery normal arm64 Compiling JobRecord.swift, JobRows.swift, Preset.swift, PresetViews.swift, PrivacyScrub.swift, QualityCheck.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2814160Z 
+2026-11-05T20:18:23.2815530Z SwiftMergeGeneratedHeaders /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources/VidCompress-Swift.h /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-Swift.h (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2817110Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2818670Z     builtin-swiftHeaderTool -arch arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress-Swift.h -o /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/DerivedSources/VidCompress-Swift.h
+2026-11-05T20:18:23.2819970Z 
+2026-11-05T20:18:23.2821200Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.swiftmodule /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftmodule (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2822850Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2824450Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftmodule /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.swiftmodule
+2026-11-05T20:18:23.2828490Z 
+2026-11-05T20:18:23.2833850Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.swiftdoc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftdoc (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2835340Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2836930Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftdoc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.swiftdoc
+2026-11-05T20:18:23.2838370Z 
+2026-11-05T20:18:23.2840040Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.abi.json /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.abi.json (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2841500Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2843080Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.abi.json /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/arm64-apple-ios-simulator.abi.json
+2026-11-05T20:18:23.2844540Z 
+2026-11-05T20:18:23.2845830Z Copy /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftsourceinfo (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:23.2847300Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2848920Z     builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompress.build/Objects-normal/arm64/VidCompress.swiftsourceinfo /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/VidCompress.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo
+2026-11-05T20:18:23.2850430Z 
+2026-11-05T20:18:23.2850780Z SwiftDriver VidCompressTests normal arm64 com.apple.xcode.tools.swift.compiler (in target 'VidCompressTests' from project 'VidCompress')
+2026-11-05T20:18:23.2854680Z     cd /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:23.2900200Z     builtin-SwiftDriver -- /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name VidCompressTests -Onone -enforce-exclusivity\=checked @/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.SwiftFileList -DDEBUG -plugin-path /Applications/Xcode_26.3.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -Isystem /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib -F /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator -F /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks -F /Applications/Xcode_26.3.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.2.sdk/Developer/Library/Frameworks -c -j3 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/SDKStatCaches.noindex/iphonesimulator26.2-23C57-dc75598d0054f22ec865fa860f139d72e244bd9a5feaf902f95f61bf06266e52.sdkstatcache -output-file-map /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -sdk-module-cache-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests.swiftmodule -validate-clang-modules-once -clang-build-session-file /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/ModuleCache.noindex/Session.modulevalidation -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests_const_extract_protocols.json -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-generated-files.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-own-target-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-all-target-headers.hmap -Xcc -iquote -Xcc /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/VidCompressTests-project-headers.hmap -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Products/Debug-iphonesimulator/include -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/DerivedSources-normal/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/DerivedSources/arm64 -Xcc -I/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Build/Intermediates.noindex/VidCompress.build/Debug-iphonesimulator/VidCompressTests.build/Objects-normal/arm64/VidCompressTests-Swift.h -working-directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp -experimental-emit-module-separately -disable-cmo
+2026-11-05T20:18:24.0070250Z 
+2026-11-05T20:18:24.2651280Z Testing failed:
+2026-11-05T20:18:24.2652330Z 
+2026-11-05T20:18:24.2813450Z 	Missing return in closure expected to return 'Bool'
+2026-11-05T20:18:24.2815240Z Test session results, code coverage, and logs:
+2026-11-05T20:18:24.2944840Z 	Testing cancelled because the build failed.
+2026-11-05T20:18:24.2945570Z 	/Users/runner/work/iosnativevideocomp/iosnativevideocomp/build/DerivedData/Logs/Test/Test-VidCompress-2026.11.05_20-17-46-+0000.xcresult
+2026-11-05T20:18:24.3080390Z 
+2026-11-05T20:18:24.3080400Z 
+2026-11-05T20:18:24.3121500Z ** TEST FAILED **
+2026-11-05T20:18:24.3222120Z 
+2026-11-05T20:18:24.3322630Z 
+2026-11-05T20:18:24.3424250Z The following build commands failed:
+2026-11-05T20:18:24.3526760Z 	SwiftCompile normal arm64 /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:24.3645020Z 	SwiftCompile normal arm64 Compiling\ AsyncTimeout.swift,\ BackgroundCompress.swift,\ CompressVideoIntent.swift,\ CompressionEngine.swift,\ IntegrityReport.swift,\ IntegrityVerifier.swift,\ JobCoordinator.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/AsyncTimeout.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/BackgroundCompress.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/App/CompressVideoIntent.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/CompressionEngine.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Models/IntegrityReport.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Engine/IntegrityVerifier.swift /Users/runner/work/iosnativevideocomp/iosnativevideocomp/Sources/Store/JobCoordinator.swift (in target 'VidCompress' from project 'VidCompress')
+2026-11-05T20:18:24.3759960Z 	Testing project VidCompress with scheme VidCompress
+2026-11-05T20:18:24.3863060Z (3 failures)
+2026-11-05T20:18:24.4190490Z ##[error]Process completed with exit code 65.
+2026-11-05T20:18:24.4787810Z Post job cleanup.
+2026-11-05T20:18:25.1790410Z [command]/opt/homebrew/bin/git version
+2026-11-05T20:18:25.2397640Z git version 2.56.0
+2026-11-05T20:18:25.2949460Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/3ac7afec-5909-4979-9c43-8301e6ff562d/.gitconfig'
+2026-11-05T20:18:25.3049370Z Temporarily overriding HOME='/Users/runner/work/_temp/3ac7afec-5909-4979-9c43-8301e6ff562d' before making global git config changes
+2026-11-05T20:18:25.3186890Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-05T20:18:25.3289430Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/iosnativevideocomp/iosnativevideocomp
+2026-11-05T20:18:25.3536670Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-05T20:18:25.3852590Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-05T20:18:25.5886250Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-05T20:18:25.5994540Z http.https://github.com/.extraheader
+2026-11-05T20:18:25.6311870Z [command]/opt/homebrew/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-05T20:18:25.6616090Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-05T20:18:25.8718830Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-05T20:18:25.9028840Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-05T20:18:26.1586550Z Cleaning up orphan processes
+2026-11-05T20:18:28.6806470Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

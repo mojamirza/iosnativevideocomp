@@ -37,7 +37,7 @@ A professional, **100% native** (no external frameworks) iPad video compressor w
 ## Feature map
 
 - **Presets**: 3 built-ins (High quality keep-resolution HEVC 8 Mbps · Medium 720p 4 Mbps · Low 480p 1.5 Mbps) + a full custom editor — codec (HEVC / H.264), resolution class (keep … 4K), **fixed bitrate** (log slider + exact typed value) or **guaranteed MB target**, fps cap, audio bitrate, mono voice track, HDR→SDR. Live per-preset estimated output size and quality hints. Presets persist; the last-used selection sticks.
-- **Encoder**: hardware VideoToolbox by default; a per-preset opt-in requests the **software encoder** (slower, measurably better at equal bitrate — iOS 17.4+).
+- **Encoder**: hardware VideoToolbox — the only selectable video encoder on iOS (a software-encoder request crashes the writer on device; verified). The quality levers are the offline session, Main10 for HDR, and measured re-encode passes.
 - **Import**: PhotosPicker (original pixels — `preferredItemEncoding: .current`, so the picker never pre-transcodes HDR), the Files app picker and **drag & drop** in Split View, all multi-select for batches; plus a **Shortcuts action** ("Compress video") that hands videos to the queue. Multitasking (Split View / Stage Manager, all four orientations) is fully supported.
 - **Queue & history**: live progress with encode speed/ETA, cancel, retry, swipe-to-delete, SwiftData-backed history with per-job savings, in-app player with **source/output comparison at the same timestamp**.
 - **Background compression** (iOS 26+): encodes keep running when you leave the app with progress on the system indicator; a revoked task turns its jobs into retryable rows — never silent loss.

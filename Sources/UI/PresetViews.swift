@@ -74,7 +74,6 @@ struct PresetEditorView: View {
     /// currently being set up IS HDR — otherwise SDR-to-SDR "conversion"
     /// would be a no-op hiding behind a toggle.
     @State private var hdrConvert: Bool
-    @State private var softwareEncode: Bool
     @State private var fpsCapEnabled: Bool
     @State private var fpsCap: Double
     @State private var audioKbps: Double
@@ -105,7 +104,6 @@ struct PresetEditorView: View {
         _rateMode = State(initialValue: existing?.targetSizeMB != nil ? .target : .bitrate)
         _monoAudio = State(initialValue: existing?.audioChannels == 1)
         _hdrConvert = State(initialValue: existing?.hdrToSDR == true)
-        _softwareEncode = State(initialValue: existing?.softwareEncode == true)
         _fitUnderText = State(initialValue: existing?.targetSizeMB
             .map { $0 == $0.rounded() ? "\(Int($0))" : String(format: "%.1f", $0) } ?? "")
     }
@@ -395,16 +393,6 @@ struct PresetEditorView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // ENCODER CHOICE — the one quality lever AVFoundation still
-                // exposes: the hardware blocks are fast but measurably softer
-                // at equal bitrate than the software encoder.
-                Section("Encoder") {
-                    Toggle("Software encoder (slower, best quality)", isOn: $softwareEncode)
-                    Text("Requests the software encoder — slower but measurably better at the same bitrate. Worth it for archival copies and low bitrates. Honored on iOS 17.4+; systems that can't honor the request use the hardware encoder.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-
                 // REAL HDR → SDR, a deliberate conversion (BT.2100 tone-map
                 // → 709 re-encode, verified in the report) — never a
                 // relabeling. Off = keep HDR untouched (the default, 10-bit
@@ -458,8 +446,7 @@ struct PresetEditorView: View {
                             // Only a positive flag is persisted; nil means
                             // "keep HDR" — a preset saved on an HDR video
                             // must not silently convert HDR videos later.
-                            hdrToSDR: hdrConvert ? true : nil,
-                            softwareEncode: softwareEncode ? true : nil
+                            hdrToSDR: hdrConvert ? true : nil
                         )
                         // Editing preserves the preset's identity so the stored
                         // copy is replaced in place.

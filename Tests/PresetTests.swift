@@ -29,20 +29,13 @@ final class PresetTests: XCTestCase {
         XCTAssertEqual(p.audioChannels, 2)
     }
 
-    func testSoftwareEncodeRoundTrip() throws {
-        var p = Preset(name: "sw", codec: .hevc, resolution: .keep)
-        p.softwareEncode = true
-        let data = try JSONEncoder().encode(p)
-        let back = try JSONDecoder().decode(Preset.self, from: data)
-        XCTAssertEqual(back.softwareEncode, true)
-        XCTAssertEqual(back.id, p.id)
-    }
-
-    func testDefaultPresetHasNoSoftwareFlag() throws {
-        let p = Preset(name: "hw", codec: .h264, resolution: .fhd)
-        XCTAssertNil(p.softwareEncode)
-        let back = try JSONDecoder().decode(Preset.self, from: try JSONEncoder().encode(p))
-        XCTAssertNil(back.softwareEncode)
+    // Presets stored by versions that carried a softwareEncode flag (the
+    // feature removed after it crashed on device) must still decode — the
+    // unknown key is simply ignored by Codable.
+    func testLegacySoftwareFlagDecodeIsTolerated() throws {
+        let json = #"{"name":"sw","codec":"hevc","resolution":"keep","softwareEncode":true}"#
+        let p = try JSONDecoder().decode(Preset.self, from: Data(json.utf8))
+        XCTAssertEqual(p.codec, .hevc)
     }
 
     // Built-in identity derives from a FIXED system key — renaming must not

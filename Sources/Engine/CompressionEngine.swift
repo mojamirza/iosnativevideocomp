@@ -360,25 +360,15 @@ enum CompressionEngine {
             AVVideoHeightKey: encodeH,
             AVVideoCompressionPropertiesKey: props,
         ]
-        // SOFTWARE ENCODER (opt-in, preset-level): hardware VideoToolbox is
-        // fast but measurably softer at equal bitrate — "max quality, slower"
-        // for archival copies and low bitrates.
-        //
-        // API reality (CI-verified): the typed AVVideoEncoderSpecificationKey
-        // carries a macOS-only availability annotation, and the VT spec
-        // constants only surfaced on iOS in 17.4. The writer consumes settings
-        // dictionaries as raw strings and IGNORES keys it does not know
-        // (forward compatibility — apps built against newer SDKs must not
-        // crash older runtimes), so the request goes out under the raw key on
-        // iOS 17.4+ only: honored there if the writer grew the capability
-        // alongside the constants, silently ignored (hardware used) where it
-        // did not. No crash path either way.
-        if #available(iOS 17.4, *), preset.softwareEncode == true {
-            settings["AVVideoEncoderSpecificationKey"] = [
-                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String:
-                    NSNumber(value: false)
-            ]
-        }
+        // NOTE ON SOFTWARE ENCODING: there is none on iOS. A request that
+        // forbids the hardware encoder (encoder specification with
+        // EnableHardwareAcceleratedVideoEncoder = false) compiled fine but
+        // CRASHED on device with an uncatchable exception at writer setup —
+        // AVFoundation on iOS does not ship a selectable software video
+        // encoder. The quality levers that DO exist are the offline session
+        // (expectsMediaDataInRealTime = false), Main10 for HDR, and the
+        // measured re-encode passes; a true software path would require a
+        // full VTCompressionSession pipeline.
         // Always complete — the resolver produces a full, valid triplet
         // (never a partial dictionary). The SD/HD decision uses the shared
         // isSD rule on the SOURCE display size — the same inputs attach()
