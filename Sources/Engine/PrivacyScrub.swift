@@ -29,6 +29,16 @@ enum PrivacyScrub {
         set { UserDefaults.standard.set(newValue, forKey: keepDateKey) }
     }
 
+    /// STRIP-ALL policy (user-controlled, in the preset manager and About &
+    /// Settings): when on, the output ships with NO metadata track at all —
+    /// no creation date, nothing. Location is never carried on any setting.
+    /// Overrides keepCreationDate.
+    static let stripAllKey = "privacy.stripAllMetadata"
+    static var stripAllMetadata: Bool {
+        get { UserDefaults.standard.bool(forKey: stripAllKey) }
+        set { UserDefaults.standard.set(newValue, forKey: stripAllKey) }
+    }
+
     private static let lock = NSLock()
     private static var _sessionDisabled = false
 
@@ -45,7 +55,7 @@ enum PrivacyScrub {
     /// the modern non-blocking accessor (the old synchronous `commonMetadata`
     /// could stall on slow storage).
     static func items(for source: AVAsset) async -> [AVMetadataItem] {
-        guard keepCreationDate, !sessionDisabled else { return [] }
+        guard keepCreationDate, !stripAllMetadata, !sessionDisabled else { return [] }
         let common = (try? await source.load(.commonMetadata)) ?? []
         let src = common.first {
             $0.commonKey == AVMetadataKey.commonKeyCreationDate

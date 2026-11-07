@@ -26,18 +26,6 @@ struct SetupFlowView: View {
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var showEditor = false
     @State private var editingPreset: Preset?
-    /// Privacy scrub: keep the source's creation date (location is NEVER
-    /// kept). Persisted so the choice sticks across sessions.
-    @State private var keepCreationDate = PrivacyScrub.keepCreationDate
-    // ADJUST (single video): rotate + trim with a thumbnail filmstrip,
-    // plus a custom poster image (embedded as the output's artwork).
-    @State private var rotation: Int = 0
-    @State private var trimStart: Double = 0
-    @State private var trimEnd: Double = 0
-    @State private var filmstrip: [UIImage] = []
-    @State private var posterItem: PhotosPickerItem?
-    @State private var posterData: Data?
-    @State private var posterPreview: UIImage?
     // INLINE TRIM PREVIEW: an AVPlayer over the ORIGINAL file that plays
     // exactly [trimStart, trimEnd). What you set is what you see.
     @State private var previewPlayer: AVPlayer?
@@ -50,46 +38,6 @@ struct SetupFlowView: View {
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
     var isBatch: Bool { videos.count > 1 }
-
-    /// LOW-MOTION detector (lecture / screen-recording suggestion): fires on
-    /// sources whose own bitrate is tiny relative to pixels×fps, i.e. the
-    /// encoder was starved for motion to spend bits on. Threshold: <0.045
-    /// bits-per-pixel-frame ≈ static slides with a voice track.
-    private var suggestsLectureMode: Bool {
-        guard let preset = selectedPreset,
-              preset.fpsCap == nil, preset.audioChannels == nil else { return false }
-        let candidates = probes.compactMap { $0 }
-        guard let p = candidates.first else { return false }
-        guard p.nominalFPS > 0, p.sourceSize.width > 0 else { return false }
-        let bpp = p.videoDataRate /
-            (Double(p.sourceSize.width) * Double(p.sourceSize.height) * Double(p.nominalFPS))
-        return bpp < 0.045
-    }
-
-    /// Applies the lecture recipe onto a COPY of the selected preset (built-
-    /// ins are never mutated): 15 fps cap, a lean bitrate for the output
-    /// size, and a forced MONO 48 kbps voice track.
-    private func applyLectureMode() {
-        guard var preset = selectedPreset else { return }
-        preset.fpsCap = 15
-        preset.fixedBitrateMbps = max(0.6, min(preset.fixedBitrateMbps, 2.0))
-        preset.audioBitrateKbps = 48
-        preset.audioChannels = 1
-        selectedPreset = preset
-    }
-
-    /// Lecture mode is ON when the selected preset already carries the whole
-    /// recipe (the explicit long-GOP marker: 15 fps cap + forced mono) -
-    /// derived, so switching presets updates it with no stale @State flag.
-    private var lectureApplied: Bool {
-        guard let preset = selectedPreset else { return false }
-        return preset.longGOP
-    }
-
-    /// Persist the privacy choice whenever the toggle is moved.
-    private func persistPrivacy() {
-        PrivacyScrub.keepCreationDate = keepCreationDate
-    }
 
     init(videos: [PickedVideo], onDone: @escaping () -> Void) {
         self.videos = videos
@@ -170,11 +118,6 @@ struct SetupFlowView: View {
             .task {
                 await analyze()
             }
-            // The privacy policy persists the moment the user moves it —
-            // a closed sheet must not lose the choice.
-            .onChange(of: keepCreationDate) { _, _ in
-                persistPrivacy()
-            }
             // Selection feedback: light tick on every preset change.
             .sensoryFeedback(.selection, trigger: selectedPreset?.id)
             // Poster image picked: normalize to JPEG ≤1024px so the embedded
@@ -250,43 +193,6 @@ struct SetupFlowView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-
-            // LOW-MOTION SUGGESTION (lectures / screen recordings): sources
-            // whose own bits-per-pixel are tiny carry almost no motion — a
-            // camera-style preset wastes bitrate on 60 fps of stillness.
-            // One tap applies the lecture recipe: 15 fps cap + lean bitrate
-            // + a MONO voice track.
-            if let preset = selectedPreset, suggestsLectureMode, !lectureApplied {
-                Label {
-                    HStack(spacing: 6) {
-                        Text("Low-motion source (lecture / screen recording?)")
-                            .font(.footnote)
-                        Button("Use lecture mode") {
-                            withAnimation { applyLectureMode() }
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    }
-                } icon: {
-                    Image(systemName: "lightbulb")
-                        .foregroundStyle(Color(UIColor.systemTeal))
-                }
-            } else if lectureApplied {
-                Label("Lecture mode on — 15 fps · lean bitrate · mono voice",
-                      systemImage: "lightbulb.fill")
-                    .font(.footnote)
-                    .foregroundStyle(Color(UIColor.systemTeal))
-            }
-
-            // PRIVACY SCRUB — deliberate policy, not an accident: outputs
-            // never carry location data; the creation date is a choice.
-            Toggle(isOn: $keepCreationDate) {
-                Label("Keep creation date (location is always removed)",
-                      systemImage: "eye.slash")
-                    .font(.footnote)
-            }
-            .tint(.accentColor)
 
             // BEFORE → AFTER story with a proportional bar.
             if let out = estimateBytes, selectedPreset != nil {
@@ -380,44 +286,23 @@ struct SetupFlowView: View {
 
     // MARK: subviews
 
-    /// Batch header: count + total input size.
     // MARK: adjust (single video)
 
-    /// Rotate + trim controls with a thumbnail filmstrip: 8 evenly spaced
-    /// frames; the ones outside the trim window dim so the selection is
-    /// visible without a scrubber. Handles below: sliders PLUS ±1 s / ±10 s
-    /// nudge buttons (mouse-precision falls short for frame-exact trims on
-    /// an iPad touch target), and an inline player that previews exactly
-    /// the selected window.
+    /// Rotate + trim controls: a Photos-style filmstrip with draggable
+    /// yellow end handles (TrimFilmstripPicker below) and an inline player
+    /// that previews exactly the selected window.
     private func adjustSection(_ probe: ProbeResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Adjust").font(.caption.bold()).foregroundStyle(.secondary)
 
-            HStack(spacing: 2) {
-                if filmstrip.isEmpty {
-                    ForEach(0..<8, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(.quaternary)
-                            .frame(height: 44)
-                            .frame(maxWidth: .infinity)
-                    }
-                } else {
-                    ForEach(filmstrip.indices, id: \.self) { i in
-                        let t = probe.duration * (Double(i) + 0.5) / Double(filmstrip.count)
-                        let inside = t >= trimStart && t <= trimEnd
-                        Image(uiImage: filmstrip[i])
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(height: 44)
-                            .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                            .opacity(inside ? 1 : 0.25)
-                    }
-                }
-            }
-
-            trimHandleRow(label: "Start", isStart: true, probe: probe)
-            trimHandleRow(label: "End", isStart: false, probe: probe)
+            // PHOTOS-STYLE TRIM: one filmstrip with draggable yellow end
+            // handles (live time labels) and a middle drag that moves the
+            // whole window — replaces the two slider rows + nudge buttons.
+            TrimFilmstripPicker(frames: filmstrip,
+                                start: $trimStart,
+                                end: $trimEnd,
+                                duration: probe.duration,
+                                onDrag: { stopPreview() })
             Text("Keeping \(timeString(trimEnd - trimStart)) of \(timeString(probe.duration))")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -556,77 +441,6 @@ struct SetupFlowView: View {
             // The layer is attached once in makeUIView; sizing lives in
             // the host's layoutSubviews.
         }
-    }
-
-    /// Clamp helpers keep both handle puzzles consistent (≥ 0.5 s window,
-    /// within [0, duration]) across slider AND every nudge direction.
-    private func clampedStart(_ v: Double) -> Double {
-        min(max(0, v), max(0, trimEnd - 0.5))
-    }
-
-    private func clampedEnd(_ v: Double, probe: ProbeResult) -> Double {
-        max(min(probe.duration, v), min(trimStart + 0.5, probe.duration))
-    }
-
-    private func nudge(_ isStart: Bool, by seconds: Double, probe: ProbeResult) {
-        if isStart {
-            trimStart = clampedStart(trimStart + seconds)
-        } else {
-            trimEnd = clampedEnd(trimEnd + seconds, probe: probe)
-        }
-    }
-
-    /// One draggable trim handle: label, ±10 s + ±1 s nudges, the slider
-    /// itself, and the live timestamp. Touch sliders alone bottom out at
-    /// whole-second precision — the nudge buttons exist for exact edges.
-    private func trimHandleRow(label: String, isStart: Bool, probe: ProbeResult) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.caption2)
-                .frame(width: 30, alignment: .leading)
-            nudgeButton("−10", isStart: isStart, by: -10, probe: probe,
-                        disabled: isStart ? trimStart <= 0.001
-                                          : trimEnd <= trimStart + 0.5 + 1e-6)
-            nudgeButton("−1", isStart: isStart, by: -1, probe: probe,
-                        disabled: isStart ? trimStart <= 0.001
-                                          : trimEnd <= trimStart + 0.5 + 1e-6)
-            if isStart {
-                Slider(value: Binding(
-                    get: { trimStart },
-                    set: { trimStart = clampedStart($0) }),
-                       in: 0...max(0, trimEnd - 0.5))
-                    .accessibilityLabel("Trim start")
-            } else {
-                Slider(value: Binding(
-                    get: { trimEnd },
-                    set: { trimEnd = clampedEnd($0, probe: probe) }),
-                       in: min(trimStart + 0.5, probe.duration)...probe.duration)
-                    .accessibilityLabel("Trim end")
-            }
-            nudgeButton("+1", isStart: isStart, by: 1, probe: probe,
-                        disabled: isStart ? trimEnd - trimStart <= 0.5 + 1e-6
-                                          : trimEnd >= probe.duration - 0.001)
-            nudgeButton("+10", isStart: isStart, by: 10, probe: probe,
-                        disabled: isStart ? trimEnd - trimStart <= 0.5 + 1e-6
-                                          : trimEnd >= probe.duration - 0.001)
-            Text(timeString(isStart ? trimStart : trimEnd))
-                .font(.caption2.monospacedDigit())
-                .frame(width: 44, alignment: .trailing)
-        }
-    }
-
-    private func nudgeButton(_ title: String, isStart: Bool, by seconds: Double,
-                             probe: ProbeResult, disabled: Bool) -> some View {
-        Button {
-            nudge(isStart, by: seconds, probe: probe)
-        } label: {
-            Text(title)
-                .font(.caption2.monospacedDigit())
-                .frame(width: 30, height: 22)
-        }
-        .buttonStyle(.bordered)
-        .disabled(disabled)
-        .accessibilityLabel("\(isStart ? "Trim start" : "Trim end") \(title)")
     }
 
     private func togglePreview(_ url: URL) {
@@ -1131,6 +945,155 @@ struct SetupFlowView: View {
                 ? "None of the selected files could be analyzed; they may be unsupported."
                 : "\(failures) of \(videos.count) videos couldn't be analyzed and will be skipped."
         }
+    }
+}
+
+/// PHOTOS-STYLE TRIM STRIP: the filmstrip fills the row; the selected window
+/// is outlined in yellow with two draggable end handles carrying live time
+/// labels, everything outside is dimmed, and dragging the MIDDLE moves the
+/// whole window with its length preserved — the same interaction model as
+/// the Photos app trimmer. Replaces the old two-slider + nudge-button rows.
+private struct TrimFilmstripPicker: View {
+    let frames: [UIImage]
+    @Binding var start: Double
+    @Binding var end: Double
+    let duration: Double
+    /// Fires while any drag is live (the setup flow stops the preview).
+    var onDrag: (() -> Void)?
+
+    private let handleWidth: CGFloat = 42
+    private let minWindow: Double = 0.5
+
+    /// Anchor for the whole-window move gesture (values when the drag began).
+    @State private var moveAnchor: (Double, Double)?
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let sx = start / max(duration, 0.1) * width
+            let ex = end / max(duration, 0.1) * width
+            ZStack(alignment: .leading) {
+                filmstrip(width: width)
+                // Dim OUTSIDE the window.
+                HStack(spacing: 0) {
+                    Rectangle().fill(.black.opacity(0.5))
+                        .frame(width: max(0, sx))
+                    Rectangle().fill(.clear)
+                        .frame(width: max(0, ex - sx))
+                    Rectangle().fill(.black.opacity(0.5))
+                }
+                // Yellow window outline.
+                Rectangle()
+                    .strokeBorder(Color.yellow, lineWidth: 3)
+                    .frame(width: max(0, ex - sx))
+                    .offset(x: sx)
+                // Middle drag: move the whole window, length preserved.
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .frame(width: max(0, ex - sx))
+                    .offset(x: sx)
+                    .gesture(moveGesture(width: width))
+                handle(time: start, isStart: true, width: width)
+                    .offset(x: max(0, min(width - handleWidth, sx - handleWidth / 2)))
+                handle(time: end, isStart: false, width: width)
+                    .offset(x: max(0, min(width - handleWidth, ex - handleWidth / 2)))
+            }
+            // Gestures read positions in the STRIP's space — the handles and
+            // the window rect are offset views, so their own coordinate
+            // spaces would return handle-local (wrong) locations.
+            .coordinateSpace(.named("trimStrip"))
+        }
+        .frame(height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Trim window")
+        .accessibilityValue("From \(Self.timeString(start)) to \(Self.timeString(end))")
+        .accessibilityAdjustableAction { direction in
+            let step: Double = direction == .decrement ? -1 : 1
+            start = max(0, min(start + step, end - minWindow))
+            end = min(duration, max(end + step, start + minWindow))
+        }
+        .onDisappear { moveAnchor = nil }
+    }
+
+    @ViewBuilder
+    private func filmstrip(width: CGFloat) -> some View {
+        if frames.isEmpty {
+            HStack(spacing: 2) {
+                ForEach(0..<8, id: \.self) { _ in
+                    Rectangle().fill(.quaternary)
+                }
+            }
+        } else {
+            HStack(spacing: 0) {
+                ForEach(frames.indices, id: \.self) { i in
+                    Image(uiImage: frames[i])
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: width / CGFloat(frames.count))
+                        .clipped()
+                }
+            }
+            .frame(width: width)
+        }
+    }
+
+    /// Yellow end handle with the live time label — the Photos look.
+    private func handle(time: Double, isStart: Bool, width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            Text(Self.timeString(time))
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(.black.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.top, 3)
+            Spacer(minLength: 0)
+            VStack(spacing: 3) {
+                Capsule().fill(.black.opacity(0.35)).frame(width: 14, height: 2)
+                Capsule().fill(.black.opacity(0.35)).frame(width: 14, height: 2)
+            }
+            .padding(.bottom, 5)
+        }
+        .frame(width: handleWidth)
+        .frame(maxHeight: .infinity)
+        .background(Color.yellow)
+        .contentShape(Rectangle())
+        .gesture(edgeGesture(isStart: isStart, width: width))
+        .accessibilityHidden(true)
+    }
+
+    /// Edge drag: absolute placement in the strip's coordinate space.
+    private func edgeGesture(isStart: Bool, width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("trimStrip"))
+            .onChanged { value in
+                onDrag?()
+                let t = value.location.x / width * duration
+                if isStart {
+                    start = max(0, min(t, end - minWindow))
+                } else {
+                    end = min(duration, max(t, start + minWindow))
+                }
+            }
+            .onEnded { _ in moveAnchor = nil }
+    }
+
+    private func moveGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("trimStrip"))
+            .onChanged { value in
+                onDrag?()
+                if moveAnchor == nil { moveAnchor = (start, end) }
+                guard let anchor = moveAnchor else { return }
+                let delta = value.translation.width / width * duration
+                let len = anchor.1 - anchor.0
+                var s = anchor.0 + delta
+                s = max(0, min(s, duration - len))
+                start = s
+                end = s + len
+            }
+            .onEnded { _ in moveAnchor = nil }
+    }
+
+    static func timeString(_ s: Double) -> String {
+        String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
     }
 }
 

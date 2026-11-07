@@ -22,6 +22,7 @@ struct RootView: View {
     @State private var confirmingBatchDelete = false
     @State private var showPresetEditor = false
     @State private var showAboutSettings = false
+    @State private var showPresetManager = false
     @State private var confirmingClearFinished = false
 
     var body: some View {
@@ -30,55 +31,30 @@ struct RootView: View {
         } detail: {
             interactiveList
         }
+        // PROMINENT DETAIL: at tight Split View widths the plain split view
+        // presented the SIDEBAR as the root — the queue became unreachable.
+        // This style shows the DETAIL first in compact widths; the sidebar
+        // slides over via the leading toggle and is always dismissible.
+        .navigationSplitViewStyle(.prominentDetail)
     }
 
-    /// The NavigationSplitView sidebar, redesigned as the app's CONTROL
-    /// surface rather than a passive index: import entry points, a LIVE
-    /// queue card (status + progress + pause/resume — previously queue
-    /// controls lived only at the top of the detail column and disappeared
-    /// as soon as you scrolled into history), housekeeping (Clear Finished),
-    /// the lifetime-savings headline, and the About & Settings destination
-    /// (a sheet keeps ONE host for its layout). The queue list stays the
-    /// always-mounted detail column — no state, drag targets or observers
-    /// are lost when the sidebar is used. iPad shows the two-column shell;
-    /// compact widths collapse it to the standard hamburger toggle.
-    /// Every subview is an extracted struct: this repo's type-checker has a
-    /// documented complexity budget and long builder chains burned CI rounds.
+    /// The NavigationSplitView sidebar — a lean utility column: the lifetime
+    /// savings headline, preset management (create/edit/duplicate/delete plus
+    /// the metadata policy) and About & Settings. Import lives in the detail
+    /// column (toolbar, empty state, drag & drop) and queue controls live on
+    /// the queue itself (status bar + rows) — the earlier Import/Queue
+    /// sidebar sections duplicated both and crowded the column.
     private var sidebar: some View {
         List {
-            Section {
-                // SAME direct-picker shape as the toolbar and empty state:
-                // PhotosPicker inside a Menu is unreliable on device, direct
-                // pickers are proven. preferredItemEncoding: .current —
-                // without it the picker may hand back a TRANSCODED HDR→SDR
-                // movie; the engine must see the original pixels.
-                PhotosPicker(selection: $photoItems, matching: .videos,
-                             preferredItemEncoding: .current) {
-                    Label("Photos", systemImage: "photo.on.rectangle.angled")
-                }
-                Button {
-                    showFiles = true
-                } label: {
-                    Label("Files", systemImage: "folder.badge.plus")
-                }
-            } header: {
-                Text("Import")
-            } footer: {
-                Text("Drag & drop videos onto the queue from Files or Photos while in Split View.")
-            }
-
-            Section("Queue") {
-                SidebarQueueCard()
-                Button {
-                    // Shares the detail column's confirmation dialog.
-                    confirmingClearFinished = true
-                } label: {
-                    Label("Clear Finished…", systemImage: "trash")
-                }
-                .disabled(!coordinator.menuState.hasFinished)
-            }
-
             SidebarSavingsSection()
+
+            Section("Presets") {
+                Button {
+                    showPresetManager = true
+                } label: {
+                    Label("Manage presets…", systemImage: "slider.horizontal.3")
+                }
+            }
 
             Section {
                 Button {
@@ -231,6 +207,13 @@ struct RootView: View {
                 AboutSettingsSheet()
                     .presentationDetents([.medium, .large])
             }
+            // SIDEBAR → preset manager: browse/create/edit/duplicate/delete
+            // presets, plus the metadata policy (moved out of the compress
+            // bottom bar, which had grown too dense).
+            .sheet(isPresented: $showPresetManager) {
+                PresetManagerSheet()
+                    .presentationDetents([.medium, .large])
+            }
             .task {
                 coordinator.attach(context: modelContext)
                 if #available(iOS 26.0, *) {
@@ -363,10 +346,6 @@ struct RootView: View {
                     .padding(.horizontal)
             }
         }
-
-        // LIFETIME STATS — the running tally of what the app has
-        // actually saved the user, read straight from history.
-        LifetimeStatsCard()
 
         StorageFooter()
             .padding(.top, 6)
@@ -614,8 +593,8 @@ extension JobCoordinator {
 
 /// LIFETIME STATS — the running tally of what the app has actually saved,
 /// computed from the persisted history (every done record stores its in/out
-/// bytes). Shared by the sidebar card and the list footer card; negative
-/// deltas (outputs that grew) never inflate the total.
+/// bytes). Read by the sidebar savings card; negative deltas (outputs that
+/// grew) never inflate the total.
 enum LifetimeStats {
     static func summarize(_ records: [JobRecord]) -> (videos: Int, saved: Int64) {
         var vids = 0
@@ -713,97 +692,11 @@ private struct QueueStatusBar: View {
 
 // MARK: - Sidebar cards
 
-/// LIVE queue card for the sidebar: what's happening right now, the overall
-/// queue progress, and the Pause/Resume control. The only queue controls
-/// used to live at the TOP of the detail column — scrolling into history (or
-/// looking at the sidebar) hid them. State comes from the coordinator, so
-/// the card updates no matter which column shows it.
-private struct SidebarQueueCard: View {
-    @EnvironmentObject private var coordinator: JobCoordinator
-
-    private var activeCount: Int { coordinator.activeJobs.count }
-    private var queuedCount: Int {
-        coordinator.jobs.filter { $0.state == .queued }.count
-    }
-    private var finishedCount: Int { coordinator.finishedJobs.count }
-
-    private var hasWork: Bool { coordinator.hasActiveJob || queuedCount > 0 }
-
-    private var headline: String {
-        hasWork ? coordinator.queueHeadline : "Queue idle"
-    }
-
-    private var subline: String {
-        if hasWork {
-            var parts: [String] = []
-            if activeCount > 0 { parts.append("\(activeCount) active") }
-            if queuedCount > 0 { parts.append("\(queuedCount) waiting") }
-            parts.append("\(finishedCount) finished")
-            return parts.joined(separator: " · ")
-        }
-        return finishedCount > 0
-            ? "\(finishedCount) finished"
-            : "Import a video to get started"
-    }
-
-    private var icon: String {
-        if coordinator.userPaused { return "pause.circle" }
-        return coordinator.hasActiveJob ? "bolt.horizontal.circle" : "tray"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(coordinator.hasActiveJob ? Color.accentColor : Color.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(headline)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Text(subline)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if hasWork {
-                    // Pause/Resume where it's visible: the queue keeps its
-                    // in-flight job, nothing NEW starts while paused.
-                    Button {
-                        if coordinator.userPaused {
-                            coordinator.resumeQueue()
-                        } else {
-                            coordinator.pauseQueue()
-                        }
-                    } label: {
-                        Image(systemName: coordinator.userPaused ? "play.fill" : "pause.fill")
-                            .font(.callout.weight(.bold))
-                            .frame(width: 30, height: 30)
-                            .background(.tint.opacity(0.12), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(coordinator.userPaused ? "Resume queue" : "Pause queue")
-                }
-            }
-            if coordinator.hasActiveJob {
-                ProgressView(value: coordinator.queueProgress)
-            }
-        }
-        .padding(12)
-        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 14))
-        // Full-bleed-ish card row: transparent row chrome, symmetric insets.
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
-    }
-}
-
 /// LIFETIME SAVINGS in the sidebar: the app's headline number, visible no
-/// matter how far the queue list is scrolled. Same computation as the
-/// detail list's footer card (LifetimeStats.summarize) — deleting rows
-/// removes their savings too, so the number reflects what is in the app
-/// right now. The whole section collapses when history is empty.
+/// matter how far the queue list is scrolled (and the ONLY place it lives
+/// now — the main page no longer repeats it). Deleting rows removes their
+/// savings too, so the number reflects what is in the app right now. The
+/// whole section collapses when history is empty.
 private struct SidebarSavingsSection: View {
     @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
     private var records: [JobRecord]
@@ -830,47 +723,6 @@ private struct SidebarSavingsSection: View {
 }
 
 // MARK: - Storage footer
-
-/// LIFETIME STATS: "You've saved 12.4 GB". Computed from the persisted
-/// history (every done record stores its in/out bytes), so the number is
-/// honest — negative deltas (outputs that grew) don't inflate it.
-private struct LifetimeStatsCard: View {
-    // Sum of the CURRENT history: deleting rows (or the whole history)
-    // removes their savings too — the card always reflects what is in the
-    // app right now. (A persisted all-time counter read as stale after a
-    // history clear and was reverted by the user.)
-    @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
-    private var records: [JobRecord]
-
-    private var stats: (videos: Int, saved: Int64) {
-        LifetimeStats.summarize(records)
-    }
-
-    var body: some View {
-        Group {
-            let s = stats
-            if s.videos > 0, s.saved > 0 {
-                HStack(spacing: 10) {
-                    Image(systemName: "leaf.fill")
-                        .font(.callout)
-                        .foregroundStyle(Color(UIColor.systemGreen))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("You've saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
-                            .font(.callout.weight(.semibold))
-                        Text("Lifetime total across \(s.videos) finished compression\(s.videos == 1 ? "" : "s").")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(12)
-                .background(Color(UIColor.systemGreen).opacity(0.10),
-                            in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
-            }
-        }
-    }
-}
 
 /// Small transparency line: how much storage the app keeps, and the policy.
 /// Cleanup itself is automatic (sources deleted after success, orphan sweep
@@ -924,10 +776,11 @@ private struct StorageFooter: View {
 }
 
 /// About & Settings sheet: the menu bar's About/Settings destination.
-/// The privacy toggle binds to the same UserDefaults key PrivacyScrub
-/// reads, so it stays in sync with the setup-sheet toggle.
+/// The privacy toggles bind to the same UserDefaults keys PrivacyScrub
+/// reads, so they stay in sync with the preset manager's copies.
 private struct AboutSettingsSheet: View {
     @AppStorage("privacy.keepCreationDate") private var keepCreationDate = true
+    @AppStorage(PrivacyScrub.stripAllKey) private var stripAllMetadata = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -935,7 +788,8 @@ private struct AboutSettingsSheet: View {
             Form {
                 Section("Privacy") {
                     Toggle("Keep creation date", isOn: $keepCreationDate)
-                    Text("Outputs never carry location data. The creation date is embedded only while this is on.")
+                    Toggle("Strip all metadata", isOn: $stripAllMetadata)
+                    Text("Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

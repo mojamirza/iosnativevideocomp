@@ -186,6 +186,21 @@ struct PresetEditorView: View {
         return out
     }
 
+    /// LECTURE MODE (moved here from the compress bottom bar, which had
+    /// grown too dense): applies the screen-recording recipe onto the DRAFT
+    /// — 15 fps cap, forced mono voice, lean bitrate (the bitrate only ever
+    /// steps DOWN). The individual controls reflect it immediately; nothing
+    /// is saved until Save.
+    private func applyLectureRecipe() {
+        fpsCapEnabled = true
+        fpsCap = 15
+        monoAudio = true
+        audioKbps = 48
+        if fixedMbps > 0.9 { fixedMbps = 0.9 }
+        bitrateText = SizeMath.mbpsLabel(Int(fixedMbps * 1_000_000))
+        sliderPos = Self.pos(fromMbps: fixedMbps)
+    }
+
     /// The readout beside the slider is the field: while the text is not a
     /// usable bitrate (cleared, mistyped, out of 0.1…40), `fixedMbps` still
     /// holds the last good value — the UI must SAY so and Save must refuse,
@@ -391,6 +406,14 @@ struct PresetEditorView: View {
                                 .frame(width: 80, alignment: .trailing)
                         }
                     }
+                    // LECTURE MODE: one tap onto the draft (15 fps · mono ·
+                    // lean bitrate) — moved here from the compress bottom bar.
+                    Button {
+                        applyLectureRecipe()
+                    } label: {
+                        Label("Lecture mode (15 fps · mono · lean bitrate)",
+                              systemImage: "lightbulb")
+                    }
                 }
 
                 Section("Audio") {
@@ -495,5 +518,150 @@ struct PresetEditorView: View {
                 }
             }
         }
+    }
+}
+
+/// PRESET MANAGER — the sidebar's "Manage presets…" destination: browse,
+/// create, edit, duplicate and delete presets, plus the metadata/privacy
+/// policy (moved here from the compress bottom bar, which had grown too
+/// dense). Built-ins are immutable but can be duplicated as customs. The
+/// editor opens without a context probe: numbers solve per video at encode
+/// time, exactly like batch setup.
+struct PresetManagerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var customPresets: [Preset] = PresetStore.loadCustom()
+    @State private var editingPreset: Preset?
+    @State private var creatingNew = false
+    // Same keys PrivacyScrub reads — these toggles stay in sync with the
+    // About & Settings sheet, which binds the identical keys.
+    @AppStorage(PrivacyScrub.keepDateKey) private var keepCreationDate = true
+    @AppStorage(PrivacyScrub.stripAllKey) private var stripAllMetadata = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Built-in") {
+                    ForEach(Preset.builtIn) { preset in
+                        row(preset, custom: false)
+                    }
+                }
+                Section {
+                    if customPresets.isEmpty {
+                        Text("No custom presets yet — duplicate a built-in or create one to save your own codec, resolution, bitrate and audio recipe.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(customPresets) { preset in
+                        row(preset, custom: true)
+                    }
+                } header: {
+                    Text("Custom")
+                } footer: {
+                    Text("Presets persist on this iPad and appear in the setup flow.")
+                }
+                Section("Privacy & metadata") {
+                    Toggle("Keep creation date", isOn: $keepCreationDate)
+                    Toggle("Strip all metadata", isOn: $stripAllMetadata)
+                    Text("Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Presets")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        creatingNew = true
+                    } label: {
+                        Label("New Preset", systemImage: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $creatingNew) {
+                PresetEditorView { saved }
+            }
+            .sheet(item: $editingPreset) { preset in
+                PresetEditorView(existing: preset) { saved }
+            }
+        }
+    }
+
+    private func row(_ preset: Preset, custom: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: preset.isUserDefined ? "slider.horizontal.3" : "checkmark.seal")
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.name)
+                    .font(.callout.weight(.semibold))
+                Text(summary(preset))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Menu {
+                if custom {
+                    Button {
+                        editingPreset = preset
+                    } label: {
+                        Label("Edit…", systemImage: "pencil")
+                    }
+                }
+                Button {
+                    duplicate(preset)
+                } label: {
+                    Label("Duplicate…", systemImage: "plus.square.on.square")
+                }
+                if custom {
+                    Divider()
+                    Button(role: .destructive) {
+                        delete(preset)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func summary(_ p: Preset) -> String {
+        var parts = [p.codec.displayName, p.resolution.displayName,
+                     "\(SizeMath.mbpsLabel(Int(p.fixedBitrateMbps * 1_000_000))) Mbps"]
+        if let t = p.targetSizeMB { parts.append(String(format: "≤ %.0f MB", t)) }
+        if p.audioChannels == 1 { parts.append("mono voice") }
+        if p.hdrToSDR == true { parts.append("SDR out") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Opens the editor pre-seeded with a fresh identity — Save appends it
+    /// as a new custom preset; Cancel discards.
+    private func duplicate(_ preset: Preset) {
+        var copy = preset
+        copy.id = UUID()
+        copy.isUserDefined = true
+        copy.name = "\(preset.name) copy"
+        editingPreset = copy
+    }
+
+    private func delete(_ preset: Preset) {
+        customPresets.removeAll { $0.id == preset.id }
+        PresetStore.saveCustom(customPresets)
+    }
+
+    /// Insert-or-replace by id: edits update in place, new presets append.
+    private func saved(_ preset: Preset) {
+        if let idx = customPresets.firstIndex(where: { $0.id == preset.id }) {
+            customPresets[idx] = preset
+        } else {
+            customPresets.append(preset)
+        }
+        PresetStore.saveCustom(customPresets)
     }
 }

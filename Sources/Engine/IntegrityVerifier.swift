@@ -305,13 +305,19 @@ enum IntegrityVerifier {
                 ($0.identifier?.rawValue ?? "").lowercased().contains("location")
             }
             if hasLocation {
-                items.append(ReportItem("privacy", "Location metadata present",
+                items.append(ReportItem("privacy.location", "Location metadata present",
                     "The output carries a location (GPS) tag — this must never happen; scrub it by re-running the compression.", .fail))
             } else {
-                items.append(ReportItem("privacy", "No location metadata",
+                items.append(ReportItem("privacy.location", "No location metadata",
                     "Outputs are scrubbed of location on purpose (compact privacy).", .pass))
             }
-            if PrivacyScrub.keepCreationDate {
+            if PrivacyScrub.stripAllMetadata {
+                // User-chosen policy: the file ships with NO metadata track.
+                // (Report ids are UNIQUE per check — the shared "privacy" id
+                // made ForEach mis-render/duplicate items in the report sheet.)
+                items.append(ReportItem("privacy.metadata", "Metadata stripped by setting",
+                    "Your strip-all setting removed every metadata item — the file is fully anonymous. Location is never carried on any setting.", .pass))
+            } else if PrivacyScrub.keepCreationDate {
                 // A source that never CARRIED a date cannot "drop" one —
                 // only run the check when the source actually had it, or
                 // every date-less screen recording warns forever.
@@ -324,7 +330,7 @@ enum IntegrityVerifier {
                         $0.commonKey == AVMetadataKey.commonKeyCreationDate
                     }
                     if hasDate {
-                        items.append(ReportItem("privacy", "Creation date preserved",
+                        items.append(ReportItem("privacy.date", "Creation date preserved",
                             "The output keeps the source's date; only the location is removed.", .pass))
                     } else if PrivacyScrub.sessionDisabled {
                         // The kill switch is ON: the muxer refused the
@@ -333,10 +339,10 @@ enum IntegrityVerifier {
                         // known policy, not a broken file — a warn here
                         // would pin every later job under "Not fully
                         // verified" for the rest of the session.
-                        items.append(ReportItem("privacy", "Creation date omitted",
+                        items.append(ReportItem("privacy.date", "Creation date omitted",
                             "This muxer doesn't accept the metadata item (an earlier encode this session was refused), so the output ships without a creation date by policy. Location is never carried either way.", .pass))
                     } else {
-                        items.append(ReportItem("privacy", "Creation date dropped",
+                        items.append(ReportItem("privacy.date", "Creation date dropped",
                             "The scrubber was asked to keep the date, but the source's date wasn't parseable and the output ships date-less.", .warn))
                     }
                 }
