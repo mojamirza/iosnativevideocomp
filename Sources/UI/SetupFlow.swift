@@ -424,32 +424,38 @@ struct SetupFlowView: View {
 
             // INLINE PREVIEW: plays the ORIGINAL file from trimStart and
             // cuts off at the live trimEnd — the selection, not the asset.
+            // ONE host view for the preview controls: a modifier cannot
+            // postfix an `if` statement inside a ViewBuilder (CI round
+            // 42403927994), so the trim-change observers below attach to
+            // this VStack instead of the bare `if let`.
             if let url = videos.first?.url {
-                HStack(spacing: 10) {
-                    Button {
-                        togglePreview(url)
-                    } label: {
-                        Label(previewIsPlaying ? "Stop" : "Preview selection",
-                              systemImage: previewIsPlaying ? "stop.fill" : "play.fill")
-                            .font(.caption.weight(.semibold))
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Button {
+                            togglePreview(url)
+                        } label: {
+                            Label(previewIsPlaying ? "Stop" : "Preview selection",
+                                  systemImage: previewIsPlaying ? "stop.fill" : "play.fill")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        if previewIsPlaying {
+                            Text("\(timeString(trimStart)) → \(timeString(trimEnd))")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
                     }
-                    .buttonStyle(.bordered)
-                    if previewIsPlaying {
-                        Text("\(timeString(trimStart)) → \(timeString(trimEnd))")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                    if previewIsPlaying, let p = previewPlayer {
+                        TrimPreview(player: p)
+                            .frame(height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    Spacer()
                 }
-                if previewIsPlaying, let p = previewPlayer {
-                    TrimPreview(player: p)
-                        .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
+                // Adjusting while previewing restarts from the new window edge.
+                .onChange(of: trimStart) { _, _ in if previewIsPlaying { stopPreview() } }
+                .onChange(of: trimEnd) { _, _ in if previewIsPlaying { stopPreview() } }
             }
-            // Adjusting while previewing restarts from the new window edge.
-            .onChange(of: trimStart) { _, _ in if previewIsPlaying { stopPreview() } }
-            .onChange(of: trimEnd) { _, _ in if previewIsPlaying { stopPreview() } }
 
             HStack {
                 Text("Rotate").font(.caption2)
