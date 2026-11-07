@@ -52,8 +52,8 @@ targets:
         PRODUCT_NAME: VidCompress
         PRODUCT_BUNDLE_IDENTIFIER: com.example.vidcompress
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "1.4.2"
-        CURRENT_PROJECT_VERSION: "15"
+        MARKETING_VERSION: "1.5.0"
+        CURRENT_PROJECT_VERSION: "16"
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "2"          # iPad-focused
         DEVELOPMENT_TEAM: ""                  # set locally in Xcode, or via CI secrets

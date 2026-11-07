@@ -108,7 +108,7 @@ struct JobRowView: View {
             }
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
         // VoiceOver container: composed summary first, controls stay
         // individually reachable.
         .accessibilityElement(children: .contain)
@@ -738,7 +738,7 @@ struct ReportSheet: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding(12)
-                        .background(Color(.secondarySystemGroupedBackground),
+                        .background(Color.appCard,
                                     in: RoundedRectangle(cornerRadius: 12))
                     }
 
@@ -814,7 +814,7 @@ struct ReportSheet: View {
             Spacer()
         }
         .padding(12)
-        .background(Color(.secondarySystemGroupedBackground),
+        .background(Color.appCard,
                     in: RoundedRectangle(cornerRadius: 12))
     }
 
@@ -893,7 +893,7 @@ struct ReportSheet: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground),
+        .background(Color.appCard,
                     in: RoundedRectangle(cornerRadius: 16))
     }
 

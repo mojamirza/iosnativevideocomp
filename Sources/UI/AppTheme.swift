@@ -1,32 +1,62 @@
 import SwiftUI
 import UIKit
 
-/// The ONE screen-level background color, shared by every full-screen
-/// container in the app (root list, split-view sidebar, setup sheet,
-/// integrity report, player, preset editor, settings).
+/// The screen-level palette shared by every full-screen container in the app
+/// (root list, split-view sidebar, setup sheet, integrity report, player,
+/// preset editor, settings) plus the card surfaces that sit on it.
 ///
-/// WHY: `systemGroupedBackground` — the default behind grouped content —
-/// is a DARK GRAY (#1C1C1E) in dark mode, not black. Next to the pure
-/// black of the video surface the mismatch was plainly visible: the
-/// fullscreen player read as AMOLED black while the other screens (and
-/// the app's window in Split View) sat on gray. This token pins dark mode
-/// to `systemBackground` — TRUE black, AMOLED-friendly — in every
-/// windowing mode (fullscreen, Split View, Stage Manager), while light
-/// mode keeps the standard grouped gray so the white inset cards keep
-/// their look. Card-level surfaces (`secondarySystemGroupedBackground`,
-/// #2C2C2E in dark) are unchanged: they still read as elevated on black.
+/// WHY EXPLICIT COMPONENTS INSTEAD OF SEMANTIC SYSTEM COLORS:
+/// Apple's dynamic dark-mode colors have TWO shades each — a BASE one and an
+/// ELEVATED one. `systemBackground` is #000000 at base but #1C1C1E when the
+/// window resolves `userInterfaceLevel == .elevated`, which is exactly what an
+/// iPad window gets in Split View / Stage Manager / windowed mode. The same
+/// applies to the grouped card surfaces (`secondarySystemGroupedBackground`
+/// #1C1C1E → #2C2C2E, `tertiarySystemGroupedBackground` #2C2C2E → lighter).
+/// Result: the fullscreen app read as AMOLED black while Split View brightened
+/// the canvas to gray and every card with it. Pinning literal RGBA values per
+/// style makes the palette PROVABLY identical in every windowing mode — the
+/// resolution can no longer depend on any trait other than dark/light.
+///
+/// Values (unchanged from the system defaults the UI was designed against):
+///  · screen  dark #000000 (true black, AMOLED-friendly, == the video
+///            surface) · light #F2F2F7 (the standard grouped gray so the
+///            white inset cards keep their look)
+///  · card    dark #1C1C1E · light #FFFFFF (was secondarySystemGroupedBackground)
+///  · tile    dark #2C2C2E · light #F2F2F7 (was tertiarySystemGroupedBackground)
 enum AppTheme {
-    /// The backing dynamic UIColor (kept as UIColor so it can be resolved
-    /// against an explicit trait collection — and unit-tested).
+
+    // Screen canvas
     static let screenColor = UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? .systemBackground
-            : .systemGroupedBackground
+        traits.userInterfaceStyle == .dark ? Self.black : Self.groupedGrayLight
     }
+    // Card surface (inset cards, queue status bar, report items, preset rows)
+    static let cardColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? Self.cardDark : Self.white
+    }
+    // Inner tile surface (probe grid cells)
+    static let tileColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? Self.tileDark : Self.groupedGrayLight
+    }
+
+    // Pinned components — no dynamic lookup, nothing left to re-resolve.
+    static let black = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
+    static let white = UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    static let groupedGrayLight = UIColor(red: 242 / 255.0, green: 242 / 255.0,
+                                          blue: 247 / 255.0, alpha: 1)
+    static let cardDark = UIColor(red: 28 / 255.0, green: 28 / 255.0,
+                                  blue: 30 / 255.0, alpha: 1)   // #1C1C1E
+    static let tileDark = UIColor(red: 44 / 255.0, green: 44 / 255.0,
+                                  blue: 46 / 255.0, alpha: 1)   // #2C2C2E
 }
 
 extension Color {
     /// SwiftUI face of `AppTheme.screenColor` — use this on every
-    /// screen-level `.background(...)`; never `systemGroupedBackground`.
+    /// screen-level `.background(...)`; never a dynamic system background.
     static var appScreen: Color { Color(AppTheme.screenColor) }
+    /// Elevation-invariant card surface — replaces
+    /// `Color(.secondarySystemGroupedBackground)` everywhere a card is drawn.
+    static var appCard: Color { Color(AppTheme.cardColor) }
+    /// Elevation-invariant inner tile — replaces
+    /// `Color(.tertiarySystemGroupedBackground)`.
+    static var appTile: Color { Color(AppTheme.tileColor) }
 }

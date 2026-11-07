@@ -513,7 +513,7 @@ struct SetupFlowView: View {
             }
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
         // Leaving the setup sheet (or scrolling the section away) must not
         // leave preview audio playing behind the app.
         .onDisappear {
@@ -769,7 +769,7 @@ struct SetupFlowView: View {
             Spacer()
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var totalInBytes: Int64 {
@@ -837,7 +837,7 @@ struct SetupFlowView: View {
                     }
                 }
                 .padding(10)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+                .background(Color.appCard, in: RoundedRectangle(cornerRadius: 12))
             }
         }
     }
@@ -878,7 +878,7 @@ struct SetupFlowView: View {
             Spacer()
         }
         .padding(14)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func probeGrid(_ probe: ProbeResult) -> some View {
@@ -906,7 +906,7 @@ struct SetupFlowView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+                    .background(Color.appTile, in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
@@ -1230,7 +1230,7 @@ private struct PresetRow: View {
                 }
             }
             .padding(12)
-            .background(isSelected ? Color.blue.opacity(0.08) : Color(.secondarySystemGroupedBackground),
+            .background(isSelected ? Color.blue.opacity(0.08) : Color.appCard,
                         in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
