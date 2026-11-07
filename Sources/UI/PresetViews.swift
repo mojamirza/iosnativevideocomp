@@ -582,10 +582,10 @@ struct PresetManagerSheet: View {
                 }
             }
             .sheet(isPresented: $creatingNew) {
-                PresetEditorView { saved }
+                PresetEditorView { p in saved(p) }
             }
             .sheet(item: $editingPreset) { preset in
-                PresetEditorView(existing: preset) { saved }
+                PresetEditorView(existing: preset) { p in saved(p) }
             }
         }
     }
