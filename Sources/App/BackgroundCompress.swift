@@ -116,17 +116,24 @@ enum BackgroundCompress {
             submitPendingSince = .distantPast
             while !expiry.isExpired {
                 guard let coordinator else { break }
-                // A background-task revocation pauses the queue here too —
-                // and so does a USER pause from the status bar.
-                if coordinator.bgPaused || coordinator.userPaused { break }
+                // A background-task REVOCATION pauses the queue: the
+                // coordinator cancels the active encode for a revoked task.
+                if coordinator.bgPaused { break }
                 // The in-app worker is the foreground executor (instant
                 // start). While it's alive it owns the work — wait for it to
                 // finish, then sweep anything still queued. The task staying
                 // ongoing is what keeps the app unsuspended mid-encode.
+                // (A USER pause must NOT break here: the encode in flight
+                // still needs this task's protection — completing it would
+                // let iOS suspend the process mid-encode with no lifeline.)
                 if coordinator.foregroundWorkerActive {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
+                // USER pause with nothing in flight: nothing to protect and
+                // nothing new may start — release the task. resumeQueue()
+                // re-drives the queue (and a fresh submit covers backgrounding).
+                if coordinator.userPaused { break }
                 // Same pick rule as the in-app worker: the array is newest-
                 // first, so the LAST queued entry is the OLDEST pick (FIFO
                 // by selection order).

@@ -1093,7 +1093,11 @@ private struct OutputPlayerSheet: View {
                 waitedNs += 50_000_000
             }
             guard !Task.isCancelled else { return }
-            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            // await the seek: in an async context the call resolves to the
+            // async overload anyway (CI round 42402881445), and awaiting it
+            // is exactly the priming intent — playback starts only AFTER the
+            // seek has landed on the exact frame with the full geometry.
+            await player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
             player.play()
         }
     }

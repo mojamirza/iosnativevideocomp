@@ -686,7 +686,9 @@ struct SetupFlowView: View {
                 waitedNs += 50_000_000
             }
             guard !Task.isCancelled else { return }
-            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            // await the seek — see the matching comment in
+            // OutputPlayerSheet.primeThenPlay (async-context overload).
+            await player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
             player.play()
         }
     }

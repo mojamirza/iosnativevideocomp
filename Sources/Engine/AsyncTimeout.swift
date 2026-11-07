@@ -67,10 +67,16 @@ enum AsyncTimeout {
                         // beat a moment late — require the stall to persist.
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
                         if once.isFired { return }
-                        if watchdog.stalled(seconds: stallSeconds), once.claim() {
-                            cont.resume(returning: nil)
+                        if watchdog.stalled(seconds: stallSeconds) {
+                            if once.claim() { cont.resume(returning: nil) }
+                            return
                         }
-                        return
+                        // The stall RECOVERED within the grace window (e.g.
+                        // a brief suspension blip): keep watching. Returning
+                        // here would leave the operation watchdog-less for
+                        // the rest of the encode — a genuine later hang would
+                        // then never abort (found by the round-2 review).
+                        continue
                     }
                 }
             }

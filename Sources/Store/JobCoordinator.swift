@@ -1404,15 +1404,17 @@ final class JobCoordinator: ObservableObject {
         // QUEUE-DRAINED notification: when the LAST active job went terminal,
         // tell the user — a background continuation that finishes silently is
         // invisible (the whole reason BGContinuedProcessingTask exists).
-        // Fired ONLY when the app is not the active scene: a banner the
-        // moment the user watches the row finish would just be noise.
+        // Fired ONLY while the app is genuinely BACKGROUND: a banner the
+        // moment the user watches the row finish would just be noise, and
+        // .inactive moments (app switcher, Control Center) still belong to
+        // the user's attention — only .background is truly away.
         // Cancellations don't notify — the user drove those.
         guard state == .done || state == .failed else { return }
         let stillActive = jobs.contains {
             [.queued, .analyzing, .compressing, .verifying].contains($0.state)
         }
         guard !stillActive,
-              UIApplication.shared.applicationState != .active else { return }
+              UIApplication.shared.applicationState == .background else { return }
         QueueNotifications.queueFinished(
             success: state == .done,
             name: name,
