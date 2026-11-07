@@ -47,12 +47,16 @@ final class AppThemeTests: XCTestCase {
         XCTAssertEqual(screen.b, grouped.b, accuracy: 0.001)
     }
 
-    func testDarkModeIsNotTheGroupedGray() {
-        // The regression this token exists for: systemGroupedBackground is
-        // #1C1C1E in dark — visibly gray on an OLED panel. The token must
-        // NOT resolve to it in dark mode.
+    func testDarkModePinsToSystemBackground() {
+        // The token's dark contract: resolve to EXACTLY systemBackground —
+        // true black on runtimes where that differs from the grouped gray,
+        // and equal to it on runtimes where the system already ships black
+        // grouped backgrounds (iOS 26). Either way the app's canvas is the
+        // system's own black, never lighter.
         let screen = rgb(AppTheme.screenColor, style: .dark)
-        let grouped = rgb(UIColor.systemGroupedBackground, style: .dark)
-        XCTAssertNotEqual(screen.r, grouped.r, accuracy: 0.005)
+        let sysBg = rgb(UIColor.systemBackground, style: .dark)
+        XCTAssertEqual(screen.r, sysBg.r, accuracy: 0.001)
+        XCTAssertEqual(screen.g, sysBg.g, accuracy: 0.001)
+        XCTAssertEqual(screen.b, sysBg.b, accuracy: 0.001)
     }
 }
