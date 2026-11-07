@@ -233,15 +233,21 @@ struct PresetEditorView: View {
                                 // starved the low end.
                                 Slider(value: $sliderPos, in: 0...1, step: 0.005)
                                     .onChange(of: sliderPos) { _, t in
-                                        let mbps = Self.mbps(fromPos: t)
-                                        // Only rewrite the text field when the
-                                        // change came from the slider — never
-                                        // clobber what the user is typing.
-                                        let typed = Double(normalizedDecimal(bitrateText)) ?? -1
-                                        if abs(typed - mbps) > 0.05 {
-                                            bitrateText = SizeMath.mbpsLabel(Int(mbps * 1_000_000))
+                                        // Round to the value that is ABOUT TO
+                                        // BE SHOWN (the label quantizes too) —
+                                        // WHAT-YOU-SEE = WHAT-SAVED. The old
+                                        // "only rewrite if drift > 0.05" rule
+                                        // let text and state diverge at low
+                                        // bitrates (0.05 Mbps is 10% of half
+                                        // an Mbps).
+                                        let m = Self.mbps(fromPos: t)
+                                        fixedMbps = Double(SizeMath.mbpsLabel(Int(m * 1_000_000))) ?? m
+                                        // Feedback while TYPING would pull the
+                                        // thumb out from under the drag — only
+                                        // the idle field follows the slider.
+                                        if !bitrateFocused {
+                                            bitrateText = SizeMath.mbpsLabel(Int(fixedMbps * 1_000_000))
                                         }
-                                        fixedMbps = mbps
                                     }
                                 TextField("0", text: $bitrateText)
                                     .focused($bitrateFocused)
@@ -263,11 +269,22 @@ struct PresetEditorView: View {
                                             .frame(height: 1)
                                     }
                                     .onChange(of: bitrateText) { _, t in
-                                        if let v = Double(normalizedDecimal(t)),
-                                           v >= Preset.bitrateRange.lowerBound,
-                                           v <= Preset.bitrateRange.upperBound {
-                                            fixedMbps = v
-                                            sliderPos = Self.pos(fromMbps: v)
+                                        // While focused, TYPED text drives the
+                                        // state and moves the THUMB only — it
+                                        // never rewrites the field itself, so
+                                        // no mid-edit cursor/thumb feedback
+                                        // loop.
+                                        guard bitrateFocused,
+                                              let v = Double(normalizedDecimal(t)),
+                                              Preset.bitrateRange.contains(v) else { return }
+                                        fixedMbps = v
+                                        sliderPos = Self.pos(fromMbps: v)
+                                    }
+                                    .onChange(of: bitrateFocused) { _, f in
+                                        // Leaving the field: canonicalise the
+                                        // text to exactly what the state took.
+                                        if !f, bitrateIsValid {
+                                            bitrateText = SizeMath.mbpsLabel(Int(fixedMbps * 1_000_000))
                                         }
                                     }
                                 Text("Mbps")

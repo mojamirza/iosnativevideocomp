@@ -167,7 +167,14 @@ enum VideoInbox {
                         try? fm.removeItem(at: url)
                         continue
                     }
-                    let preset = Preset.builtIn[0]   // "High quality"
+                    // Respect the user's habitual choice: the last preset
+                    // actually run from setup (SetupFlow persists it on every
+                    // commit), falling back to the first built-in when the
+                    // stored id no longer resolves (deleted custom).
+                    let lastID = PresetStore.lastUsedPresetID()
+                    let preset = Preset.builtIn.first { $0.id == lastID }
+                        ?? PresetStore.loadCustom().first { $0.id == lastID }
+                        ?? Preset.builtIn[0]
                     let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
                     let thumb = await Thumbnails.make(url: url)
                     coordinator.enqueue(source: url, probe: probe, plan: plan,

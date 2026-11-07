@@ -71,11 +71,11 @@ struct SetupFlowView: View {
     }
 
     /// Lecture mode is ON when the selected preset already carries the whole
-    /// recipe (15 fps cap + forced mono) — derived, so switching presets
-    /// updates it with no stale @State flag.
+    /// recipe (the explicit long-GOP marker: 15 fps cap + forced mono) -
+    /// derived, so switching presets updates it with no stale @State flag.
     private var lectureApplied: Bool {
         guard let preset = selectedPreset else { return false }
-        return preset.fpsCap == 15 && preset.audioChannels == 1
+        return preset.longGOP
     }
 
     /// Persist the privacy choice whenever the toggle is moved.
@@ -197,11 +197,26 @@ struct SetupFlowView: View {
         return estimate.map { $0.estimatedBytes }
     }
 
-    /// True when the estimate leaves almost nothing saved — say so BEFORE
-    /// the user commits instead of shipping a disappointing report.
+    /// The probe as the trim window sees it: estimates, preset rows and
+    /// plans must all describe the TRIMMED output when a window is set —
+    /// otherwise target-size solves against the full length while the
+    /// encode runs the trimmed length. fileSize scales proportionally so
+    /// the “−X%” story and the report’s input size stay honest.
+    private func isTrimmed(_ p: ProbeResult) -> Bool {
+        trimEnd - trimStart >= 0.5 && (trimStart > 0.05 || trimEnd < p.duration - 0.05)
+    }
+
+    private func trimmed(_ p: ProbeResult) -> ProbeResult {
+        guard isTrimmed(p) else { return p }
+        var q = p
+        q.duration = trimEnd - trimStart
+        q.fileSize = Int64(Double(p.fileSize) * q.duration / max(p.duration, 0.1))
+        return q
+    }
+
     private var littleToGain: Bool {
         guard let out = estimateBytes, selectedPreset != nil else { return false }
-        let input = isBatch ? totalInBytes : (singleProbe?.fileSize ?? 0)
+        let input = isBatch ? totalInBytes : (singleProbe.map { trimmed($0).fileSize } ?? 0)
         guard input > 0 else { return false }
         // .keep previously excluded itself — but a keep-resolution encode at
         // a low bitrate still gains nothing if the output approaches the
@@ -271,7 +286,7 @@ struct SetupFlowView: View {
 
             // BEFORE → AFTER story with a proportional bar.
             if let out = estimateBytes, selectedPreset != nil {
-                let input = isBatch ? totalInBytes : (singleProbe?.fileSize ?? 0)
+                let input = isBatch ? totalInBytes : (singleProbe.map { trimmed($0).fileSize } ?? 0)
                 let inText = ByteCountFormatter.string(fromByteCount: input, countStyle: .file)
                 let outText = ByteCountFormatter.string(fromByteCount: out, countStyle: .file)
                 let ratio = input > 0 ? Double(out) / Double(input) : 0
@@ -777,19 +792,6 @@ struct SetupFlowView: View {
         return probes.contains { $0 != nil }
     }
 
-    /// The probe as the trim window sees it: estimates, preset rows and
-    /// plans must all describe the TRIMMED output when a window is set —
-    /// otherwise target-size solves against the full length while the
-    /// encode runs the trimmed length.
-    private func trimmed(_ p: ProbeResult) -> ProbeResult {
-        var q = p
-        if trimEnd - trimStart >= 0.5,
-           trimStart > 0.05 || trimEnd < p.duration - 0.05 {
-            q.duration = trimEnd - trimStart
-        }
-        return q
-    }
-
     private func start() {
         guard let preset = selectedPreset, analysisDone else { return }
         // Commit-time truth for "last used": the preset that actually ran
@@ -803,11 +805,10 @@ struct SetupFlowView: View {
             var plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
             if !isBatch {
                 // Per-video adjustments (single video only): rotation, the
-                // trim window and the poster frame live on the plan, not the
+                // trim window and the poster image live on the plan, not the
                 // preset.
                 plan.rotationDegrees = rotation
-                if trimEnd - trimStart >= 0.5,
-                   trimStart > 0.05 || trimEnd < probe.duration - 0.05 {
+                if isTrimmed(rawProbe) {
                     plan.trimStart = trimStart
                     plan.trimEnd = trimEnd
                 }
@@ -888,20 +889,25 @@ struct SetupFlowView: View {
                 addNext()
             }
         }
-        // Single video: initialize the trim window to the full duration and
-        // pull the filmstrip for the adjust section.
+        // Single video: initialize the trim window to the full duration.
+        // FRAMEGRAB DECOUPLED: Compress must be usable the instant the
+        // probes finish — the 8-frame filmstrip load below can take whole
+        // seconds and blocking the ONLY gate that enables the button behind
+        // it froze the screen's primary action.
         if !isBatch, let p = probes.compactMap({ $0 }).first {
             trimEnd = p.duration
+        }
+        analysisDone = true
+        if let id = selectedPreset?.id {
+            PresetStore.setLastUsedPreset(id)
+        }
+        if !isBatch, let p = probes.compactMap({ $0 }).first {
             await loadFilmstrip(p, url: videos[0].url)
         }
         if failures > 0 {
             errorText = failures == videos.count
                 ? "None of the selected files could be analyzed; they may be unsupported."
                 : "\(failures) of \(videos.count) videos couldn't be analyzed and will be skipped."
-        }
-        analysisDone = true
-        if let id = selectedPreset?.id {
-            PresetStore.setLastUsedPreset(id)
         }
     }
 }

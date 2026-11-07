@@ -55,9 +55,21 @@ final class JobCoordinator: ObservableObject {
         /// User-picked poster image (normalized JPEG) — drives the row
         /// thumbnail and is persisted in the record.
         var posterData: Data?
+        /// Persisted per-video adjustments (queue persistence): re-applied
+        /// to the rebuilt plan when a queued job resumes at launch.
+        var rotationDegrees: Int = 0
+        var trimStart: Double = 0
+        var trimEnd: Double?
     }
 
-    @Published var jobs: [Job] = []
+    @Published var jobs: [Job] = [] {
+        didSet {
+            // Menu-bar snapshot refresh for EVERY mutation path (direct
+            // jobs[idx] writes included) - change-only assignments keep
+            // it cheap during progress streams.
+            refreshMenuState()
+        }
+    }
 
     private var workerTask: Task<Void, Never>?
     /// Bumped every time a worker is spawned or retired, so a late-waking old
@@ -117,7 +129,11 @@ final class JobCoordinator: ObservableObject {
                       state: .queued,
                       plan: plan,
                       thumbnail: thumbnail,
-                      createdAt: Date())
+                      createdAt: Date(),
+                      rotationDegrees: plan.rotationDegrees,
+                      trimStart: plan.trimStart,
+                      trimEnd: plan.trimEnd,
+                      posterData: plan.posterData)
         jobs.insert(job, at: 0)
         // QUEUE PERSISTENCE: a queued record means a crash/kill mid-batch
         // resumes the job at launch instead of losing it.
@@ -138,8 +154,21 @@ final class JobCoordinator: ObservableObject {
     /// the in-app worker, sweeps the rest of the queue, and keeps the app
     /// unsuspended mid-encode. If the submission is refused, everything
     /// still works in the foreground exactly like before.
-    private func runQueueIfNeeded() {
+    private func runQueueIfNeeded(suppressBackgroundSubmission: Bool = false) {
+        // New work lifts a background-revocation pause when the app is
+        // active again (the pause only makes sense while backgrounded).
+        if bgPaused, UIApplication.shared.applicationState == .active {
+            bgPaused = false
+        }
         startForegroundWorker()
+        // LAUNCH RESUME: a relaunch-resumed queue is NOT a user-initiated
+        // foreground action — BGContinuedProcessingTask is designed to be
+        // submitted in direct response to one, and a launch-time submit is
+        // likely refused (which would then spuriously surface the
+        // "background compression unavailable" alert). The in-app worker
+        // runs regardless; the BG lifeline is only claimed for real
+        // user-initiated work.
+        guard !suppressBackgroundSubmission else { return }
         if #available(iOS 26.0, *) {
             if BackgroundCompress.isRegistered, !BackgroundCompress.isRunning {
                 let hasWork = jobs.contains {
@@ -245,7 +274,30 @@ final class JobCoordinator: ObservableObject {
                 plan = p
             } else {
                 let probe = try await ProbeResult.probe(url: job.sourceURL)
-                plan = QualitySizeOptimizer.plan(preset: job.preset, probe: probe)
+                // TRIM-AWARE re-planning: a resumed job carries its trim
+                // window — plan against the TRIMMED length exactly like
+                // SetupFlow did at enqueue (target-size presets otherwise
+                // solve against the full timeline while the encode runs the
+                // trimmed one, and the report's inBytes would count the
+                // full source). fileSize scales proportionally.
+                var p = probe
+                if let end = job.trimEnd, end - job.trimStart >= 0.5,
+                   job.trimStart > 0.05 || end < probe.duration - 0.05 {
+                    p.duration = end - job.trimStart
+                    p.fileSize = Int64(Double(probe.fileSize)
+                        * p.duration / max(probe.duration, 0.1))
+                }
+                plan = QualitySizeOptimizer.plan(preset: job.preset, probe: p)
+                // QUEUE PERSISTENCE: re-apply the persisted per-video
+                // adjustments (a resumed job would otherwise encode the
+                // full video without rotation/trim/poster).
+                plan.rotationDegrees = job.rotationDegrees
+                plan.trimStart = job.trimStart
+                plan.trimEnd = job.trimEnd
+                plan.posterData = job.posterData
+                if let end = plan.trimEnd, end - plan.trimStart >= 0.5 {
+                    plan.duration = max(0.5, end - plan.trimStart)
+                }
                 setJob(jobID) { $0.plan = plan }
             }
 
@@ -270,6 +322,10 @@ final class JobCoordinator: ObservableObject {
                 $0.progress = 0
                 $0.startedAt = Date()
             }
+            // QUEUE PERSISTENCE: reflect the in-flight state (the record
+            // is written "queued" at enqueue; the resume bookkeeping
+            // needs the real state).
+            markRecordState(jobID: jobID, state: .compressing)
             bgSubtitle("Encoding \(job.sourceName)…")
 
             // NOTE: there is deliberately NO coordinator-side encode watchdog.
@@ -395,7 +451,7 @@ final class JobCoordinator: ObservableObject {
             // jumps (NTP sync, timezone) could fire the backstop early or
             // late. systemUptime is monotonic.
             let verifyDeadline = ProcessInfo.processInfo.systemUptime
-            verifyWatchdog = Task { [weak self] in
+            verifyWatchdogs[jobID] = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 75_000_000_000)
                 guard !Task.isCancelled else { return }
                 self?.forceVerifyTerminal(jobID: jobID, output: output,
@@ -412,8 +468,10 @@ final class JobCoordinator: ObservableObject {
                 encodeSeconds: Date().timeIntervalSince(encodeStart)
             )
             // The watchdog is no longer needed — a fast Retry must not race
-            // it during the NEXT verification.
-            verifyWatchdog?.cancel()
+            // it during the NEXT verification. (Per-row: only THIS job's
+            // watchdog is cancelled; a concurrent verify keeps its own.)
+            verifyWatchdogs[jobID]?.cancel()
+            verifyWatchdogs[jobID] = nil
             // Late wake-up guard: if forceVerifyTerminal fired while run()
             // was wedged (the very case that function exists for), the row
             // was already finalised AND the file promoted out of scratch.
@@ -556,6 +614,8 @@ final class JobCoordinator: ObservableObject {
     /// read-only (no live engine running), so forcing the row terminal here
     /// cannot leave a second encode running.
     private func forceVerifyTerminal(jobID: UUID, output: URL, encodeSeconds: Double, startedAt: TimeInterval) {
+        // The backstop just fired — drop its Task reference either way.
+        verifyWatchdogs[jobID] = nil
         guard ProcessInfo.processInfo.systemUptime - startedAt >= 74 else { return }
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }),
               jobs[idx].state == .verifying else { return }
@@ -610,12 +670,15 @@ final class JobCoordinator: ObservableObject {
             // TOO: removing only the row leaked the multi-GB copy in
             // Caches/Imports until the next sweep.
             deleteSourceImport(jobs[idx])
+            removeRecord(jobID: jobID)
             withAnimation { jobs.remove(at: idx) }
             refreshMenuState()
         } else if let flags = cancelFlags[jobID] {
             // Active job: the engine's cancel hooks abort the encode at once;
             // run() then removes the row entirely (cancelled jobs leave no
             // record and no list entry).
+            verifyWatchdogs[jobID]?.cancel()
+            verifyWatchdogs[jobID] = nil
             flags.cancel()
         }
     }
@@ -625,7 +688,9 @@ final class JobCoordinator: ObservableObject {
               [JobState.failed, .cancelled].contains(jobs[idx].state),
               FileManager.default.fileExists(atPath: jobs[idx].sourceURL.path) else { return }
         // A stale verification watchdog must not fire into the new attempt.
-        verifyWatchdog?.cancel()
+        // (Per-row: a retry of job A must NOT cancel job B's watchdog.)
+        verifyWatchdogs[jobID]?.cancel()
+        verifyWatchdogs[jobID] = nil
         // A failed run keeps its output (report rows can inspect it). This
         // fresh attempt REPLACES it: remove the old file up front so Retry
         // can't stack "name (2)" files beside a file the user already
@@ -829,7 +894,11 @@ final class JobCoordinator: ObservableObject {
 
     /// Per-run verification watchdog (cancelled when verification finishes
     /// or the row is retried — a fast Retry must not race the old watchdog).
-    private var verifyWatchdog: Task<Void, Never>?
+    /// Per-ROW verification watchdogs: a watchdog belongs to exactly one
+    /// verify phase. The single shared property before let `retry` (or a
+    /// fast finish) of one job cancel the backstop protecting ANOTHER job
+    /// that was still verifying.
+    private var verifyWatchdogs: [UUID: Task<Void, Never>] = [:]
 
     private func bgSubtitle(_ subtitle: String) {
         if #available(iOS 26.0, *) {
@@ -855,7 +924,10 @@ final class JobCoordinator: ObservableObject {
         }
         // Pause the queue: starting the next job while iOS suspends the
         // process would fail it too. RootView resumes on scenePhase .active.
-        bgPaused = true
+        // Only pause when the app is actually backgrounded — a revocation
+        // while foregrounded must not strand the queue (there is no
+        // upcoming .active transition to lift the pause).
+        bgPaused = UIApplication.shared.applicationState != .active
     }
 
     /// Lifts the background-revocation pause and restarts the worker (queued
@@ -864,6 +936,19 @@ final class JobCoordinator: ObservableObject {
         guard bgPaused else { return }
         bgPaused = false
         runQueueIfNeeded()
+    }
+
+    /// QUEUE PERSISTENCE: reflects the in-flight state in the record (the
+    /// record is written "queued" at enqueue; without this the resume
+    /// bookkeeping would misfire).
+    private func markRecordState(jobID: UUID, state: JobState) {
+        guard let context = modelContext else { return }
+        let descriptor = FetchDescriptor<JobRecord>(
+            predicate: #Predicate { $0.jobID == jobID })
+        if let r = try? context.fetch(descriptor).first {
+            r.stateRaw = state.rawValue
+            try? context.save()
+        }
     }
 
     /// Free space on the volume holding `url`, per the "important usage"
@@ -1107,6 +1192,9 @@ final class JobCoordinator: ObservableObject {
             if kept.count < records.count { try? context.save() }
             var purgedRecords = false
             for r in kept {
+                // Defensive: a re-entrant load must not touch records of
+                // rows that are already live in memory.
+                if jobs.contains(where: { $0.id == r.jobID }) { continue }
                 guard var state = JobState(rawValue: r.stateRaw) else { continue }
                 let srcURL = Self.importsDirectory().appendingPathComponent(r.sourceName)
                 // QUEUE PERSISTENCE: queued/in-flight records resume at launch
@@ -1123,17 +1211,26 @@ final class JobCoordinator: ObservableObject {
                         purgedRecords = true
                         continue
                     }
-                    if r.autoResumed {
-                        state = .failed
-                        r.stateRaw = JobState.failed.rawValue
-                        r.errorMessage = "Interrupted by relaunch — tap Retry."
-                        r.autoResumed = false
-                        purgedRecords = true
-                        try? context.save()
-                    } else {
-                        r.autoResumed = true
-                        try? context.save()
+                    if state == .queued {
+                        // Never started: resumes freely — the attempt
+                        // counter only guards jobs that DIED mid-encode.
                         state = .queued
+                    } else {
+                        // In-flight when the app died: ONE resume (a crash
+                        // during the encode itself may repeat).
+                        if r.autoResumed {
+                            state = .failed
+                            r.stateRaw = JobState.failed.rawValue
+                            r.errorMessage = "Interrupted by relaunch — tap Retry."
+                            r.autoResumed = false
+                            purgedRecords = true
+                            try? context.save()
+                        } else {
+                            r.autoResumed = true
+                            state = .queued
+                            r.stateRaw = JobState.queued.rawValue
+                            try? context.save()
+                        }
                     }
                 } else if state == .failed {
                     // A FAILED row is RETRYABLE — without its source it is
@@ -1177,7 +1274,10 @@ final class JobCoordinator: ObservableObject {
                     outputURL: outputURL,
                     thumbnail: nil,
                     createdAt: r.createdAt,
-                    posterData: r.posterData
+                    posterData: r.posterData,
+                    rotationDegrees: r.rotationDegrees,
+                    trimStart: r.trimStart,
+                    trimEnd: r.trimEnd
                 ))
             }
             if purgedRecords { try? context.save() }
@@ -1189,7 +1289,8 @@ final class JobCoordinator: ObservableObject {
         cleanupOrphans()
         refreshMenuState()
         // Resumed queued rows (queue persistence) need the worker started.
-        runQueueIfNeeded()
+        // Launch resume: NO background submission (not user-initiated).
+        runQueueIfNeeded(suppressBackgroundSubmission: true)
     }
 
     private func saveRecord(jobID: UUID, outputName: String?, report: Data?, state: String, errorText: String? = nil) {
@@ -1227,7 +1328,10 @@ final class JobCoordinator: ObservableObject {
             presetJSON: try? JSONEncoder().encode(job.preset),
             codecLabel: job.preset.codec.displayName,
             resolutionLabel: job.preset.resolution.displayName,
-            posterData: job.posterData
+            posterData: job.posterData,
+            rotationDegrees: job.rotationDegrees,
+            trimStart: job.trimStart,
+            trimEnd: job.trimEnd
         )
         context.insert(record)
         try? context.save()

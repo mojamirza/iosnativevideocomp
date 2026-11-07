@@ -51,14 +51,25 @@ enum PrivacyScrub {
             $0.commonKey == AVMetadataKey.commonKeyCreationDate
         }
         guard let srcItem = src else { return [] }
-        // TIMEZONE: reuse the source's own string when it parses (it carries
-        // the original UTC offset); only a typed dateValue falls back to
-        // being reformatted as UTC ISO-8601.
+        // TIMEZONE: reuse the source's own string when it is UNAMBIGUOUSLY
+        // ISO-shaped (it carries the original UTC offset); a US-order
+        // fallback-parsed string, or only a typed dateValue, falls back to
+        // being reformatted as ISO-8601.
         var dateString: String?
-        if let s = srcItem.stringValue,
-           ISO8601DateFormatter().date(from: s) != nil
-               || DateFormatter.isoFormats().contains(where: { $0.date(from: s) != nil }) {
-            dateString = s
+        if let s = srcItem.stringValue {
+            // Reuse the raw string ONLY when it is unambiguously ISO-shaped
+            // (the two ISO-8601 patterns in the fallback list). A
+            // "MM/dd/yyyy HH:mm:ss" fallback-parsed date MUST NOT be written
+            // back as-is — US-order day/month invites misparsing by other
+            // players; anything non-ISO is reformatted into ISO-8601.
+            let formats = DateFormatter.isoFormats()
+            if ISO8601DateFormatter().date(from: s) != nil
+                || formats[0].date(from: s) != nil
+                || formats[1].date(from: s) != nil {
+                dateString = s
+            } else if let d = formats.compactMap({ $0.date(from: s) }).first {
+                dateString = ISO8601DateFormatter().string(from: d)
+            }
         }
         if dateString == nil, let date = srcItem.dateValue {
             dateString = ISO8601DateFormatter().string(from: date)

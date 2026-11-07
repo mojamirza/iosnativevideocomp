@@ -145,6 +145,14 @@ struct Preset: Identifiable, Codable, Hashable {
     /// and the color pillar's preserve-everything rule).
     var hdrToSDR: Bool?
 
+    /// EXPLICIT long-GOP (lecture) marker: static slide content wastes bits
+    /// on frequent keyframes. The full recipe is a 15 fps cap + forced mono
+    /// voice — the marker must be the WHOLE recipe, never `audioChannels
+    /// == 1` alone (a mono music/speech preset would inherit lecture GO
+    /// pacing). Computed, so every preset (built-in or custom) carries it
+    /// with no JSON-schema change.
+    var longGOP: Bool { fpsCap == 15 && audioChannels == 1 }
+
     static let bitrateRange: ClosedRange<Double> = 0.15...40
     static let fpsCapRange: ClosedRange<Int> = 1...240
     static let audioRange: ClosedRange<Int> = 32...320

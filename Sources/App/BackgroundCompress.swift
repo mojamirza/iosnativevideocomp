@@ -45,7 +45,6 @@ enum BackgroundCompress {
     /// Called once at launch, before any submission can happen.
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
-            submitPending = false
             guard let continued = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
@@ -74,11 +73,19 @@ enum BackgroundCompress {
     /// background refresh off, …) — purely informational: the in-app worker
     /// is always already running when this is called.
     private static var submitPending = false
+    /// When submit() raised the flag. A submitted request whose handler
+    /// never fires (schedule lost it, task ID mismatch) must not lock the
+    /// flag on for the whole session — it goes stale after 60 s.
+    private static var submitPendingSince = Date.distantPast
     static func submit(subtitle: String) -> Bool {
         // Already requested and not started yet: treat as success instead of
         // double-submitting (the second submit throws and would wrongly
-        // surface the "background unavailable" alert).
-        guard !submitPending else { return true }
+        // surface the "background unavailable" alert). Stale requests (60 s
+        // without the handler firing) don't count as started.
+        if submitPending,
+           Date().timeIntervalSince(submitPendingSince) < 60 {
+            return true
+        }
         let request = BGContinuedProcessingTaskRequest(
             identifier: taskID,
             title: "Compressing videos",
@@ -87,6 +94,7 @@ enum BackgroundCompress {
         do {
             try BGTaskScheduler.shared.submit(request)
             submitPending = true
+            submitPendingSince = Date()
             return true
         } catch {
             return false
@@ -99,6 +107,13 @@ enum BackgroundCompress {
         task.progress.totalUnitCount = 100
         updateSubtitle("Working…")
         Task { @MainActor in
+            // The pending flag resets HERE, on the main actor: the register
+            // handler may run on a non-main queue, and under strict
+            // concurrency a mutable static write from there is a hazard.
+            // A delivered request also might never drive this loop (expired,
+            // refused), so the flag must drop before the sweep starts.
+            submitPending = false
+            submitPendingSince = .distantPast
             while !expiry.isExpired {
                 guard let coordinator else { break }
                 // A background-task revocation pauses the queue here too.

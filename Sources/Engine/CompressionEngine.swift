@@ -299,7 +299,7 @@ enum CompressionEngine {
         // suspect for the sibling creation-date key).
         if allowPoster, let poster = plan.posterData {
             let item = AVMutableMetadataItem()
-            item.identifier = .quickTimeMetadataArtwork
+            item.identifier = .commonArtwork
             item.dataType = kCMMetadataBaseDataType_JPEG as String
             item.value = poster as NSData
             metadata.append(item)
@@ -309,26 +309,32 @@ enum CompressionEngine {
         // ------------------------------------------------------------------
         // VIDEO input settings — handed directly to VideoToolbox.
         // ------------------------------------------------------------------
-        // GOP: 2 s for camera content; 8 s when the lecture recipe is on
-        // (forced mono marks it) — static slides waste bits on frequent
-        // keyframes.
-        let gopSeconds: Double = (preset.audioChannels == 1) ? 8 : 2
+        // GOP: 2 s for camera content; 8 s for the lecture recipe (15 fps +
+        // forced mono — static slides waste bits on frequent keyframes).
+        let gopSeconds: Double = preset.longGOP ? 8 : 2
         var props: [String: Any] = [
             AVVideoAverageBitRateKey: plan.videoBitrate,
             AVVideoMaxKeyFrameIntervalKey: max(1, Int(Double(plan.fps) * gopSeconds)),
             AVVideoExpectedSourceFrameRateKey: max(1, Int(plan.fps)),
             AVVideoAllowFrameReorderingKey: NSNumber(value: true),
-            // Peak cap: keep bitrate spikes at ~125% of the target (bytes/s
-            // over a 1 s window) so fewer jobs need the measured re-encode.
-            // VT accepts the "limit/duration" string form; invalid values are
-            // logged and ignored by the encoder.
-            kVTCompressionPropertyKey_DataRateLimits as String:
-                "\(Int((Double(plan.videoBitrate) / 8.0) * 1.25))/1",
             // NOTE: no explicit RealTime key here — expectsMediaDataInRealTime
             // = false (set on the input below) already drives the VideoToolbox
             // session into offline mode; kVTCompressionPropertyKey_RealTime
             // was redundant.
         ]
+
+        // Peak cap: ONLY for guaranteed target-size presets. VideoToolbox
+        // wants [bytes, seconds] PAIRS — the "limit/duration" string form
+        // used here before is not the documented type any more and a wrong
+        // type can fail session setup for EVERY job. Applied at 1.5× the
+        // target over a 4 s window: 1.25×/1 s starves a keyframe landing on
+        // a slide change (blurry frames), while 4 s still bounds the
+        // overshoot the measured re-encode would have to fix.
+        if preset.targetSizeMB != nil {
+            let bytesPerSec = Double(plan.videoBitrate) / 8
+            props[kVTCompressionPropertyKey_DataRateLimits as String] =
+                [NSNumber(value: Int(bytesPerSec * 1.5 * 4)), NSNumber(value: 4)]
+        }
 
         // ------------------------------------------------------------------
         // CODEC. H.264 is 8-bit only: feeding it the 10-bit decoded buffers
@@ -784,8 +790,12 @@ enum CompressionEngine {
             // Metadata is the SUSPECT when it was set: surface a distinct,
             // catchable error so compress() can retry once without it (the
             // writer is single-use — a plain retry on the same instance is
-            // impossible, the wrapper rebuilds everything).
-            if allowMetadata, !writer.metadata.isEmpty {
+            // impossible, the wrapper rebuilds everything). The gate is
+            // ONLY "was anything set" — checking allowMetadata here too
+            // means a POSTER rejection after the kill switch already tripped
+            // (allowMetadata = false, poster still pending) would throw a
+            // plain writer error and never get its no-poster retry.
+            if !writer.metadata.isEmpty {
                 reader.cancelReading()
                 throw CompressionError.metadataRejected(
                     writer.error?.localizedDescription
