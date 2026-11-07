@@ -26,6 +26,15 @@ struct SetupFlowView: View {
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var showEditor = false
     @State private var editingPreset: Preset?
+    // ADJUST (single video): rotate + trim with a thumbnail filmstrip,
+    // plus a custom poster image (embedded as the output's artwork).
+    @State private var rotation: Int = 0
+    @State private var trimStart: Double = 0
+    @State private var trimEnd: Double = 0
+    @State private var filmstrip: [UIImage] = []
+    @State private var posterItem: PhotosPickerItem?
+    @State private var posterData: Data?
+    @State private var posterPreview: UIImage?
     // INLINE TRIM PREVIEW: an AVPlayer over the ORIGINAL file that plays
     // exactly [trimStart, trimEnd). What you set is what you see.
     @State private var previewPlayer: AVPlayer?
