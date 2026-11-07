@@ -40,7 +40,7 @@ final class FrameCapperTests: XCTestCase {
         var c = FrameCapper(cap: cap)
         var kept = 0
         for k in 0..<60 {
-            if c.shouldKeep(CMTime(value: k, timescale: 60)) { kept += 1 }
+            if c.shouldKeep(CMTime(value: CMTimeValue(k), timescale: 60)) { kept += 1 }
         }
         XCTAssertEqual(kept, 30)
     }
