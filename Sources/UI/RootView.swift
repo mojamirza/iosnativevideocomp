@@ -756,7 +756,7 @@ private struct SidebarQueueCard: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(coordinator.hasActiveJob ? Color.tint : Color.secondary)
+                    .foregroundStyle(coordinator.hasActiveJob ? Color.accentColor : Color.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(headline)
                         .font(.subheadline.weight(.semibold))
