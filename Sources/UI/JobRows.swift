@@ -753,7 +753,7 @@ struct ReportSheet: View {
                 }
                 .padding()
             }
-            .background(Color(.systemGroupedBackground))
+            .background(Color.appScreen)
             .navigationTitle("Integrity report")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -934,6 +934,10 @@ private struct OutputPlayerSheet: View {
     /// measured — the fixed 16/9 letterboxed portrait phone videos and 4:3
     /// clips badly.
     @State private var aspect: CGFloat?
+    /// FIRST-FRAME PRIMING task — see primeThenPlay(_:at:). Playback starts
+    /// only after the item has loaded its tracks (rotation transform
+    /// included), so the first presented frame is never the un-rotated one.
+    @State private var priming: Task<Void, Never>?
 
     enum Side: Hashable { case output, source }
 
@@ -994,7 +998,7 @@ private struct OutputPlayerSheet: View {
                 Spacer()
             }
             .padding(.top, 12)
-            .background(Color(.systemGroupedBackground))
+            .background(Color.appScreen)
             .navigationTitle(displayTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1036,7 +1040,10 @@ private struct OutputPlayerSheet: View {
         let newPlayer = AVPlayer()
         newPlayer.replaceCurrentItem(with: next)
         player = newPlayer
-        newPlayer.play()
+        // PRIMED start (see primeThenPlay): never play an item whose tracks
+        // are still loading — the first frame would render before the
+        // track's rotation transform is applied.
+        primeThenPlay(newPlayer, at: .zero)
         measureAspect(for: newPlayer.currentItem)
     }
 
@@ -1058,9 +1065,44 @@ private struct OutputPlayerSheet: View {
         }
     }
 
+    /// FIRST-FRAME PRIMING (the 180°-rotation flash): playing an item whose
+    /// tracks are still loading lets the player layer present the very
+    /// first decoded frame BEFORE the track's rotation transform has been
+    /// applied — a video recorded upside down (180° transform) flashes
+    /// rotated for one frame and then corrects. Wait for the item to be
+    /// READY, seek to the start with ZERO tolerance (forces the renderer to
+    /// decode the exact frame with the full track geometry), and only then
+    /// start playback. While priming, the sheet shows the player's own
+    /// black surface — no wrong-orientation frame ever hits the screen.
+    private func primeThenPlay(_ player: AVPlayer, at start: CMTime) {
+        priming?.cancel()
+        guard let item = player.currentItem else { return }
+        if item.status == .readyToPlay {
+            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+            return
+        }
+        priming = Task { @MainActor in
+            // Bounded wait (50 ms cadence, 10 s cap): a slow container must
+            // not leave the sheet on a black surface forever — past the cap,
+            // play whatever the player has (the previous behavior).
+            var waitedNs = 0
+            while item.status == .unknown, waitedNs < 10_000_000_000,
+                  !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                waitedNs += 50_000_000
+            }
+            guard !Task.isCancelled else { return }
+            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+        }
+    }
+
     /// Tear down the player and its audio session — a sheet that merely
     /// disappears previously left the session active, muting other audio.
     private func teardown() {
+        priming?.cancel()
+        priming = nil
         guard let player else { return }
         player.pause()
         player.replaceCurrentItem(with: nil)
@@ -1086,15 +1128,21 @@ private struct OutputPlayerSheet: View {
     private func swapSide(new: Side) {
         guard let player else { return }
         let time = player.currentTime()
-        let wasPlaying = player.rate > 0
+        // A priming task in flight means playback was INTENDED but had not
+        // started yet — keep that intent across the swap.
+        let wasPlaying = player.rate > 0 || priming != nil
         let next = playerItem(for: new)
         player.replaceCurrentItem(with: next)
-        if time.seconds > 0 {
+        if wasPlaying {
             // The compressed runtime can differ slightly (fps cap), but
-            // AVPlayer clamps the seek itself.
+            // AVPlayer clamps the seek itself. PRIMED start on the fresh
+            // item — same first-frame rule as load().
+            primeThenPlay(player, at: time.seconds > 0 ? time : .zero)
+        } else if time.seconds > 0 {
+            // Paused stays paused — but still settle the geometry so the
+            // paused frame shows correctly oriented on the new side.
             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
-        if wasPlaying { player.play() }
         measureAspect(for: next)
     }
 }

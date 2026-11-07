@@ -437,6 +437,10 @@ struct PresetEditorView: View {
                     }
                 }
             }
+            // Same screen-level token as every other screen (Color.appScreen)
+            // — dark mode is true black here too.
+            .scrollContentBackground(.hidden)
+            .background(Color.appScreen)
             .navigationTitle(existing == nil ? "Custom preset" : "Edit preset")
             .navigationBarTitleDisplayMode(.inline)
             // Any scroll (e.g. to the Save… row area) instantly drops the

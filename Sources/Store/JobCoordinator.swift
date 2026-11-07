@@ -139,6 +139,12 @@ final class JobCoordinator: ObservableObject {
         // resumes the job at launch instead of losing it.
         saveRecord(jobID: job.id, outputName: nil, report: nil, state: "queued")
         refreshMenuState()
+        // The queue-finished notification can only ever be heard while the
+        // app is backgrounded — permission must exist BEFORE the user
+        // backgrounds the app mid-queue. Ask (once, silently if already
+        // granted) on the first enqueue, never at launch (no unprompted
+        // system dialogs over an empty screen).
+        QueueNotifications.ensureAuthorized()
         runQueueIfNeeded()
     }
 
@@ -198,8 +204,9 @@ final class JobCoordinator: ObservableObject {
     /// The in-app worker — always the foreground executor (instant start).
     private func startForegroundWorker() {
         // A background-task revocation pauses the queue until the app is
-        // active again (RootView lifts the pause on scenePhase == .active).
-        guard !bgPaused else { return }
+        // active again (RootView lifts the pause on scenePhase == .active);
+        // a USER pause (queue status bar) holds until the user resumes.
+        guard !bgPaused, !userPaused else { return }
         if #available(iOS 26.0, *) {
             // The BG driver owns the queue while its task is running — it
             // picks up new jobs itself. (Prevents two concurrent encodes.)
@@ -218,7 +225,9 @@ final class JobCoordinator: ObservableObject {
                 guard let self else { break }
                 // A background-task revocation pauses the queue: starting
                 // the next job while iOS suspends the process just burns it.
-                if self.bgPaused { break }
+                // A USER pause holds here too — the already-running job
+                // finishes (Run below), nothing new starts.
+                if self.bgPaused || self.userPaused { break }
                 guard
                       // PICK ORDER: the array is newest-first (enqueue inserts
                       // at 0 for the history display), so the LAST queued
@@ -279,14 +288,9 @@ final class JobCoordinator: ObservableObject {
                 // SetupFlow did at enqueue (target-size presets otherwise
                 // solve against the full timeline while the encode runs the
                 // trimmed one, and the report's inBytes would count the
-                // full source). fileSize scales proportionally.
-                var p = probe
-                if let end = job.trimEnd, end - job.trimStart >= 0.5,
-                   job.trimStart > 0.05 || end < probe.duration - 0.05 {
-                    p.duration = end - job.trimStart
-                    p.fileSize = Int64(Double(probe.fileSize)
-                        * p.duration / max(probe.duration, 0.1))
-                }
+                // full source). fileSize scales proportionally. The logic
+                // lives in the shared, unit-tested TrimMath.
+                let p = TrimMath.apply(probe, start: job.trimStart, end: job.trimEnd ?? probe.duration)
                 plan = QualitySizeOptimizer.plan(preset: job.preset, probe: p)
                 // QUEUE PERSISTENCE: re-apply the persisted per-video
                 // adjustments (a resumed job would otherwise encode the
@@ -637,7 +641,7 @@ final class JobCoordinator: ObservableObject {
             jobs[idx].state = .done
             jobs[idx].report = report
             jobs[idx].outputURL = final
-            noteTerminalTick(.done)
+            noteTerminalTick(.done, name: jobs[idx].sourceName, error: nil)
             saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                        report: try? JSONEncoder().encode(report), state: "done")
         } else {
@@ -648,7 +652,7 @@ final class JobCoordinator: ObservableObject {
             let msg = "Couldn't save the file to Files — free up storage and tap Retry."
             jobs[idx].state = .failed
             jobs[idx].errorMessage = msg
-            noteTerminalTick(.failed)
+            noteTerminalTick(.failed, name: jobs[idx].sourceName, error: msg)
             try? FileManager.default.removeItem(at: output)
             saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
                        errorText: msg)
@@ -868,7 +872,7 @@ final class JobCoordinator: ObservableObject {
         jobs[idx].state = .done
         jobs[idx].outputURL = final
         jobs[idx].errorMessage = nil
-        noteTerminalTick(.done)
+        noteTerminalTick(.done, name: jobs[idx].sourceName, error: nil)
         saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                    report: try? JSONEncoder().encode(report), state: "done")
         // Same storage rule as a normal success: our import copy of the
@@ -892,12 +896,25 @@ final class JobCoordinator: ObservableObject {
     /// suspends the process. RootView resumes on scenePhase == .active.
     @Published var bgPaused = false
 
-    /// Per-run verification watchdog (cancelled when verification finishes
-    /// or the row is retried — a fast Retry must not race the old watchdog).
-    /// Per-ROW verification watchdogs: a watchdog belongs to exactly one
-    /// verify phase. The single shared property before let `retry` (or a
-    /// fast finish) of one job cancel the backstop protecting ANOTHER job
-    /// that was still verifying.
+    /// USER pause (queue status bar) — distinct from the SYSTEM pause above:
+    /// the user asked the queue to hold. Nothing new starts while set; the
+    /// job already encoding is allowed to finish (cancelling it to pause
+    /// would throw away real work). Survives scene-phase transitions until
+    /// the user taps resume.
+    @Published private(set) var userPaused = false
+
+    /// Queue-level Pause: stop STARTING new jobs. In-flight wording on the
+    /// BG subtitle so an active background continuation also reflects it.
+    func pauseQueue() {
+        userPaused = true
+        bgSubtitle("Paused — resume to continue the queue")
+    }
+
+    func resumeQueue() {
+        userPaused = false
+        runQueueIfNeeded()
+    }
+
     private var verifyWatchdogs: [UUID: Task<Void, Never>] = [:]
 
     private func bgSubtitle(_ subtitle: String) {
@@ -1357,7 +1374,9 @@ final class JobCoordinator: ObservableObject {
         let oldState = jobs[idx].state
         mutate(&jobs[idx])
         if jobs[idx].state != oldState {
-            noteTerminalTick(jobs[idx].state)
+            noteTerminalTick(jobs[idx].state,
+                             name: jobs[idx].sourceName,
+                             error: jobs[idx].errorMessage)
         }
         refreshMenuState()
     }
@@ -1372,12 +1391,32 @@ final class JobCoordinator: ObservableObject {
     @Published var completionTick = 0
     @Published var failureTick = 0
 
-    private func noteTerminalTick(_ state: JobCoordinator.JobState) {
+    private func noteTerminalTick(
+        _ state: JobCoordinator.JobState,
+        name: String,
+        error: String?
+    ) {
         switch state {
         case .done: completionTick += 1
         case .failed: failureTick += 1
         default: break
         }
+        // QUEUE-DRAINED notification: when the LAST active job went terminal,
+        // tell the user — a background continuation that finishes silently is
+        // invisible (the whole reason BGContinuedProcessingTask exists).
+        // Fired ONLY when the app is not the active scene: a banner the
+        // moment the user watches the row finish would just be noise.
+        // Cancellations don't notify — the user drove those.
+        guard state == .done || state == .failed else { return }
+        let stillActive = jobs.contains {
+            [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+        }
+        guard !stillActive,
+              UIApplication.shared.applicationState != .active else { return }
+        QueueNotifications.queueFinished(
+            success: state == .done,
+            name: name,
+            detail: error)
     }
 
     private func presetStamp(_ preset: Preset) -> String {

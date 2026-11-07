@@ -2,35 +2,47 @@ import XCTest
 import AVFoundation
 @testable import VidCompress
 
-/// The muxer anchor is shared by the ENGINE and the PROBE — these pin the
-/// documented edge cases (a video starting at 0 must anchor at 0 even when
-/// audio starts later; trimmed clips anchor at their earliest track start;
-/// invalid starts clamp to 0 so no sample can append before the session).
+/// The session-anchor rule EVERY consumer shares: the muxer anchor is the
+/// MINIMUM of the track starts, each clamped to ≥ 0 — a track starting at
+/// (or below) zero pins the anchor to 0 so no sample can append "before the
+/// session". The probe and the engine both call this one function.
 final class SessionAnchorTests: XCTestCase {
 
-    private func t(_ s: Double) -> CMTime { CMTime(seconds: s, preferredTimescale: 600) }
-
-    // video 0 + audio 0.5 → 0 (the regression that started the helper:
-    // a 0 video start is NOT "no video anchor").
-    func testVideoZeroAnchorsAtZeroEvenWhenAudioStartsLater() {
-        XCTAssertEqual(SessionAnchor.start(video: t(0), audio: t(0.5)), .zero)
+    private func t(_ seconds: Double) -> CMTime {
+        CMTime(seconds: seconds, preferredTimescale: 600)
     }
 
-    // video 1 + audio 0.5 → 0.5 · video 0.5 + audio 1 → 0.5
-    func testTrimmedClipAnchorsAtEarliestStart() {
-        XCTAssertEqual(SessionAnchor.start(video: t(1), audio: t(0.5)), t(0.5))
-        XCTAssertEqual(SessionAnchor.start(video: t(0.5), audio: t(1)), t(0.5))
+    func testPositiveAnchorsTakeTheMinimum() {
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(1.0), audio: t(0.5))), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(0.25), audio: t(1.0))), 0.25, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(0.3), audio: t(0.9))), 0.3, accuracy: 1e-9)
     }
 
-    func testVideoOnlyTrimmedClip() {
-        XCTAssertEqual(SessionAnchor.start(video: t(1), audio: nil), t(1))
+    func testVideoAtZeroPinsTheAnchor() {
+        // The original regression: a video start of 0 read as "no anchor",
+        // so the audio's 0.5 became the anchor and PTS-0 video frames fell
+        // BEFORE the session. Zero wins.
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: .zero, audio: t(0.5))), 0, accuracy: 1e-9)
     }
 
-    func testInvalidTimesAnchorAtZero() {
-        // Negative/indefinite starts clamp to 0 — no sample may append
-        // before the session.
-        XCTAssertEqual(SessionAnchor.start(video: t(-2), audio: t(0.5)), .zero)
-        XCTAssertEqual(SessionAnchor.start(video: .indefinite, audio: nil), .zero)
-        XCTAssertEqual(SessionAnchor.start(video: t(0), audio: .indefinite), .zero)
+    func testNegativeStartsClampToZero() {
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(-2), audio: t(0.5))), 0, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(-1), audio: t(-1))), 0, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(1), audio: t(-0.25))), 0, accuracy: 1e-9)
+    }
+
+    func testMissingAudioUsesTheVideoAnchor() {
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(1.0), audio: nil)), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: .zero, audio: nil)), 0, accuracy: 1e-9)
+    }
+
+    func testInvalidTimesAreNeutralized() {
+        // Indefinite/infinite timestamps (damaged headers) must not poison
+        // the minimum: they are treated as 0.
+        let indefinite = CMTime.indefinite
+        let nan = CMTime(seconds: .nan, preferredTimescale: 600)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: indefinite, audio: t(0.5))), 0, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: t(1.0), audio: nan)), 0, accuracy: 1e-9)
+        XCTAssertEqual(CMTimeGetSeconds(SessionAnchor.start(video: indefinite, audio: nan)), 0, accuracy: 1e-9)
     }
 }

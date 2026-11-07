@@ -116,8 +116,9 @@ enum BackgroundCompress {
             submitPendingSince = .distantPast
             while !expiry.isExpired {
                 guard let coordinator else { break }
-                // A background-task revocation pauses the queue here too.
-                if coordinator.bgPaused { break }
+                // A background-task revocation pauses the queue here too —
+                // and so does a USER pause from the status bar.
+                if coordinator.bgPaused || coordinator.userPaused { break }
                 // The in-app worker is the foreground executor (instant
                 // start). While it's alive it owns the work — wait for it to
                 // finish, then sweep anything still queued. The task staying

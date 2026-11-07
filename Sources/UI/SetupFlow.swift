@@ -38,6 +38,14 @@ struct SetupFlowView: View {
     @State private var posterItem: PhotosPickerItem?
     @State private var posterData: Data?
     @State private var posterPreview: UIImage?
+    // INLINE TRIM PREVIEW: an AVPlayer over the ORIGINAL file that plays
+    // exactly [trimStart, trimEnd). What you set is what you see.
+    @State private var previewPlayer: AVPlayer?
+    @State private var previewIsPlaying = false
+    @State private var previewObserver: Any?
+    /// FIRST-FRAME PRIMING task for the inline preview — see
+    /// startPreviewPriming(at:) below.
+    @State private var previewPriming: Task<Void, Never>?
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -129,7 +137,7 @@ struct SetupFlowView: View {
                 }
                 .padding()
             }
-            .background(Color(.systemGroupedBackground))
+            .background(Color.appScreen)
             // Estimate + Compress live in a PINNED bottom bar: the primary
             // action stays reachable no matter how the preset list grows.
             .safeAreaInset(edge: .bottom) {
@@ -200,18 +208,14 @@ struct SetupFlowView: View {
     /// The probe as the trim window sees it: estimates, preset rows and
     /// plans must all describe the TRIMMED output when a window is set —
     /// otherwise target-size solves against the full length while the
-    /// encode runs the trimmed length. fileSize scales proportionally so
-    /// the “−X%” story and the report’s input size stay honest.
+    /// encode runs the trimmed length. The LOGIC lives in the shared,
+    /// unit-tested `TrimMath` (the coordinator's resume path uses it too).
     private func isTrimmed(_ p: ProbeResult) -> Bool {
-        trimEnd - trimStart >= 0.5 && (trimStart > 0.05 || trimEnd < p.duration - 0.05)
+        TrimMath.isTrimmed(start: trimStart, end: trimEnd, duration: p.duration)
     }
 
     private func trimmed(_ p: ProbeResult) -> ProbeResult {
-        guard isTrimmed(p) else { return p }
-        var q = p
-        q.duration = trimEnd - trimStart
-        q.fileSize = Int64(Double(p.fileSize) * q.duration / max(p.duration, 0.1))
-        return q
+        TrimMath.apply(p, start: trimStart, end: trimEnd)
     }
 
     private var littleToGain: Bool {
@@ -381,7 +385,10 @@ struct SetupFlowView: View {
 
     /// Rotate + trim controls with a thumbnail filmstrip: 8 evenly spaced
     /// frames; the ones outside the trim window dim so the selection is
-    /// visible without a scrubber.
+    /// visible without a scrubber. Handles below: sliders PLUS ±1 s / ±10 s
+    /// nudge buttons (mouse-precision falls short for frame-exact trims on
+    /// an iPad touch target), and an inline player that previews exactly
+    /// the selected window.
     private func adjustSection(_ probe: ProbeResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Adjust").font(.caption.bold()).foregroundStyle(.secondary)
@@ -409,25 +416,40 @@ struct SetupFlowView: View {
                 }
             }
 
-            HStack {
-                Text("Start").font(.caption2).frame(width: 38, alignment: .leading)
-                Slider(value: $trimStart, in: 0...max(0, trimEnd - 0.5))
-                    .accessibilityLabel("Trim start")
-                Text(timeString(trimStart))
-                    .font(.caption2.monospacedDigit())
-                    .frame(width: 44, alignment: .trailing)
-            }
-            HStack {
-                Text("End").font(.caption2).frame(width: 38, alignment: .leading)
-                Slider(value: $trimEnd, in: min(trimStart + 0.5, probe.duration)...probe.duration)
-                    .accessibilityLabel("Trim end")
-                Text(timeString(trimEnd))
-                    .font(.caption2.monospacedDigit())
-                    .frame(width: 44, alignment: .trailing)
-            }
+            trimHandleRow(label: "Start", isStart: true, probe: probe)
+            trimHandleRow(label: "End", isStart: false, probe: probe)
             Text("Keeping \(timeString(trimEnd - trimStart)) of \(timeString(probe.duration))")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            // INLINE PREVIEW: plays the ORIGINAL file from trimStart and
+            // cuts off at the live trimEnd — the selection, not the asset.
+            if let url = videos.first?.url {
+                HStack(spacing: 10) {
+                    Button {
+                        togglePreview(url)
+                    } label: {
+                        Label(previewIsPlaying ? "Stop" : "Preview selection",
+                              systemImage: previewIsPlaying ? "stop.fill" : "play.fill")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    if previewIsPlaying {
+                        Text("\(timeString(trimStart)) → \(timeString(trimEnd))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                if previewIsPlaying, let p = previewPlayer {
+                    TrimPreview(player: p)
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            // Adjusting while previewing restarts from the new window edge.
+            .onChange(of: trimStart) { _, _ in if previewIsPlaying { stopPreview() } }
+            .onChange(of: trimEnd) { _, _ in if previewIsPlaying { stopPreview() } }
 
             HStack {
                 Text("Rotate").font(.caption2)
@@ -486,6 +508,194 @@ struct SetupFlowView: View {
         }
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        // Leaving the setup sheet (or scrolling the section away) must not
+        // leave preview audio playing behind the app.
+        .onDisappear {
+            stopPreview()
+        }
+    }
+
+    /// AVPlayerLayer host for the inline trim preview — a plain layer
+    /// player (no AVPlayerViewController), sized in the host's
+    /// layoutSubviews so the resizeAspect video always fills the frame.
+    private struct TrimPreview: UIViewRepresentable {
+        let player: AVPlayer
+
+        private final class HostView: UIView {
+            override func layoutSubviews() {
+                super.layoutSubviews()
+                for layer in layer.sublayers ?? [] {
+                    if let playerLayer = layer as? AVPlayerLayer {
+                        playerLayer.frame = bounds
+                    }
+                }
+            }
+        }
+
+        func makeUIView(context: Context) -> HostView {
+            let view = HostView()
+            view.backgroundColor = .black
+            let layer = AVPlayerLayer()
+            layer.player = player
+            layer.videoGravity = .resizeAspect
+            view.layer.addSublayer(layer)
+            return view
+        }
+
+        func updateUIView(_ uiView: HostView, context: Context) {
+            // The layer is attached once in makeUIView; sizing lives in
+            // the host's layoutSubviews.
+        }
+    }
+
+    /// Clamp helpers keep both handle puzzles consistent (≥ 0.5 s window,
+    /// within [0, duration]) across slider AND every nudge direction.
+    private func clampedStart(_ v: Double) -> Double {
+        min(max(0, v), max(0, trimEnd - 0.5))
+    }
+
+    private func clampedEnd(_ v: Double, probe: ProbeResult) -> Double {
+        max(min(probe.duration, v), min(trimStart + 0.5, probe.duration))
+    }
+
+    private func nudge(_ isStart: Bool, by seconds: Double, probe: ProbeResult) {
+        if isStart {
+            trimStart = clampedStart(trimStart + seconds)
+        } else {
+            trimEnd = clampedEnd(trimEnd + seconds, probe: probe)
+        }
+    }
+
+    /// One draggable trim handle: label, ±10 s + ±1 s nudges, the slider
+    /// itself, and the live timestamp. Touch sliders alone bottom out at
+    /// whole-second precision — the nudge buttons exist for exact edges.
+    private func trimHandleRow(label: String, isStart: Bool, probe: ProbeResult) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.caption2)
+                .frame(width: 30, alignment: .leading)
+            nudgeButton("−10", isStart: isStart, by: -10, probe: probe,
+                        disabled: isStart ? trimStart <= 0.001
+                                          : trimEnd <= trimStart + 0.5 + 1e-6)
+            nudgeButton("−1", isStart: isStart, by: -1, probe: probe,
+                        disabled: isStart ? trimStart <= 0.001
+                                          : trimEnd <= trimStart + 0.5 + 1e-6)
+            if isStart {
+                Slider(value: Binding(
+                    get: { trimStart },
+                    set: { trimStart = clampedStart($0) }),
+                       in: 0...max(0, trimEnd - 0.5))
+                    .accessibilityLabel("Trim start")
+            } else {
+                Slider(value: Binding(
+                    get: { trimEnd },
+                    set: { trimEnd = clampedEnd($0, probe: probe) }),
+                       in: min(trimStart + 0.5, probe.duration)...probe.duration)
+                    .accessibilityLabel("Trim end")
+            }
+            nudgeButton("+1", isStart: isStart, by: 1, probe: probe,
+                        disabled: isStart ? trimEnd - trimStart <= 0.5 + 1e-6
+                                          : trimEnd >= probe.duration - 0.001)
+            nudgeButton("+10", isStart: isStart, by: 10, probe: probe,
+                        disabled: isStart ? trimEnd - trimStart <= 0.5 + 1e-6
+                                          : trimEnd >= probe.duration - 0.001)
+            Text(timeString(isStart ? trimStart : trimEnd))
+                .font(.caption2.monospacedDigit())
+                .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    private func nudgeButton(_ title: String, isStart: Bool, by seconds: Double,
+                             probe: ProbeResult, disabled: Bool) -> some View {
+        Button {
+            nudge(isStart, by: seconds, probe: probe)
+        } label: {
+            Text(title)
+                .font(.caption2.monospacedDigit())
+                .frame(width: 30, height: 22)
+        }
+        .buttonStyle(.bordered)
+        .disabled(disabled)
+        .accessibilityLabel("\(isStart ? "Trim start" : "Trim end") \(title)")
+    }
+
+    private func togglePreview(_ url: URL) {
+        if previewIsPlaying {
+            stopPreview()
+            return
+        }
+        let player: AVPlayer
+        if let p = previewPlayer,
+           (p.currentItem?.asset as? AVURLAsset)?.url == url {
+            player = p
+        } else {
+            // Different file than the last preview: drop the old player AND
+            // its periodic observer (the token was previously never removed
+            // — the observer's closure outlived the player and leaked, and
+            // every new file stacked another one).
+            stopPreview()
+            player = AVPlayer(url: url)
+            previewPlayer = player
+        }
+        // The cutoff observer is (re)attached on every start and removed on
+        // every stop: it cuts playback at the live trimEnd (State reads
+        // through storage, so dragging the end handle while playing is
+        // honored too).
+        previewObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(value: 1, timescale: 10),
+            queue: .main) { time in
+                if CMTimeGetSeconds(time) >= trimEnd
+                    || CMTimeGetSeconds(time) < trimStart - 0.05 {
+                    stopPreview()
+                }
+            }
+        previewIsPlaying = true
+        startPreviewPriming(player, at: trimStart)
+    }
+
+    /// FIRST-FRAME PRIMING (the 180°-rotation flash): a fresh AVPlayer has
+    /// not loaded its tracks yet — playing immediately lets the player
+    /// layer present the very first decoded frame BEFORE the track's
+    /// rotation transform has been applied, so a video recorded upside
+    /// down (180° transform) flashes rotated for one frame and then
+    /// corrects. Wait for the item to be READY, seek to the window start
+    /// with ZERO tolerance (forces the renderer to decode the exact frame
+    /// with the full track geometry), and only then start playback. The
+    /// preview view shows plain black while priming.
+    private func startPreviewPriming(_ player: AVPlayer, at startSeconds: Double) {
+        previewPriming?.cancel()
+        let start = CMTime(seconds: startSeconds, preferredTimescale: 600)
+        guard let item = player.currentItem else { return }
+        if item.status == .readyToPlay {
+            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+            return
+        }
+        previewPriming = Task { @MainActor in
+            // Bounded wait (50 ms cadence, 10 s cap): a slow container must
+            // not leave the preview stuck — past the cap, play whatever the
+            // player has (the previous behavior).
+            var waitedNs = 0
+            while item.status == .unknown, waitedNs < 10_000_000_000,
+                  !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                waitedNs += 50_000_000
+            }
+            guard !Task.isCancelled else { return }
+            player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+        }
+    }
+
+    private func stopPreview() {
+        previewPriming?.cancel()
+        previewPriming = nil
+        if let previewObserver, let p = previewPlayer {
+            p.removeTimeObserver(previewObserver)
+        }
+        previewObserver = nil
+        previewPlayer?.pause()
+        previewIsPlaying = false
     }
 
     private func timeString(_ s: Double) -> String {

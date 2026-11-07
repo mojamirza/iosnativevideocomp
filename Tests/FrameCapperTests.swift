@@ -2,60 +2,77 @@ import XCTest
 import AVFoundation
 @testable import VidCompress
 
-/// The fps-cap slot-grid cadence, extracted from the video pipe so it can be
-/// pinned: first accepted frame opens a slot; frames inside the open slot are
-/// dropped (quarter-period jitter tolerance); lag beyond a full period
-/// re-anchors so variable-frame-rate bursts stay capped.
+/// The fps-cap slot grid (FrameCapper): the first accepted frame opens a
+/// slot one period wide; frames inside the open slot are DROPPED (with a
+/// quarter-period tolerance at the edge to absorb timestamp jitter just
+/// above the cap); lag beyond a full period re-anchors the grid so VFR
+/// bursts stay capped. Every cadence the engine relies on.
 final class FrameCapperTests: XCTestCase {
 
-    private func t(_ s: Double) -> CMTime { CMTime(seconds: s, preferredTimescale: 600) }
+    private let cap = 30
 
-    // 30 fps cap → period 1/30 s.
-    private func capper(cap: Int = 30) -> FrameCapper { FrameCapper(cap: cap) }
+    private var period: CMTime { CMTime(value: 1, timescale: CMTimeScale(cap)) }
+    private var tol: CMTime { CMTime(value: 1, timescale: CMTimeScale(cap * 4)) }
 
-    func testFirstFrameOpensTheSlot() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
+    func testFirstFrameAlwaysKept() {
+        var c = FrameCapper(cap: cap)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 123, timescale: 600)))
     }
 
-    func testFramesInsideTheOpenSlotAreDropped() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
-        // 1/60 s later: inside the 1/30 slot → dropped.
-        XCTAssertFalse(c.shouldKeep(t(1.0 / 60.0)))
+    func testFrameInsideOpenSlotIsDropped() {
+        var c = FrameCapper(cap: cap)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 0, timescale: 600)))
+        // Half a period later (0.0166… s): strictly inside the open slot.
+        XCTAssertFalse(c.shouldKeep(CMTime(value: 1, timescale: 60)))
     }
 
-    func testNextSlotFrameIsKept() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
-        // Exactly one period later: kept, and the grid advances.
-        XCTAssertTrue(c.shouldKeep(t(1.0 / 30.0)))
-        XCTAssertFalse(c.shouldKeep(t(1.0 / 30.0 + 1.0 / 120.0)))
-        XCTAssertTrue(c.shouldKeep(t(2.0 / 30.0)))
+    func testFrameAtSlotStartIsKeptAndAdvancesGrid() {
+        var c = FrameCapper(cap: cap)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 0, timescale: 600)))
+        // Exactly one period later — the slot boundary itself.
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 1, timescale: 30)))
+        // Next half-period frame again falls inside the NEW slot.
+        XCTAssertFalse(c.shouldKeep(CMTime(value: 3, timescale: 60)))
     }
 
-    func testJitterJustAboveTheCapIsTolerated() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
-        // A quarter period BEFORE the next boundary is still kept (sources
-        // hovering just above the cap must not hitch).
-        XCTAssertTrue(c.shouldKeep(t(1.0 / 30.0 - 1.0 / 120.0)))
+    func testConstantHigherFPSHalvesThroughTheCap() {
+        // 60 fps into a 30 cap: exactly every other frame survives.
+        var c = FrameCapper(cap: cap)
+        var kept = 0
+        for k in 0..<60 {
+            if c.shouldKeep(CMTime(value: k, timescale: 60)) { kept += 1 }
+        }
+        XCTAssertEqual(kept, 30)
     }
 
-    func testVFRGapReanchorsTheGrid() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
-        // A 2-second gap (recording paused): far beyond the slot — kept, and
-        // the grid re-anchors here so a follow-up burst is capped again.
-        XCTAssertTrue(c.shouldKeep(t(2.0)))
-        XCTAssertFalse(c.shouldKeep(t(2.0 + 1.0 / 60.0)))
+    func testToleranceEdgeAbsorbsJitterJustAboveTheCap() {
+        var c = FrameCapper(cap: cap)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 0, timescale: 600)))
+        // Just BELOW (slot − tol): still inside the slot → dropped.
+        let boundary = CMTimeSubtract(CMTimeAdd(CMTime.zero, period), tol)
+        let inside = CMTimeSubtract(boundary, CMTime(value: 1, timescale: 6000))
+        XCTAssertFalse(c.shouldKeep(inside))
+        // Just ABOVE the tolerance edge: a legit frame → kept.
+        let outside = CMTimeAdd(boundary, CMTime(value: 1, timescale: 6000))
+        XCTAssertTrue(c.shouldKeep(outside))
     }
 
-    func testLateFramesBeyondTheToleranceAreKept() {
-        var c = capper()
-        XCTAssertTrue(c.shouldKeep(t(0)))
-        // Half a period late: outside the tolerance, still kept (the grid
-        // advances by one period from the previous anchor).
-        XCTAssertTrue(c.shouldKeep(t(1.0 / 30.0 + 1.0 / 60.0)))
+    func testVFRLagBeyondAPeriodReAnchors() {
+        var c = FrameCapper(cap: cap)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 0, timescale: 600)))
+        // 1 s later — more than a full period past the open slot: the grid
+        // must RE-ANCHOR here (otherwise the following stutter would drop
+        // every frame until the stale grid is walked through).
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 1, timescale: 1)))
+        // And a frame just after the re-anchor is again inside the slot.
+        XCTAssertFalse(c.shouldKeep(CMTime(value: 1005, timescale: 1000)))
+    }
+
+    func testSingleFPSCapWorks() {
+        var c = FrameCapper(cap: 1)
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 0, timescale: 100)))    // opens slot ending 1.0
+        XCTAssertFalse(c.shouldKeep(CMTime(value: 1, timescale: 100)))   // 0.01 s: inside slot
+        XCTAssertTrue(c.shouldKeep(CMTime(value: 11, timescale: 10)))    // 1.1 s: kept, slot → 2.1
+        XCTAssertFalse(c.shouldKeep(CMTime(value: 12, timescale: 10)))   // 1.2 s: inside new slot
     }
 }

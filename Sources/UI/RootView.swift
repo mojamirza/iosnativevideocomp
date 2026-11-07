@@ -17,6 +17,7 @@ struct RootView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showFiles = false
     @State private var importError: String?
+    @State private var importStep: ImportStep?
     @State private var dropActive = false
     @State private var confirmingBatchDelete = false
     @State private var showPresetEditor = false
@@ -24,9 +25,71 @@ struct RootView: View {
     @State private var confirmingClearFinished = false
 
     var body: some View {
-        NavigationStack {
+        NavigationSplitView {
+            sidebar
+        } detail: {
             interactiveList
         }
+    }
+
+    /// The NavigationSplitView sidebar: quick entry points and the About &
+    /// Settings destination (a sheet keeps ONE host for its layout). The
+    /// queue list stays the always-mounted detail column — no state, drag
+    /// targets or observers are lost when the sidebar is used. iPad shows
+    /// the two-column shell; compact widths collapse it to the standard
+    /// hamburger toggle.
+    private var sidebar: some View {
+        List {
+            Section("Import") {
+                // SAME direct-picker shape as the toolbar and empty state:
+                // PhotosPicker inside a Menu is unreliable on device, direct
+                // pickers are proven. preferredItemEncoding: .current —
+                // without it the picker may hand back a TRANSCODED HDR→SDR
+                // movie; the engine must see the original pixels.
+                PhotosPicker(selection: $photoItems, matching: .videos,
+                             preferredItemEncoding: .current) {
+                    Label("Photos", systemImage: "photo.on.rectangle.angled")
+                }
+                Button {
+                    showFiles = true
+                } label: {
+                    Label("Files", systemImage: "folder.badge.plus")
+                }
+            }
+            Section("Queue") {
+                // Counts live in extracted computed properties: a closure
+                // with statements inside a string interpolation has already
+                // defeated this repo's type-checker twice (CI rounds for the
+                // toolbar and the drop overlay).
+                LabeledContent("Working", value: "\(sidebarActiveCount)")
+                LabeledContent("Finished", value: "\(sidebarFinishedCount)")
+            }
+            Section {
+                Button {
+                    showAboutSettings = true
+                } label: {
+                    Label("About & Settings", systemImage: "info.circle")
+                }
+            }
+        }
+        .navigationTitle("VidCompress")
+        // The sidebar column must match the detail column (Color.appScreen):
+        // the List's own grouped background is the gray that made the app
+        // look different between fullscreen and Split View in dark mode.
+        .scrollContentBackground(.hidden)
+        .background(Color.appScreen)
+    }
+
+    private var sidebarActiveCount: Int {
+        coordinator.jobs.filter {
+            [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+        }.count
+    }
+
+    private var sidebarFinishedCount: Int {
+        coordinator.jobs.filter {
+            [.done, .failed, .cancelled].contains($0.state)
+        }.count
     }
 
     /// The root list with its INTERACTION layer: drop handling, toolbar and
@@ -233,7 +296,10 @@ struct RootView: View {
             }
             .padding(.vertical)
         }
-        .background(Color(.systemGroupedBackground))
+        // TRUE black in dark mode on every screen-level container (see
+        // Color.appScreen) — fullscreen, Split View and Stage Manager all
+        // show the same AMOLED-black canvas; light mode is unchanged.
+        .background(Color.appScreen)
     }
 
     // MARK: body parts — extracted from `body` so the total expression stays
@@ -243,6 +309,11 @@ struct RootView: View {
 
     @ViewBuilder
     private var jobSections: some View {
+        // Import progress card (per-file, counts up during a batch copy).
+        if let step = importStep {
+            ImportStatusCard(step: step)
+        }
+
         if coordinator.jobs.isEmpty {
             EmptyState(photoItems: $photoItems,
                        onFiles: { showFiles = true })
@@ -264,6 +335,7 @@ struct RootView: View {
         }
 
         if !active.isEmpty {
+            QueueStatusBar()
             sectionHeader("In progress", icon: "hourglass", count: active.count)
             ForEach(active) { job in
                 JobRowView(job: job)
@@ -356,13 +428,19 @@ struct RootView: View {
         guard !showingSetup, !providers.isEmpty else { return false }
         Task {
             var picked: [PickedVideo] = []
+            var i = 0
             for provider in providers {
+                importStep = ImportStep(
+                    total: providers.count, done: i,
+                    current: provider.suggestedName ?? "dropped video")
                 guard let url = await ImportHelpers.urlFromDrop(provider) else { continue }
                 if let copy = await ImportHelpers.copyOffMain(url) {
                     let thumb = await Thumbnails.make(url: copy)
                     picked.append(PickedVideo(url: copy, thumbnail: thumb))
                 }
+                i += 1
             }
+            importStep = nil
             if picked.isEmpty {
                 importError = "The dropped videos could not be imported."
             } else {
@@ -375,7 +453,11 @@ struct RootView: View {
 
     private func importFromLibrary(_ items: [PhotosPickerItem]) async {
         var picked: [PickedVideo] = []
+        var i = 0
         for item in items {
+            importStep = ImportStep(
+                total: items.count, done: i,
+                current: item.itemIdentifier?.description ?? "library video")
             do {
                 let url = try await ImportHelpers.copyFromLibrary(item)
                 let thumb = await Thumbnails.make(url: url)
@@ -384,8 +466,10 @@ struct RootView: View {
                 // Unreadable/untransferable item — skipped; the
                 // batch card shows what made it through.
             }
+            i += 1
         }
         photoItems = []
+        importStep = nil
         if picked.isEmpty {
             importError = "The selected videos could not be imported."
         } else {
@@ -396,7 +480,12 @@ struct RootView: View {
 
     private func importFromFiles(_ urls: [URL]) async {
         var picked: [PickedVideo] = []
+        var i = 0
         for url in urls {
+            // IMPORT PROGRESS: per-file card while the batch copies — a
+            // multi-GB import silently froze the UI before this existed.
+            importStep = ImportStep(
+                total: urls.count, done: i, current: url.lastPathComponent)
             // The multi-GB copy runs OFF the main actor —
             // inline on MainActor it froze the UI for the
             // entire copy duration.
@@ -404,7 +493,9 @@ struct RootView: View {
                 let thumb = await Thumbnails.make(url: copy)
                 picked.append(PickedVideo(url: copy, thumbnail: thumb))
             }
+            i += 1
         }
+        importStep = nil
         if picked.isEmpty {
             importError = "The selected files could not be copied into the app's storage."
         } else {
@@ -460,6 +551,118 @@ struct RootView: View {
         .padding(12)
         .background(Color(UIColor.systemYellow).opacity(0.18),
                     in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - Queue status bar + import progress
+
+/// One import step for the progress card (file-scope: it lives in
+/// RootView's @State).
+struct ImportStep: Equatable {
+    let total: Int
+    let done: Int
+    let current: String
+}
+
+/// IMPORT PROGRESS: a batch copy of multi-GB files used to be a frozen
+/// screen with no signal. Now one card counts through the batch.
+private struct ImportStatusCard: View {
+    let step: ImportStep
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Importing \(min(step.done + 1, step.total)) of \(step.total)")
+                    .font(.subheadline.weight(.semibold))
+                Text(step.current)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+    }
+}
+
+/// QUEUE-LEVEL status bar: one progress bar over the whole ACTIVE queue
+/// (equal share per job), a "what's happening / how much is left" readout,
+/// and the user Pause control — while paused nothing NEW starts; the job
+/// already encoding is allowed to finish (cancelling it would waste work).
+private struct QueueStatusBar: View {
+    @EnvironmentObject private var coordinator: JobCoordinator
+
+    private var active: [JobCoordinator.Job] {
+        coordinator.jobs.filter {
+            [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+        }
+    }
+
+    private var fraction: Double {
+        guard !active.isEmpty else { return 0 }
+        // Verifying counts as its full point; the encoding/preparing one
+        // contributes its own live progress; queued ones contribute nothing.
+        var sum = 0.0
+        for job in active {
+            switch job.state {
+            case .verifying: sum += 1
+            case .compressing, .analyzing:
+                sum += min(max(job.progress, 0), 1)
+            default: break
+            }
+        }
+        return min(max(sum / Double(active.count), 0), 1)
+    }
+
+    private var headline: String {
+        if coordinator.userPaused {
+            return "Paused — \(active.count) job\(active.count == 1 ? "" : "s") waiting"
+        }
+        let encoding = active.first { $0.state == .compressing }
+        if let encoding, !encoding.sourceName.isEmpty {
+            let queued = active.filter { $0.state == .queued }.count
+            return queued > 0
+                ? "Encoding \(encoding.sourceName) · \(queued) queued"
+                : "Encoding \(encoding.sourceName)"
+        }
+        return "Preparing…"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button {
+                    if coordinator.userPaused {
+                        coordinator.resumeQueue()
+                    } else {
+                        coordinator.pauseQueue()
+                    }
+                } label: {
+                    Label(coordinator.userPaused ? "Resume" : "Pause",
+                          systemImage: coordinator.userPaused ? "play.fill" : "pause.fill")
+                        .font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(coordinator.userPaused ? "Resume queue" : "Pause queue")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headline)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text("Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            ProgressView(value: fraction)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 14))
         .padding(.horizontal)
     }
 }
@@ -590,6 +793,9 @@ private struct AboutSettingsSheet: View {
                     Link("VidCompress on GitHub", destination: URL(string: "https://github.com/mojamirza/iosnativevideocomp")!)
                 }
             }
+            // Same screen-level token as every other screen (Color.appScreen).
+            .scrollContentBackground(.hidden)
+            .background(Color.appScreen)
             .navigationTitle("About & Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
