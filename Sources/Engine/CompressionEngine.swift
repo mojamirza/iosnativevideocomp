@@ -299,7 +299,7 @@ enum CompressionEngine {
         // suspect for the sibling creation-date key).
         if allowPoster, let poster = plan.posterData {
             let item = AVMutableMetadataItem()
-            item.identifier = .commonArtwork
+            item.identifier = .commonIdentifierArtwork
             item.dataType = kCMMetadataBaseDataType_JPEG as String
             item.value = poster as NSData
             metadata.append(item)

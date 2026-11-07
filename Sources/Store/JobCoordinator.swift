@@ -130,10 +130,10 @@ final class JobCoordinator: ObservableObject {
                       plan: plan,
                       thumbnail: thumbnail,
                       createdAt: Date(),
+                      posterData: plan.posterData,
                       rotationDegrees: plan.rotationDegrees,
                       trimStart: plan.trimStart,
-                      trimEnd: plan.trimEnd,
-                      posterData: plan.posterData)
+                      trimEnd: plan.trimEnd)
         jobs.insert(job, at: 0)
         // QUEUE PERSISTENCE: a queued record means a crash/kill mid-batch
         // resumes the job at launch instead of losing it.
