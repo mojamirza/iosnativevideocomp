@@ -521,7 +521,11 @@ struct SetupFlowView: View {
     private struct TrimPreview: UIViewRepresentable {
         let player: AVPlayer
 
-        private final class HostView: UIView {
+        // NOT private: makeUIView/updateUIView are UIViewRepresentable's
+        // (public) protocol witnesses and expose this type in their
+        // signatures — a private nested class here fails to compile
+        // (CI round 42402406446).
+        final class HostView: UIView {
             override func layoutSubviews() {
                 super.layoutSubviews()
                 for layer in layer.sublayers ?? [] {
