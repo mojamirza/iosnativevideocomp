@@ -426,12 +426,53 @@ struct RootView: View {
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
     }
 
-    /// The scrollable queue/history list — a NATIVE inset-grouped List:
-    /// system swipe actions, section headers/footers and row animation come
-    /// from the framework instead of hand-rolled re-implementations. Row
-    /// surfaces use the pinned `Color.appCard` token; the List's own grouped
-    /// background is replaced with the pinned canvas color.
+    /// The queue screen — TWO branches (both are fixes for real device
+    /// feedback on the v1.7.0 List conversion):
+    /// · EMPTY — the native ContentUnavailableView fills a plain ScrollView.
+    ///   It is designed as a scroll view's ROOT, not a List row: inside a
+    ///   row its layout collapses and its big action buttons (bordered /
+    ///   borderedProminent) don't reliably receive taps on iPadOS 26 —
+    ///   "the big photo and file buttons are broken, the toolbar ones are
+    ///   fine" was exactly this. Outside the List both work.
+    /// · POPULATED — the native inset-grouped List: system swipe actions,
+    ///   section headers/footers and row animation from the framework. The
+    ///   QueueStatusBar is PINNED above it via safeAreaInset: a `.bordered`
+    ///   control inside a List row is not a reliable tap target (the Pause
+    ///   button regressed exactly there), and a pinned bar also stays
+    ///   visible while history scrolls — better than the old in-list slot.
+    @ViewBuilder
     private var queueList: some View {
+        if coordinator.jobs.isEmpty {
+            emptyStateScreen
+        } else {
+            populatedList
+        }
+    }
+
+    /// EMPTY ROOT: ContentUnavailableView in its documented container. The
+    /// transient import card and the storage banner ride along above it.
+    private var emptyStateScreen: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if let step = importStep {
+                    ImportStatusCard(step: step)
+                        .padding(.horizontal)
+                }
+                if StorageFallback.inMemoryOnly {
+                    storageFallbackBanner
+                        .padding(.horizontal)
+                }
+                EmptyState(photoItems: $photoItems,
+                           onFiles: { showFiles = true })
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 24)
+            .padding(.bottom, 24)
+        }
+        .background(Color.appScreen)
+    }
+
+    private var populatedList: some View {
         List {
             if let step = importStep {
                 Section {
@@ -449,24 +490,11 @@ struct RootView: View {
                 }
             }
 
-            if coordinator.jobs.isEmpty {
-                Section {
-                    EmptyState(photoItems: $photoItems,
-                               onFiles: { showFiles = true })
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-            }
-
             let active = coordinator.activeJobs
             let finished = coordinator.finishedJobs
 
             if !active.isEmpty {
                 Section {
-                    QueueStatusBar()
-                        .listRowBackground(Color.appCard)
-                        .listRowSeparator(.hidden)
                     ForEach(active) { job in
                         JobRowView(job: job)
                             .listRowBackground(Color.appCard)
@@ -497,6 +525,17 @@ struct RootView: View {
         // fullscreen, Split View and Stage Manager all show the same canvas.
         .scrollContentBackground(.hidden)
         .background(Color.appScreen)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // LIVE QUEUE BAR — pinned OUTSIDE the List (see queueList docs):
+            // its Pause control is a plain SwiftUI tap target here, and the
+            // bar stays on screen no matter how far history is scrolled.
+            if !coordinator.activeJobs.isEmpty {
+                QueueStatusBar()
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+                    .padding(.bottom, 10)
+            }
+        }
     }
 
     // MARK: body parts — extracted from `body` so the total expression stays
@@ -827,9 +866,11 @@ private struct QueueStatusBar: View {
             }
             ProgressView(value: fraction)
         }
-        // The row surface comes from the List (listRowBackground) — no card
-        // chrome of its own, just comfortable insets.
-        .padding(.vertical, 6)
+        .padding(12)
+        // Card chrome is back: the bar is a FLOATING pinned element above
+        // the List now (not a List row), so it draws its own surface again.
+        .background(Color.appCard,
+                    in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
     }
 }
 

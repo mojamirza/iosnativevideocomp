@@ -106,6 +106,13 @@ struct JobRowView: View {
             }
         }
         .padding(.vertical, 4)
+        // FULL-ROW HIT AREA: without an explicit shape, a tap gesture only
+        // hit-tests RENDERED content — the transparent trailing spacer
+        // (wide, now that rows carry no card background of their own) fell
+        // through to the List, so selection taps missed at the card's end.
+        // An explicit Rectangle shape makes the whole row tappable; child
+        // buttons still win inside their own bounds.
+        .contentShape(Rectangle())
         // VoiceOver container: composed summary first, controls stay
         // individually reachable.
         .accessibilityElement(children: .contain)

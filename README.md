@@ -103,6 +103,13 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.7.1 — build 22 (interaction fixes for the v1.7.0 List conversion)
+
+Three device-reported regressions, all traced to controls living inside List rows:
+- Empty state: the big Photos/Files buttons didn't work — `ContentUnavailableView` is designed as a scroll view's ROOT, not a List row (layout collapses, bordered-style actions don't reliably receive taps on iPadOS 26). It now owns a plain ScrollView branch when the queue is empty; the buttons work there.
+- Pause: the queue bar's `.bordered` Pause control sat in a List row and didn't register taps. The bar is now PINNED above the List via `safeAreaInset` — a plain SwiftUI tap target that also stays visible while history scrolls.
+- Selection taps missed at the trailing end of a row: rows lost their card background in the List conversion, and a tap gesture without an explicit `contentShape` only hit-tests rendered content — the transparent trailing spacer fell through. Rows now declare `.contentShape(Rectangle())`, so the full row width toggles selection (child buttons still win in their own bounds).
+
 ### v1.7.0 — build 21 (Apple-design pass + engine hardening)
 
 **Engine / backend**
