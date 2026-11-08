@@ -536,10 +536,14 @@ final class JobCoordinator: ObservableObject {
                 }
                 // A cancel that landed during verification: honour it — remove
                 // the row entirely, unless iOS interrupted us (then keep a
-                // retryable failed row).
+                // retryable failed row). A PAUSE that landed during
+                // verification keeps the completed result — the job is
+                // finished; the pause takes effect for whatever comes next.
                 if flags.cancelled {
                     if systemInterrupted.contains(jobID) {
                         markInterrupted(jobID: jobID, output: promoted)
+                    } else if pauseRequested.contains(jobID) {
+                        pauseRequested.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
                     }
@@ -566,6 +570,11 @@ final class JobCoordinator: ObservableObject {
                 if flags.cancelled {
                     if systemInterrupted.contains(jobID) {
                         markInterrupted(jobID: jobID, output: output)
+                    } else if pauseRequested.contains(jobID) {
+                        // Same rule as the success path: the encode was real
+                        // work that finished during the pause window — keep
+                        // the (failed-verdict) row for its Keep-anyway path.
+                        pauseRequested.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
                     }
@@ -581,12 +590,20 @@ final class JobCoordinator: ObservableObject {
         } catch CompressionError.cancelled {
             handleCancelled(jobID: jobID, output: output)
         } catch {
-            setJob(jobID) {
-                $0.state = .failed
-                $0.errorMessage = error.localizedDescription
+            if pauseRequested.contains(jobID) {
+                // The engine aborted because of a PAUSE, surfacing through a
+                // non-cancel error path (some teardowns report as writer/
+                // reader failures) — re-queue, don't fail. A REAL failure
+                // would recur on the resumed run and fail honestly then.
+                markPaused(jobID: jobID, output: output)
+            } else {
+                setJob(jobID) {
+                    $0.state = .failed
+                    $0.errorMessage = error.localizedDescription
+                }
+                saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
+                           errorText: error.localizedDescription)
             }
-            saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
-                       errorText: error.localizedDescription)
         }
 
         cancelFlags.removeValue(forKey: jobID)
@@ -595,14 +612,35 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// A user cancel removes everything; a system interruption (background
-    /// task revoked) keeps a retryable failed row instead.
+    /// task revoked) keeps a retryable failed row; a user PAUSE returns the
+    /// job to the queue for a fresh run on Resume.
     private func handleCancelled(jobID: UUID, output: URL) {
         if systemInterrupted.contains(jobID) {
             markInterrupted(jobID: jobID, output: output)
+        } else if pauseRequested.contains(jobID) {
+            markPaused(jobID: jobID, output: output)
         } else {
             // Cancelled jobs leave no trace: no row, no record, no partial file.
             removeRow(jobID: jobID)
         }
+    }
+
+    /// A user PAUSE aborted this job's engine: back to the queue — the row
+    /// and its source import SURVIVE (unlike a cancel), progress resets, and
+    /// Resume re-runs the encode from the start.
+    private func markPaused(jobID: UUID, output: URL) {
+        pauseRequested.remove(jobID)
+        verifyWatchdogs[jobID]?.cancel()
+        verifyWatchdogs[jobID] = nil
+        cancelFlags.removeValue(forKey: jobID)
+        setJob(jobID) {
+            $0.state = .queued
+            $0.progress = 0
+            $0.startedAt = nil
+            $0.errorMessage = nil
+        }
+        try? FileManager.default.removeItem(at: output)
+        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "queued")
     }
 
     /// The system revoked the background task mid-job: keep the row as FAILED
@@ -905,18 +943,32 @@ final class JobCoordinator: ObservableObject {
     @Published var bgPaused = false
 
     /// USER pause (queue status bar) — distinct from the SYSTEM pause above:
-    /// the user asked the queue to hold. Nothing new starts while set; the
-    /// job already encoding is allowed to finish (cancelling it to pause
-    /// would throw away real work). Survives scene-phase transitions until
-    /// the user taps resume.
+    /// the user asked the queue to hold. NOTHING keeps running: the in-flight
+    /// encode is cancelled and its job returned to the queue (markPaused),
+    /// and nothing new starts while set. Survives scene-phase transitions
+    /// until the user taps resume.
     @Published private(set) var userPaused = false
 
-    /// Queue-level Pause: stop STARTING new jobs. In-flight wording on the
-    /// BG subtitle so an active background continuation also reflects it.
+    /// Queue-level Pause: stop the queue WHERE IT STANDS. The in-flight
+    /// encode is CANCELLED and its job returned to the queue (partial output
+    /// discarded — the engine cannot resume a half-written file — so Resume
+    /// restarts it fresh), and nothing new starts until Resume.
+    /// (The old semantics — “let the in-flight job finish” — read on device
+    /// as “the button does nothing”: the progress bar kept climbing straight
+    /// through the tap. Device feedback, v1.7.1.)
     func pauseQueue() {
         userPaused = true
+        for job in jobs where [.analyzing, .compressing, .verifying].contains(job.state) {
+            pauseRequested.insert(job.id)
+            cancelFlags[job.id]?.cancel()
+        }
         bgSubtitle("Paused — resume to continue the queue")
     }
+
+    /// Jobs whose engine was stopped by a user PAUSE (distinct from a user
+    /// CANCEL, which removes the row, and a system interruption, which keeps
+    /// a retryable failed row): they go BACK TO THE QUEUE.
+    private var pauseRequested = Set<UUID>()
 
     func resumeQueue() {
         userPaused = false

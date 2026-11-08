@@ -827,8 +827,9 @@ private struct ImportStatusCard: View {
 
 /// QUEUE-LEVEL status bar: one progress bar over the whole ACTIVE queue
 /// (equal share per job), a "what's happening / how much is left" readout,
-/// and the user Pause control — while paused nothing NEW starts; the job
-/// already encoding is allowed to finish (cancelling it would waste work).
+/// and the user Pause control. Pause stops the queue WHERE IT STANDS: the
+/// in-flight encode is cancelled and returned to the queue (a fresh run on
+/// Resume); nothing new starts until then.
 private struct QueueStatusBar: View {
     @EnvironmentObject private var coordinator: JobCoordinator
 
@@ -858,7 +859,9 @@ private struct QueueStatusBar: View {
                     Text(headline)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text("Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
+                    Text(coordinator.userPaused
+                         ? "Queue \(Int((fraction * 100).rounded()))% · paused"
+                         : "Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -871,6 +874,9 @@ private struct QueueStatusBar: View {
         // the List now (not a List row), so it draws its own surface again.
         .background(Color.appCard,
                     in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
+        // Immediate acknowledgment that the tap registered — before the
+        // encode teardown visibly stops the progress bar.
+        .sensoryFeedback(.selection, trigger: coordinator.userPaused)
     }
 }
 

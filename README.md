@@ -103,6 +103,12 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.7.2 — build 23 (Pause actually stops the encode)
+
+- Pause now stops the queue WHERE IT STANDS: the in-flight encode is cancelled and its job returns to the queue (partial output discarded — VideoToolbox cannot resume a half-written file), so Resume restarts it fresh. The old semantics ("let the in-flight job finish") read on device as a broken button: the progress bar kept climbing through the tap.
+- A pause that lands during (uncancellable) verification keeps the finished result instead of discarding it; pause-aborts surfacing through engine teardown error paths re-queue instead of failing.
+- Queue bar: paused state reads "Queue N% · paused" with a selection haptic on the tap, so the button's registration is immediately visible and tangible.
+
 ### v1.7.1 — build 22 (interaction fixes for the v1.7.0 List conversion)
 
 Three device-reported regressions, all traced to controls living inside List rows:
