@@ -103,6 +103,16 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.7.4 — build 25 (Pause removed · separated cards back)
+
+**Pause — removed.** The user-facing Pause feature is gone, deliberately: across v1.7.0–v1.7.3 it never behaved dependably on device (tap delivery and stop-the-encode semantics never lined up for real use), and stopping work is fully covered by per-row Cancel (with confirmation), the Queue menu's Cancel Active/All Jobs, and the ⋯ menu. The queue status bar remains as a passive live readout (what's encoding, overall %, jobs in flight). The SYSTEM pause (iOS revoking the background task) is untouched — that one is essential and machine-driven.
+
+**Queue screen — the v1.6.3 presentation is back, by request:**
+- Separated rounded cards on the AMOLED canvas again (not grouped list rows), card-era section headers (tinted icon + count capsule), queue bar and import card as cards.
+- The big Photos / Files buttons in the empty state sit SIDE BY SIDE again (custom layout, not ContentUnavailableView, whose actions stack).
+- Swipe-to-delete is the proven custom modifier from v1.6.3; the destructive confirmation still presents from the root level (pendingDeleteID/pendingCancelID) so the fat-finger step can never be skipped.
+- Kept: every engine fix (atomic Shortcut handoff, single BG driver, fps re-anchor, 48 kHz audio fallback, Application-Support imports, privacy snapshot), the verified record deletion, and the root-level destructive confirmations.
+
 ### v1.7.3 — build 24 (swipe/delete reliability + crash fix)
 
 Three device-reported issues around the new swipe-to-delete, all rooted in presenting destructive confirmations FROM INSIDE List rows:

@@ -459,99 +459,81 @@ struct RootView: View {
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
     }
 
-    /// The queue screen — ONE List container for EVERY state (empty or
-    /// not): the previous List↔ScrollView branch flip ran exactly on the
-    /// delete→add path (delete the last row → ScrollView, add → List
-    /// again) and is a container transition SwiftUI animates poorly — a
-    /// device crash was reported right there. When the queue is empty the
-    /// List simply has no sections, and the empty state rides ABOVE it as
-    /// an overlay (NOT a List row: ContentUnavailableView's layout
-    /// collapses and its bordered action buttons don't tap reliably inside
-    /// rows on iPadOS 26 — the v1.7.1 fix, kept).
+    /// The queue screen — SEPARATED CARDS (the v1.6.3 presentation,
+    /// restored by request): each job is its own rounded card on the AMOLED
+    /// canvas, the queue bar and import card are cards too, section headers
+    /// are the card-era icon+count style, and swipe-to-delete is the proven
+    /// custom modifier (native swipeActions only exist in List). All engine
+    /// and persistence fixes stay — only the container changed.
     private var queueList: some View {
-        List {
-            if let step = importStep {
-                Section {
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                if let step = importStep {
                     ImportStatusCard(step: step)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                        .padding(.horizontal)
                 }
-            }
 
-            if StorageFallback.inMemoryOnly {
-                Section {
+                if StorageFallback.inMemoryOnly {
                     storageFallbackBanner
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                        .padding(.horizontal)
                 }
-            }
 
-            let active = coordinator.activeJobs
-            let finished = coordinator.finishedJobs
-
-            if !active.isEmpty {
-                Section {
-                    ForEach(active) { job in
-                        JobRowView(job: job)
-                            .listRowBackground(Color.appCard)
-                    }
-                } header: {
-                    // List headers are auto-styled (footnote, caps, secondary).
-                    Text("In progress · \(active.count)")
-                }
-            }
-
-            if !finished.isEmpty {
-                Section {
-                    ForEach(finished) { job in
-                        JobRowView(job: job)
-                            .listRowBackground(Color.appCard)
-                    }
-                } header: {
-                    Text("History · \(finished.count)")
-                } footer: {
-                    // Storage transparency lives in the section footer — the
-                    // native place for exactly this kind of policy note.
-                    StorageFooter()
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        // Same screen-level token as every other screen (Color.appScreen) —
-        // fullscreen, Split View and Stage Manager all show the same canvas.
-        .scrollContentBackground(.hidden)
-        .background(Color.appScreen)
-        // EMPTY STATE overlay: fills the blank zero-section canvas and owns
-        // every tap there (the List has no rows to compete with).
-        .overlay {
-            if coordinator.jobs.isEmpty {
-                VStack(spacing: 16) {
-                    if let step = importStep {
-                        ImportStatusCard(step: step)
-                            .padding(.horizontal)
-                    }
-                    if StorageFallback.inMemoryOnly {
-                        storageFallbackBanner
-                            .padding(.horizontal)
-                    }
+                if coordinator.jobs.isEmpty {
                     EmptyState(photoItems: $photoItems,
                                onFiles: { showFiles = true })
+                        .padding(.top, 40)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.appScreen)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // LIVE QUEUE BAR — pinned OUTSIDE the List (see queueList docs):
-            // its Pause control is a plain SwiftUI tap target here, and the
-            // bar stays on screen no matter how far history is scrolled.
-            if !coordinator.activeJobs.isEmpty {
-                QueueStatusBar()
-                    .padding(.horizontal)
+
+                let active = coordinator.activeJobs
+                let finished = coordinator.finishedJobs
+
+                if !active.isEmpty {
+                    QueueStatusBar()
+                        .padding(.horizontal)
+                    sectionHeader("In progress", icon: "hourglass", count: active.count)
+                    ForEach(active) { job in
+                        JobRowView(job: job)
+                            .padding(.horizontal)
+                    }
+                }
+
+                if !finished.isEmpty {
+                    sectionHeader("History", icon: "clock", count: finished.count)
+                    ForEach(finished) { job in
+                        JobRowView(job: job)
+                            .padding(.horizontal)
+                    }
+                }
+
+                StorageFooter()
                     .padding(.top, 6)
-                    .padding(.bottom, 10)
             }
+            .padding(.vertical)
         }
+        // TRUE black in dark mode on every screen-level container (see
+        // Color.appScreen) — fullscreen, Split View and Stage Manager all
+        // show the same AMOLED-black canvas; light mode is unchanged.
+        .background(Color.appScreen)
+    }
+
+    /// Card-era section header: tinted icon + headline + count capsule.
+    private func sectionHeader(_ title: String, icon: String, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.footnote.bold())
+                .foregroundStyle(.tint)
+            Text(title)
+                .font(.headline)
+            Spacer()
+            Text("\(count)")
+                .font(.caption.bold())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.tint.opacity(0.15), in: Capsule())
+                .foregroundStyle(.tint)
+        }
+        .padding(.horizontal)
+        .padding(.top, 6)
     }
 
     // MARK: body parts — extracted from `body` so the total expression stays
@@ -777,9 +759,6 @@ extension JobCoordinator {
     /// One-line "what's happening" readout for the queue.
     var queueHeadline: String {
         let active = activeJobs
-        if userPaused {
-            return "Paused — \(active.count) job\(active.count == 1 ? "" : "s") waiting"
-        }
         let encoding = active.first { $0.state == .compressing }
         if let encoding, !encoding.sourceName.isEmpty {
             let queued = active.filter { $0.state == .queued }.count
@@ -842,10 +821,10 @@ private struct ImportStatusCard: View {
 }
 
 /// QUEUE-LEVEL status bar: one progress bar over the whole ACTIVE queue
-/// (equal share per job), a "what's happening / how much is left" readout,
-/// and the user Pause control. Pause stops the queue WHERE IT STANDS: the
-/// in-flight encode is cancelled and returned to the queue (a fresh run on
-/// Resume); nothing new starts until then.
+/// (equal share per job) and a "what's happening / how much is left"
+/// readout — a passive live status card. (It carried a user Pause control
+/// until v1.7.4; the feature was removed — it never behaved dependably on
+/// device, and per-row Cancel / the Queue menu cover stopping work.)
 private struct QueueStatusBar: View {
     @EnvironmentObject private var coordinator: JobCoordinator
 
@@ -858,26 +837,14 @@ private struct QueueStatusBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Button {
-                    if coordinator.userPaused {
-                        coordinator.resumeQueue()
-                    } else {
-                        coordinator.pauseQueue()
-                    }
-                } label: {
-                    Label(coordinator.userPaused ? "Resume" : "Pause",
-                          systemImage: coordinator.userPaused ? "play.fill" : "pause.fill")
-                        .font(.callout.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel(coordinator.userPaused ? "Resume queue" : "Pause queue")
+                Image(systemName: "gauge.with.needle")
+                    .font(.callout)
+                    .foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(headline)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text(coordinator.userPaused
-                         ? "Queue \(Int((fraction * 100).rounded()))% · paused"
-                         : "Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
+                    Text("Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -885,14 +852,9 @@ private struct QueueStatusBar: View {
             }
             ProgressView(value: fraction)
         }
-        .padding(12)
-        // Card chrome is back: the bar is a FLOATING pinned element above
-        // the List now (not a List row), so it draws its own surface again.
+        .padding(14)
         .background(Color.appCard,
                     in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
-        // Immediate acknowledgment that the tap registered — before the
-        // encode teardown visibly stops the progress bar.
-        .sensoryFeedback(.selection, trigger: coordinator.userPaused)
     }
 }
 
@@ -1029,37 +991,44 @@ private struct EmptyState: View {
     let onFiles: () -> Void
 
     var body: some View {
-        // NATIVE empty state (iOS 17+ ContentUnavailableView): the exact
-        // layout and typography Apple uses in Files / TV / Podcasts — big
-        // tertiary glyph, title, caption — with real entry-point actions.
-        VStack(spacing: 16) {
-            ContentUnavailableView {
-                Label("No compressions yet", systemImage: "video.badge.ellipsis")
-            } description: {
-                Text("Pick one video — or a whole batch — from your library or the Files app to start.")
-            } actions: {
-                // .current encoding: deliver the ORIGINAL pixels — the default
-                // may transcode an HDR clip to SDR before the color-safe engine
-                // ever sees it.
+        VStack(spacing: 14) {
+            Image(systemName: "video.badge.ellipsis")
+                .font(.system(size: 52))
+                .foregroundStyle(.tertiary)
+            Text("No compressions yet")
+                .font(.title3.weight(.semibold))
+            Text("Pick one video — or a whole batch — from your library or the Files app to start.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            // The two big entry points SIDE BY SIDE (explicit request) —
+            // real actions, not just directions.
+            HStack(spacing: 12) {
+                // .current encoding: deliver the ORIGINAL pixels — the
+                // default may transcode an HDR clip to SDR before the
+                // color-safe engine ever sees it.
                 PhotosPicker(selection: $photoItems, matching: .videos,
                              preferredItemEncoding: .current) {
                     Label("Photos", systemImage: "photo.on.rectangle.angled")
+                        .font(.callout.weight(.semibold))
+                        .frame(minWidth: 110)
+                        .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
 
                 Button(action: onFiles) {
                     Label("Files", systemImage: "folder")
+                        .font(.callout.weight(.semibold))
+                        .frame(minWidth: 110)
+                        .padding(.vertical, 12)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.large)
             }
 
             Text("Or drag & drop videos here from Files or Photos while in Split View.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .foregroundStyle(.tertiary)
         }
     }
 }

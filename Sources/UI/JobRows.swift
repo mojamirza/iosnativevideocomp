@@ -47,10 +47,16 @@ struct JobRowView: View {
     }
 
     var body: some View {
-        // The row is a NATIVE List row: swipe actions and the context menu
-        // come from the framework (the hand-rolled swipe-to-delete modifier
-        // is gone). Batch-selection taps still toggle the row.
-        rowBody
+        // Finished rows get the PROVEN custom swipe-to-delete (the queue is
+        // a ScrollView of separated cards again — native swipeActions only
+        // exist in List). The destructive intent ARMS the root-level
+        // confirmation (pendingDeleteID); it never deletes outright.
+        if [.done, .failed, .cancelled].contains(job.state), !inSelectionMode {
+            rowBody
+                .modifier(SwipeToDeleteModifier { coordinator.requestDelete(jobID: job.id) })
+        } else {
+            rowBody
+        }
     }
 
     /// The row WITHOUT its modifier chain — kept a separate expression so the
@@ -103,13 +109,14 @@ struct JobRowView: View {
                 reportRow
             }
         }
-        .padding(.vertical, 4)
+        .padding(14)
+        .background(Color.appCard,
+                    in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
         // SELECTION TAP (selection mode only): a permanent contentShape +
-        // tap gesture on row content interferes with the List's native
-        // swipe gestures (device report: swiped rows behaved "weird"), so
-        // the full-row hit shape exists ONLY while selection mode is on —
-        // where swipes are disabled anyway. Normal-mode rows keep their
-        // swipe/column gestures untouched. See SelectionTapModifier below.
+        // tap gesture on row content can interfere with swipe/scroll
+        // gestures, so the full-row hit shape exists ONLY while selection
+        // mode is on. The card background makes the whole card hit-testable
+        // otherwise. See SelectionTapModifier below.
         .modifier(SelectionTapModifier(active: inSelectionMode) {
             coordinator.toggleSelection(job.id)
         })
@@ -124,47 +131,10 @@ struct JobRowView: View {
 
     private var rowBody: some View {
         baseCard
-            // NATIVE swipe actions (List rows) — trailing: Delete on finished
-            // rows, Stop on active ones; leading: Retry where it applies.
-            // Hidden during batch selection (taps toggle selection there).
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                if !inSelectionMode {
-                    if [.done, .failed, .cancelled].contains(job.state) {
-                        Button(role: .destructive) {
-                            // ARM ONLY — the confirmation dialog presents
-                            // from the ROOT LIST (RootView), not from this
-                            // mid-swipe row: in-row dialogs are not reliably
-                            // anchored on iPadOS 26 and silently skipped
-                            // the fat-finger step (device report).
-                            coordinator.requestDelete(jobID: job.id)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    } else {
-                        Button(role: .destructive) {
-                            coordinator.requestCancel(jobID: job.id)
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                    }
-                }
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                if !inSelectionMode,
-                   [.failed, .cancelled].contains(job.state),
-                   sourceExists {
-                    Button {
-                        coordinator.retry(jobID: job.id)
-                    } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                    }
-                    .tint(.accentColor)
-                }
-            }
-            // Fat-finger confirmations for destructive actions present from
-            // the ROOT LIST (RootView, pendingDeleteID/pendingCancelID) —
-            // NOT from the row: in-row dialogs were silently skipped on
-            // device. Nothing dialog-related is attached here anymore.
+            // Destructive confirmations present from the ROOT LIST
+            // (RootView, pendingDeleteID/pendingCancelID) — NOT from the
+            // row: destructive dialogs are always armed via requestDelete /
+            // requestCancel, never executed directly from a row gesture.
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
@@ -1093,3 +1063,100 @@ private struct SelectionTapModifier: ViewModifier {
         }
     }
 }
+
+/// Swipe-to-delete for finished rows: dragging the row left reveals a red
+/// Delete button behind its trailing edge. Only horizontal-dominant drags
+/// move the row, so vertical scrolling of the list keeps working.
+private struct SwipeToDeleteModifier: ViewModifier {
+    let onDelete: () -> Void
+
+    @State private var offsetX: CGFloat = 0
+    @State private var dragStart: CGFloat?
+
+    private let revealWidth: CGFloat = 92
+
+    /// Respect Reduce Motion: snap without springing.
+    private var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
+
+    /// Whether the delete button is fully revealed (row at max offset).
+    private var revealed: Bool { offsetX <= -revealWidth + 2 }
+
+    func body(content: Content) -> some View {
+        content
+            // Offset FIRST: the transform wraps only the card. Then the
+            // overlay is layered on OUTSIDE that transform, so it stays
+            // pinned at the row's un-shifted trailing edge while the card
+            // slides left to reveal it. The previous counter-offset-
+            // background approach made the revealed button drift/glide
+            // instead of appearing crisply in place.
+            .offset(x: offsetX)
+            .overlay(alignment: .trailing) {
+                deleteButton
+                    .opacity(revealed ? 1 : 0)
+                    .allowsHitTesting(revealed)
+            }
+            .simultaneousGesture(dragGesture)
+    }
+
+    private var deleteButton: some View {
+        Button {
+            // Snap the row shut while the confirmation dialog appears.
+            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) {
+                offsetX = 0
+            }
+            onDelete()
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "trash.fill").font(.body)
+                Text("Delete").font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .frame(width: revealWidth - 14)
+            .frame(maxHeight: .infinity)
+            .background(Color.red, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 7)
+        .padding(.vertical, 7)
+    }
+
+    private var dragGesture: some Gesture {
+        // Short arming distance — a long one made the first stretch of the
+        // drag feel dead, which reads as "laggy" even when tracking cleanly.
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                // Anchor the drag start on the FIRST change regardless of
+                // direction — anchoring late (only once horizontal-dominant)
+                // made the row jump instead of tracking the finger.
+                if dragStart == nil { dragStart = offsetX }
+                // Horizontal-dominant drags only — vertical ones belong to
+                // the list's ScrollView.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let raw = dragStart! + value.translation.width
+                // Rubber-band past the reveal point (soft clamp) and stop
+                // hard at zero; the row moves with the finger, unanimated.
+                let target: CGFloat
+                if raw < -revealWidth {
+                    target = -revealWidth + (raw + revealWidth) * 0.15
+                } else {
+                    target = min(0, raw)
+                }
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    offsetX = max(-revealWidth - 24, target)
+                }
+            }
+            .onEnded { value in
+                defer { dragStart = nil }
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                // A quick flick opens fully even on a short drag; a slow
+                // drag needs to pass half the reveal width.
+                let flick = value.velocity.width < -900
+                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.9)) {
+                    offsetX = (flick || offsetX < -revealWidth / 2) ? -revealWidth : 0
+                }
+            }
+    }
+}
+

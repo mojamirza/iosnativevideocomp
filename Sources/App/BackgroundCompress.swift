@@ -132,17 +132,10 @@ enum BackgroundCompress {
                 // start). While it's alive it owns the work — wait for it to
                 // finish, then sweep anything still queued. The task staying
                 // ongoing is what keeps the app unsuspended mid-encode.
-                // (A USER pause must NOT break here: the encode in flight
-                // still needs this task's protection — completing it would
-                // let iOS suspend the process mid-encode with no lifeline.)
                 if coordinator.foregroundWorkerActive {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
-                // USER pause with nothing in flight: nothing to protect and
-                // nothing new may start — release the task. resumeQueue()
-                // re-drives the queue (and a fresh submit covers backgrounding).
-                if coordinator.userPaused { break }
                 // Same pick rule as the in-app worker: the array is newest-
                 // first, so the LAST queued entry is the OLDEST pick (FIFO
                 // by selection order).

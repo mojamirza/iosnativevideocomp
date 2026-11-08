@@ -212,9 +212,8 @@ final class JobCoordinator: ObservableObject {
     /// The in-app worker — always the foreground executor (instant start).
     private func startForegroundWorker() {
         // A background-task revocation pauses the queue until the app is
-        // active again (RootView lifts the pause on scenePhase == .active);
-        // a USER pause (queue status bar) holds until the user resumes.
-        guard !bgPaused, !userPaused else { return }
+        // active again (RootView lifts the pause on scenePhase == .active).
+        guard !bgPaused else { return }
         if #available(iOS 26.0, *) {
             // The BG driver owns the queue while its task is running — it
             // picks up new jobs itself. (Prevents two concurrent encodes.)
@@ -233,9 +232,7 @@ final class JobCoordinator: ObservableObject {
                 guard let self else { break }
                 // A background-task revocation pauses the queue: starting
                 // the next job while iOS suspends the process just burns it.
-                // A USER pause holds here too — the already-running job
-                // finishes (Run below), nothing new starts.
-                if self.bgPaused || self.userPaused { break }
+                if self.bgPaused { break }
                 guard
                       // PICK ORDER: the array is newest-first (enqueue inserts
                       // at 0 for the history display), so the LAST queued
@@ -536,14 +533,10 @@ final class JobCoordinator: ObservableObject {
                 }
                 // A cancel that landed during verification: honour it — remove
                 // the row entirely, unless iOS interrupted us (then keep a
-                // retryable failed row). A PAUSE that landed during
-                // verification keeps the completed result — the job is
-                // finished; the pause takes effect for whatever comes next.
+                // retryable failed row).
                 if flags.cancelled {
                     if systemInterrupted.contains(jobID) {
                         markInterrupted(jobID: jobID, output: promoted)
-                    } else if pauseRequested.contains(jobID) {
-                        pauseRequested.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
                     }
@@ -570,11 +563,6 @@ final class JobCoordinator: ObservableObject {
                 if flags.cancelled {
                     if systemInterrupted.contains(jobID) {
                         markInterrupted(jobID: jobID, output: output)
-                    } else if pauseRequested.contains(jobID) {
-                        // Same rule as the success path: the encode was real
-                        // work that finished during the pause window — keep
-                        // the (failed-verdict) row for its Keep-anyway path.
-                        pauseRequested.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
                     }
@@ -590,20 +578,12 @@ final class JobCoordinator: ObservableObject {
         } catch CompressionError.cancelled {
             handleCancelled(jobID: jobID, output: output)
         } catch {
-            if pauseRequested.contains(jobID) {
-                // The engine aborted because of a PAUSE, surfacing through a
-                // non-cancel error path (some teardowns report as writer/
-                // reader failures) — re-queue, don't fail. A REAL failure
-                // would recur on the resumed run and fail honestly then.
-                markPaused(jobID: jobID, output: output)
-            } else {
-                setJob(jobID) {
-                    $0.state = .failed
-                    $0.errorMessage = error.localizedDescription
-                }
-                saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
-                           errorText: error.localizedDescription)
+            setJob(jobID) {
+                $0.state = .failed
+                $0.errorMessage = error.localizedDescription
             }
+            saveRecord(jobID: jobID, outputName: nil, report: nil, state: "failed",
+                       errorText: error.localizedDescription)
         }
 
         cancelFlags.removeValue(forKey: jobID)
@@ -612,35 +592,14 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// A user cancel removes everything; a system interruption (background
-    /// task revoked) keeps a retryable failed row; a user PAUSE returns the
-    /// job to the queue for a fresh run on Resume.
+    /// task revoked) keeps a retryable failed row instead.
     private func handleCancelled(jobID: UUID, output: URL) {
         if systemInterrupted.contains(jobID) {
             markInterrupted(jobID: jobID, output: output)
-        } else if pauseRequested.contains(jobID) {
-            markPaused(jobID: jobID, output: output)
         } else {
             // Cancelled jobs leave no trace: no row, no record, no partial file.
             removeRow(jobID: jobID)
         }
-    }
-
-    /// A user PAUSE aborted this job's engine: back to the queue — the row
-    /// and its source import SURVIVE (unlike a cancel), progress resets, and
-    /// Resume re-runs the encode from the start.
-    private func markPaused(jobID: UUID, output: URL) {
-        pauseRequested.remove(jobID)
-        verifyWatchdogs[jobID]?.cancel()
-        verifyWatchdogs[jobID] = nil
-        cancelFlags.removeValue(forKey: jobID)
-        setJob(jobID) {
-            $0.state = .queued
-            $0.progress = 0
-            $0.startedAt = nil
-            $0.errorMessage = nil
-        }
-        try? FileManager.default.removeItem(at: output)
-        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "queued")
     }
 
     /// The system revoked the background task mid-job: keep the row as FAILED
@@ -963,43 +922,13 @@ final class JobCoordinator: ObservableObject {
 
     // MARK: Background task (iOS 26+) support
 
-    /// Set when iOS revokes the background task: no new jobs start until the
-    /// app is active again — each immediate start would just fail while iOS
-    /// suspends the process. RootView resumes on scenePhase == .active.
+    /// Set when iOS revokes the background task (SYSTEM pause only — the
+    /// USER-facing Pause feature was REMOVED in v1.7.4: it never behaved
+    /// dependably on device and per-row Cancel / the Queue menu cover
+    /// stopping work): no new jobs start until the app is active again —
+    /// each immediate start would just fail while iOS suspends the process.
+    /// RootView resumes on scenePhase == .active.
     @Published var bgPaused = false
-
-    /// USER pause (queue status bar) — distinct from the SYSTEM pause above:
-    /// the user asked the queue to hold. NOTHING keeps running: the in-flight
-    /// encode is cancelled and its job returned to the queue (markPaused),
-    /// and nothing new starts while set. Survives scene-phase transitions
-    /// until the user taps resume.
-    @Published private(set) var userPaused = false
-
-    /// Queue-level Pause: stop the queue WHERE IT STANDS. The in-flight
-    /// encode is CANCELLED and its job returned to the queue (partial output
-    /// discarded — the engine cannot resume a half-written file — so Resume
-    /// restarts it fresh), and nothing new starts until Resume.
-    /// (The old semantics — “let the in-flight job finish” — read on device
-    /// as “the button does nothing”: the progress bar kept climbing straight
-    /// through the tap. Device feedback, v1.7.1.)
-    func pauseQueue() {
-        userPaused = true
-        for job in jobs where [.analyzing, .compressing, .verifying].contains(job.state) {
-            pauseRequested.insert(job.id)
-            cancelFlags[job.id]?.cancel()
-        }
-        bgSubtitle("Paused — resume to continue the queue")
-    }
-
-    /// Jobs whose engine was stopped by a user PAUSE (distinct from a user
-    /// CANCEL, which removes the row, and a system interruption, which keeps
-    /// a retryable failed row): they go BACK TO THE QUEUE.
-    private var pauseRequested = Set<UUID>()
-
-    func resumeQueue() {
-        userPaused = false
-        runQueueIfNeeded()
-    }
 
     private var verifyWatchdogs: [UUID: Task<Void, Never>] = [:]
 
