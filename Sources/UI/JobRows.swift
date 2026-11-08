@@ -103,7 +103,10 @@ struct JobRowView: View {
                 }
             }
 
-            if job.state == .done && !inSelectionMode {
+            if job.state == .done && !inSelectionMode,
+               // Legacy records can carry no report — showing the size line
+               // would render "0 bytes → 0 bytes −0%" as if it were real.
+               job.report != nil {
                 reportRow
             }
         }

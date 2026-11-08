@@ -532,6 +532,10 @@ struct PresetManagerSheet: View {
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     @State private var editingPreset: Preset?
     @State private var creatingNew = false
+    // Fat-finger protection: the menu's destructive action only ARMS the
+    // delete — the row leaves the list after the dialog confirm.
+    @State private var pendingDelete: Preset?
+    @State private var confirmingDelete = false
     // Same keys PrivacyScrub reads — these toggles stay in sync with the
     // About & Settings sheet, which binds the identical keys.
     @AppStorage(PrivacyScrub.keepDateKey) private var keepCreationDate = true
@@ -587,6 +591,18 @@ struct PresetManagerSheet: View {
             .sheet(item: $editingPreset) { preset in
                 PresetEditorView(existing: preset) { p in saved(p) }
             }
+            .confirmationDialog(
+                "Delete \"\(pendingDelete?.name ?? "")\"?",
+                isPresented: $confirmingDelete,
+                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let p = pendingDelete { delete(p) }
+                    pendingDelete = nil
+                }
+                Button("Keep", role: .cancel) { pendingDelete = nil }
+            } message: {
+                Text("The preset disappears from the setup flow. Jobs already recorded with it keep their recipe.")
+            }
         }
     }
 
@@ -619,7 +635,8 @@ struct PresetManagerSheet: View {
                 if custom {
                     Divider()
                     Button(role: .destructive) {
-                        delete(preset)
+                        pendingDelete = preset
+                        confirmingDelete = true
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }

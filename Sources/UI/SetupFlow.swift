@@ -31,7 +31,11 @@ struct SetupFlowView: View {
     @State private var rotation: Int = 0
     @State private var trimStart: Double = 0
     @State private var trimEnd: Double = 0
-    @State private var filmstrip: [UIImage] = []
+    // Each SLOT is always present after load (nil = that frame failed to
+    // grab): slot i must own exactly one eighth of the strip, otherwise a
+    // failed mid-frame shrinks every later frame's slot and the trim window
+    // no longer lines up with the times it represents.
+    @State private var filmstrip: [UIImage?] = []
     @State private var posterItem: PhotosPickerItem?
     @State private var posterData: Data?
     @State private var posterPreview: UIImage?
@@ -538,20 +542,23 @@ struct SetupFlowView: View {
     }
 
     /// 8 evenly spaced frames via AVAssetImageGenerator (keyframe-tolerant,
-    /// small). Failures just leave placeholders.
+    /// small). The result keeps ALL 8 SLOTS — a failed grab leaves that slot
+    /// nil (rendered as a placeholder tile): resizing the surviving frames
+    /// to fill the row would move every later frame off the time position
+    /// the trim window reads for it.
     private func loadFilmstrip(_ probe: ProbeResult, url: URL) async {
         let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 240, height: 240)
         gen.requestedTimeToleranceBefore = .positiveInfinity
         gen.requestedTimeToleranceAfter = .positiveInfinity
-        var imgs: [UIImage] = []
         let count = 8
+        var imgs: [UIImage?] = Array(repeating: nil, count: count)
         for i in 0..<count {
             let t = CMTime(seconds: probe.duration * (Double(i) + 0.5) / Double(count),
                            preferredTimescale: 600)
             if let (img, _) = try? await gen.image(at: t) {
-                imgs.append(UIImage(cgImage: img))
+                imgs[i] = UIImage(cgImage: img)
             }
         }
         filmstrip = imgs
@@ -963,7 +970,10 @@ struct SetupFlowView: View {
 /// whole window with its length preserved — the same interaction model as
 /// the Photos app trimmer. Replaces the old two-slider + nudge-button rows.
 private struct TrimFilmstripPicker: View {
-    let frames: [UIImage]
+    /// One entry per requested SLOT (nil = that frame failed to grab and
+    /// renders as a placeholder tile) — slot width stays `width / 8` no
+    /// matter what, so the strip always matches the time grid.
+    let frames: [UIImage?]
     @Binding var start: Double
     @Binding var end: Double
     let duration: Double
@@ -1035,11 +1045,17 @@ private struct TrimFilmstripPicker: View {
         } else {
             HStack(spacing: 0) {
                 ForEach(frames.indices, id: \.self) { i in
-                    Image(uiImage: frames[i])
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: width / CGFloat(frames.count))
-                        .clipped()
+                    Group {
+                        if let img = frames[i] {
+                            Image(uiImage: img)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } else {
+                            Rectangle().fill(.quaternary)
+                        }
+                    }
+                    .frame(width: width / CGFloat(max(frames.count, 1)))
+                    .clipped()
                 }
             }
             .frame(width: width)
@@ -1202,7 +1218,9 @@ private struct PresetRow: View {
                 }
             }
             .padding(12)
-            .background(isSelected ? Color.blue.opacity(0.08) : Color.appCard,
+            // Selected follows the APP TINT (accent) — a hard .blue ignored
+            // the tint each preset row's chips/badges already use.
+            .background(isSelected ? Color.accentColor.opacity(0.10) : Color.appCard,
                         in: RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
