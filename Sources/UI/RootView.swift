@@ -306,40 +306,36 @@ struct RootView: View {
             } message: {
                 Text(coordinator.purgedRowsNotice ?? "")
             }
-            // Fat-finger protection for the batch delete.
-            .confirmationDialog(
-                "Delete \(coordinator.selectedIDs.count) selected items?",
-                isPresented: $confirmingBatchDelete,
-                titleVisibility: .visible) {
+            // Fat-finger protection for the batch delete. ALERT (not a
+            // confirmationDialog): dialogs anchor to a source view — from
+            // the whole list that anchor reads as detached on iPad; alerts
+            // center themselves and need no anchor.
+            .alert("Delete \(coordinator.selectedIDs.count) selected items?",
+                   isPresented: $confirmingBatchDelete) {
                 Button("Delete", role: .destructive) { coordinator.deleteSelected() }
                 Button("Keep", role: .cancel) { }
             } message: {
                 Text("The selected videos and their history entries will be removed. This cannot be undone.")
             }
             // SINGLE-ROW DELETE confirmation — presented HERE (list level),
-            // not in the row: dialogs from inside List rows — worst of all
-            // from a mid-swipe row — silently failed to anchor on iPadOS 26
-            // and the delete appeared to skip confirmation. Swipe actions,
-            // action buttons and ⋯ menus all arm pendingDeleteID.
-            .confirmationDialog(
-                "Delete this item?",
-                isPresented: Binding(
-                    get: { coordinator.pendingDeleteID != nil },
-                    set: { if !$0 { coordinator.pendingDeleteID = nil } }),
-                titleVisibility: .visible) {
+            // not in the row: destructive prompts from inside rows silently
+            // failed on iPadOS 26 and the delete appeared to skip
+            // confirmation. Swipe, buttons and ⋯ menus all arm pendingDeleteID.
+            .alert("Delete this item?",
+                   isPresented: Binding(
+                       get: { coordinator.pendingDeleteID != nil },
+                       set: { if !$0 { coordinator.pendingDeleteID = nil } })) {
                 Button("Delete", role: .destructive) { coordinator.confirmPendingDelete() }
                 Button("Keep", role: .cancel) { }
             } message: {
                 Text("The compressed video and its history entry will be removed. This cannot be undone.")
             }
-            // SINGLE-ROW CANCEL/STOP confirmation — same root-level anchor.
-            .confirmationDialog(
-                coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
-                    ? "Remove from queue?" : "Stop this compression?",
-                isPresented: Binding(
-                    get: { coordinator.pendingCancelID != nil },
-                    set: { if !$0 { coordinator.pendingCancelID = nil } }),
-                titleVisibility: .visible) {
+            // SINGLE-ROW CANCEL/STOP confirmation — same root-level alert.
+            .alert(coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
+                       ? "Remove from queue?" : "Stop this compression?",
+                   isPresented: Binding(
+                       get: { coordinator.pendingCancelID != nil },
+                       set: { if !$0 { coordinator.pendingCancelID = nil } })) {
                 Button(coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
                        ? "Remove from queue" : "Stop & discard",
                        role: .destructive) { coordinator.confirmPendingCancel() }
@@ -350,10 +346,8 @@ struct RootView: View {
                      : "Encoding progress will be lost and the partial file deleted.")
             }
             // Fat-finger protection for Clear Finished (menu bar).
-            .confirmationDialog(
-                "Delete all finished rows?",
-                isPresented: $confirmingClearFinished,
-                titleVisibility: .visible) {
+            .alert("Delete all finished rows?",
+                   isPresented: $confirmingClearFinished) {
                 Button("Delete \(coordinator.jobs.filter { [.done, .failed, .cancelled].contains($0.state) }.count) finished items", role: .destructive) {
                     coordinator.clearFinished()
                 }
@@ -499,6 +493,11 @@ struct RootView: View {
 
                 if !finished.isEmpty {
                     sectionHeader("History", icon: "clock", count: finished.count)
+                    // HERO STAT: the app's headline number lived only in the
+                    // sidebar — invisible on compact widths. One card at the
+                    // top of History carries it on the main screen.
+                    HistoryHeroCard()
+                        .padding(.horizontal)
                     ForEach(finished) { job in
                         JobRowView(job: job)
                             .padding(.horizontal)
@@ -535,6 +534,37 @@ struct RootView: View {
         .padding(.horizontal)
         .padding(.top, 6)
     }
+
+    /// HERO STAT — “Saved 4.2 GB” on the MAIN screen. Same source of truth
+    /// as the sidebar card (LifetimeStats over the done records); hidden
+    /// entirely until there is something to show.
+private struct HistoryHeroCard: View {
+    @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
+    private var records: [JobRecord]
+
+    var body: some View {
+        let s = LifetimeStats.summarize(records)
+        if s.videos > 0, s.saved > 0 {
+            HStack(spacing: 10) {
+                Image(systemName: "leaf.fill")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
+                        .font(.headline)
+                    Text("Across \(s.videos) finished compression\(s.videos == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(14)
+            .background(Color.appCard,
+                        in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
 
     // MARK: body parts — extracted from `body` so the total expression stays
     // inside the type-checker's complexity budget (CI hit "unable to
@@ -646,7 +676,10 @@ struct RootView: View {
         for item in items {
             importStep = ImportStep(
                 total: items.count, done: i,
-                current: item.itemIdentifier?.description ?? "library video")
+                // Human-readable: the raw itemIdentifier (a UUID) said
+                // nothing. The FILES get date-stamped names too (see
+                // ImportedVideo) — this is the per-file progress line.
+                current: "Video \(i + 1) of \(items.count)")
             do {
                 let url = try await ImportHelpers.copyFromLibrary(item)
                 let thumb = await Thumbnails.make(url: url)
@@ -698,7 +731,14 @@ struct RootView: View {
     /// after a failed probe) would otherwise leak in Caches/Imports until
     /// the NEXT launch's sweep — multi-GB on large batches. Delete the
     /// leftovers now; enqueued jobs keep their copies (the queue needs them).
+    /// GUARD: a shell swap mid-setup (dragging the Split View divider across
+    /// the compact threshold) tears the two body branches — and the sheet
+    /// with them — down and rebuilds the other one. That fires onDismiss
+    /// WHILE showingSetup is still true, and deleting here would destroy
+    /// the copies of a setup that is about to re-present empty. The copies
+    /// then wait for the next real dismissal (or the launch sweep).
     private func setupSheetDismiss() {
+        guard !showingSetup else { return }
         let jobPaths = Set(coordinator.jobs.map {
             $0.sourceURL.standardizedFileURL.path
         })
@@ -947,7 +987,8 @@ private struct StorageFooter: View {
 /// The privacy toggles bind to the same UserDefaults keys PrivacyScrub
 /// reads, so they stay in sync with the preset manager's copies.
 private struct AboutSettingsSheet: View {
-    @AppStorage("privacy.keepCreationDate") private var keepCreationDate = true
+    // Same key PrivacyScrub reads (the literal string drifted once).
+    @AppStorage(PrivacyScrub.keepDateKey) private var keepCreationDate = true
     @AppStorage(PrivacyScrub.stripAllKey) private var stripAllMetadata = false
     @Environment(\.dismiss) private var dismiss
 
@@ -955,19 +996,32 @@ private struct AboutSettingsSheet: View {
         NavigationStack {
             Form {
                 Section("Privacy") {
+                    // Strip-all makes the date toggle inert (it overrides it)
+                    // — say so AND disable it instead of letting a toggle
+                    // silently do nothing.
                     Toggle("Keep creation date", isOn: $keepCreationDate)
+                        .disabled(stripAllMetadata)
+                        .listRowBackground(Color.appCard)
                     Toggle("Strip all metadata", isOn: $stripAllMetadata)
-                    Text("Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
+                        .listRowBackground(Color.appCard)
+                    Text(stripAllMetadata
+                         ? "Strip-all is on: every metadata item is removed — the keep-creation-date toggle is inert until you turn Strip-all off."
+                         : "Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .listRowBackground(Color.appCard)
                 }
                 Section("About") {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                        .listRowBackground(Color.appCard)
                     LabeledContent("Build", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—")
+                        .listRowBackground(Color.appCard)
                     LabeledContent("Engine", value: "VideoToolbox · H.264 / HEVC")
+                        .listRowBackground(Color.appCard)
                 }
                 Section("Project") {
                     Link("VidCompress on GitHub", destination: URL(string: "https://github.com/mojamirza/iosnativevideocomp")!)
+                        .listRowBackground(Color.appCard)
                 }
             }
             // Same screen-level token as every other screen (Color.appScreen).
@@ -1132,6 +1186,15 @@ enum ImportHelpers {
 private struct ImportedVideo: Transferable {
     let url: URL
 
+    /// Import-name stamp: “Video yyyy-MM-dd HH.mm.ss” (POSIX-locale, so the
+    /// shape is stable on every device/region).
+    static let nameFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "'Video 'yyyy-MM-dd HH.mm.ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { video in
             SentTransferredFile(video.url, allowAccessingOriginalFile: true)
@@ -1140,7 +1203,12 @@ private struct ImportedVideo: Transferable {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let ext = received.file.pathExtension
             let ext2 = ext.isEmpty ? "mov" : ext
-            let base = "IMG-\(UUID().uuidString)"
+            // HUMAN-READABLE import names: “Video 2026-11-08 14.32.10” —
+            // IMG-<UUID> made history rows and output files unreadable
+            // (IMG-8F3A…_high-quality-hevc.mp4). POSIX locale pins the
+            // format; the '.' separator keeps it filename-safe. The
+            // existing -1 collision loop covers same-second imports.
+            let base = Self.nameFormatter.string(from: Date())
             var dest = dir.appendingPathComponent("\(base).\(ext2)")
             var n = 1
             while FileManager.default.fileExists(atPath: dest.path) {

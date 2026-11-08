@@ -89,4 +89,17 @@ final class AppThemeTests: XCTestCase {
         assertColor(rgb(AppTheme.tileColor, style: .light, level: .elevated),
                     equals: (242 / 255, 242 / 255, 247 / 255))
     }
+
+    // MARK: brand accent
+
+    func testBrandAccentAssetExists() {
+        // The AccentColor asset IS the app tint — a missing colorset would
+        // silently fall back to system blue (the identity bug this fixes).
+        XCTAssertNotNil(UIColor(named: "AccentColor"))
+        let ui = UIColor(Color.appAccent)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        XCTAssertEqual(a, 1, accuracy: 0.002)
+        XCTAssertGreaterThan(b, 0.9, "the brand accent is a blue")
+    }
 }

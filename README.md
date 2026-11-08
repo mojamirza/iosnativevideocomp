@@ -103,6 +103,29 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.0 — build 26 (design direction round)
+
+**Identity & hierarchy**
+- Brand accent: a new AccentColor asset (matched to the app icon's blue, lighter in dark mode) re-tints `.tint` app-wide; AppTheme exposes `Color.appAccent`.
+- Hero stat: “Saved 4.2 GB” now lives at the top of History on the main screen (it was sidebar-only, invisible on compact widths).
+- Done rows lead with a green savings pill (−62% / +8% when the output grew); the struck-through size-first line is gone. The verdict icon is its own VoiceOver element (“Verified” / “Passed with warnings” / “Failed”), with labeled pill and sizes.
+- Narrow widths (1/3 Split View) drop the save/share buttons on done rows — save+share+⋯ starved the title next to a 74 pt thumbnail; the same actions live in the ⋯ and context menus.
+
+**Setup sheet**
+- Presets collapse to the selected one + “Change…” — the size estimate and Compress sit above the fold instead of behind 5+ preset rows; selecting a row collapses back.
+
+**Correctness fixes (from the review)**
+- Source/Output compare now TRANSLATES the playhead on trimmed jobs (output 0:00 == source startOffset + trimStart) — the toggle showed a different scene before.
+- ETA/speed restart on a target-size re-encode pass (startedAt resets), and the row says “Re-encoding to fit…” instead of silently running a second pass.
+- Resizing the window across the compact threshold mid-setup no longer destroys the import copies (the shell swap fired onDismiss while the sheet was still up).
+- One honest size delta everywhere: growth reads “+8%”, sub-percent deltas read “−<1%” — never a hidden or lying “−0%” (setup bar, batch line, editor estimate, done-row pill).
+- Trim strip: four named VoiceOver actions (Start earlier/later, End earlier/later) replace the single whole-window adjustable action.
+- Library imports get human names: “Video 2026-11-08 14.32.10” instead of IMG-<UUID>; the import card reads “Video 2 of 5”.
+- Shared duration formatter: h:mm:ss above an hour (was “125:30”) and the report's encode time no longer prints raw seconds.
+- Strip-all disables the inert “Keep creation date” toggle (settings + preset manager) and explains why; the settings sheet reads PrivacyScrub's key.
+- Preset manager, editor and settings sheets now sit on the pinned canvas with card-token rows (the manager was the one screen on system gray).
+- Root-level destructive confirmations are alerts (no iPad anchoring artifacts).
+
 ### v1.7.4 — build 25 (Pause removed · separated cards back)
 
 **Pause — removed.** The user-facing Pause feature is gone, deliberately: across v1.7.0–v1.7.3 it never behaved dependably on device (tap delivery and stop-the-encode semantics never lined up for real use), and stopping work is fully covered by per-row Cancel (with confirmation), the Queue menu's Cancel Active/All Jobs, and the ⋯ menu. The queue status bar remains as a passive live readout (what's encoding, overall %, jobs in flight). The SYSTEM pause (iOS revoking the background task) is untouched — that one is essential and machine-driven.

@@ -6,6 +6,7 @@ import AVKit
 /// with retry, and the finished row with the output integrity report.
 struct JobRowView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     let job: JobCoordinator.Job
     @State private var showingReport = false
@@ -199,7 +200,7 @@ struct JobRowView: View {
         case .compressing:
             ProgressView(value: job.progress) {
                 HStack {
-                    Text("Encoding… \(Int(job.progress * 100))%")
+                    Text("\(job.passLabel ?? "Encoding…") \(Int(job.progress * 100))%")
                         .font(.footnote)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -236,55 +237,75 @@ struct JobRowView: View {
         }
     }
 
-    /// Tappable in/out size line with the three-state verdict icon.
+    /// Tappable result line: the GREEN SAVINGS PILL LEADS (the row's
+    /// headline number), sizes follow as secondary text, and the verdict
+    /// icon is its own VoiceOver element. Replaces the struck-through,
+    /// size-first line.
     private var reportRow: some View {
         Button {
             showingReport = true
         } label: {
             HStack(spacing: 8) {
-                // Three-state verdict: warnings (timed-out checks,
-                // inconclusive decode) are NOT a green pass.
-                switch job.report?.status {
-                case .verified:
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                case .warnings:
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.orange)
-                case .failed:
-                    Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
-                default:
-                    EmptyView()
-                }
+                verdictIcon
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(verdictLabel)
+                savingsPill
                 inOutSizeTexts
             }
         }
         .buttonStyle(.plain)
     }
 
-    private var inOutSizeTexts: some View {
-        HStack(spacing: 8) {
-            let report = job.report
-            Text(ByteCountFormatter.string(fromByteCount: report?.inBytes ?? 0, countStyle: .file))
-                .strikethrough(!(report?.grew ?? false))
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Image(systemName: "arrow.right")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-            Text(ByteCountFormatter.string(fromByteCount: report?.outBytes ?? 0, countStyle: .file))
-                .font(.footnote.weight(.bold))
-            if report?.grew == true {
-                // Negative savings (output LARGER than source) must be
-                // visible, not rounded to 0%.
-                Text(String(format: "+%.0f%%", abs(report?.savingsPercent ?? 0)))
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.orange)
-            } else {
-                Text(String(format: "−%.0f%%", report?.savingsPercent ?? 0))
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.green)
-            }
+    @ViewBuilder
+    private var verdictIcon: some View {
+        // Three-state verdict: warnings (timed-out checks, inconclusive
+        // decode) are NOT a green pass.
+        switch job.report?.status {
+        case .verified: Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+        case .warnings: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+        default: EmptyView()
         }
+    }
+
+    private var verdictLabel: String {
+        switch job.report?.status {
+        case .verified: return "Verified"
+        case .warnings: return "Passed with warnings"
+        case .failed: return "Failed"
+        default: return ""
+        }
+    }
+
+    /// “−62%” green / “+8%” orange — SizeMath.deltaLabel keeps growth
+    /// visible and never prints a lying “−0%”.
+    private var savingsPill: some View {
+        let grew = job.report?.grew ?? false
+        let color: Color = grew ? .orange : .green
+        return Text(SizeMath.deltaLabel(inBytes: job.report?.inBytes ?? 0,
+                                        outBytes: job.report?.outBytes ?? 0))
+            .font(.footnote.weight(.bold).monospacedDigit())
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.15), in: Capsule())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(grew
+                ? String(format: "%.0f percent larger", abs(job.report?.savingsPercent ?? 0))
+                : String(format: "%.0f percent saved", max(0, job.report?.savingsPercent ?? 0)))
+    }
+
+    private var inOutSizeTexts: some View {
+        let inText = ByteCountFormatter.string(fromByteCount: job.report?.inBytes ?? 0, countStyle: .file)
+        let outText = ByteCountFormatter.string(fromByteCount: job.report?.outBytes ?? 0, countStyle: .file)
+        return Text("\(inText) → \(outText)")
+            .font(.footnote)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Input \(inText), output \(outText)")
     }
 
     /// The thumbnail doubles as the PLAY button: on finished rows a tap
@@ -490,9 +511,11 @@ struct JobRowView: View {
 
             case .done:
                 // The next actions people actually take — share it or put
-                // it in Photos — live right on the row; Rename, Report and
-                // Remove stay in the context menu.
-                if let out = job.outputURL, outputExists {
+                // it in Photos — live right on the row. Narrow widths drop
+                // them: save+share+⋯ (132 pt) beside a 74 pt thumbnail
+                // starves the title (device report, 1/3 Split View) — the
+                // same actions live in the ⋯ menu and the context menu.
+                if hSizeClass != .compact, let out = job.outputURL, outputExists {
                     iconButton("square.and.arrow.down", tint: .accentColor,
                                a11y: "Save to Photos") { saveToPhotos(out) }
 
@@ -731,10 +754,11 @@ struct ReportSheet: View {
         let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
         // Nil stats (verification timed out) display as "—", never "0".
         // flatMap end-guards Int(NaN) — which TRAPS — for any report decoded
-        // before the init-side clamp existed.
+        // before the init-side clamp existed. THE shared duration formatter:
+        // long videos read h:mm:ss, encode time no longer prints "1834.25 s".
         let durationText = report.outputDuration
             .flatMap { $0.isFinite ? $0 : nil }
-            .map { String(format: "%d:%02d", Int($0) / 60, Int($0) % 60) }
+            .map { SizeMath.durationLabel($0) }
             ?? "—"
         let bitrateText = report.outputBitrateMbps.map { String(format: "%.1f Mbps", $0) } ?? "—"
         let savedText = report.grew
@@ -744,7 +768,7 @@ struct ReportSheet: View {
             (ByteCountFormatter.string(fromByteCount: report.inBytes, countStyle: .file), "Input"),
             (ByteCountFormatter.string(fromByteCount: report.outBytes, countStyle: .file), "Output"),
             (savedText, report.grew ? "Grew by" : "Saved"),
-            (String(format: "%.2f s", report.encodeSeconds), "Encode time"),
+            (SizeMath.durationLabel(report.encodeSeconds), "Encode time"),
             (durationText, "Duration"),
             (bitrateText, "Output bitrate"),
         ]
@@ -1020,25 +1044,38 @@ private struct OutputPlayerSheet: View {
         }
     }
 
+    /// Output t=0 == source (startOffset + trimStart) on trimmed jobs — the
+    /// same mapping the verifier uses. Without translating the playhead,
+    /// the Source/Output toggle showed a DIFFERENT scene on trimmed clips.
+    private var compareOffset: Double {
+        (job.plan?.trimStart ?? 0) + (job.plan?.source.startOffset ?? 0)
+    }
+
     /// Swapping to compare preserves the playback position and continues
-    /// playback — the two videos stay in lock-step on the same frame.
+    /// playback — the two videos stay in lock-step on the SAME scene.
     private func swapSide(new: Side) {
         guard let player else { return }
         let time = player.currentTime()
         // A priming task in flight means playback was INTENDED but had not
         // started yet — keep that intent across the swap.
         let wasPlaying = player.rate > 0 || priming != nil
+        // TRANSLATE: output timeline → source timeline (add the trim lead-in)
+        // and back (clamp at zero — the output cannot show pre-trim content).
+        let translated = new == .source
+            ? time.seconds + compareOffset
+            : max(0, time.seconds - compareOffset)
+        let seekTarget = CMTime(seconds: translated, preferredTimescale: 600)
         let next = playerItem(for: new)
         player.replaceCurrentItem(with: next)
         if wasPlaying {
             // The compressed runtime can differ slightly (fps cap), but
             // AVPlayer clamps the seek itself. PRIMED start on the fresh
             // item — same first-frame rule as load().
-            primeThenPlay(player, at: time.seconds > 0 ? time : .zero)
-        } else if time.seconds > 0 {
+            primeThenPlay(player, at: translated > 0 ? seekTarget : .zero)
+        } else if translated > 0 {
             // Paused stays paused — but still settle the geometry so the
             // paused frame shows correctly oriented on the new side.
-            player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.seek(to: seekTarget, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         measureAspect(for: next)
     }

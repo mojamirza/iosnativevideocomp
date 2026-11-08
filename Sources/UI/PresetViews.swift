@@ -215,12 +215,15 @@ struct PresetEditorView: View {
             Form {
                 Section("Name & codec") {
                     TextField("Preset name", text: $name)
+                        .listRowBackground(Color.appCard)
                     Picker("Codec", selection: $codec) {
                         ForEach(VideoCodec.allCases) { c in Text(c.displayName).tag(c) }
                     }
+                    .listRowBackground(Color.appCard)
                     Picker("Resolution", selection: $resolution) {
                         ForEach(ResolutionClass.allCases) { r in Text(r.displayName).tag(r) }
                     }
+                    .listRowBackground(Color.appCard)
                 }
 
                 // RATE CONTROL — the strategic question now comes FIRST:
@@ -235,6 +238,7 @@ struct PresetEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    .listRowBackground(Color.appCard)
 
                     if rateMode == .bitrate {
                         // ---- BITRATE MODE: slider + exact typed value ----
@@ -328,14 +332,14 @@ struct PresetEditorView: View {
                             if let probe = contextProbe {
                                 let plan = draftPlan(for: probe)
                                 let outBytes = plan.estimatedBytes
-                                let pct = probe.fileSize > 0
-                                    ? (1 - Double(outBytes) / Double(probe.fileSize)) * 100 : 0
-                                Text(String(format: "%@ → ≈ %@ (−%.0f%%)",
-                                            ByteCountFormatter.string(fromByteCount: probe.fileSize, countStyle: .file),
-                                            ByteCountFormatter.string(fromByteCount: outBytes, countStyle: .file),
-                                            max(0, pct)))
+                                // THE one honest delta: growth reads "+N%"
+                                // (the old max(0, pct) hid it), sub-percent
+                                // savings say "−<1%".
+                                let delta = SizeMath.deltaLabel(inBytes: probe.fileSize,
+                                                                outBytes: outBytes)
+                                Text("\(ByteCountFormatter.string(fromByteCount: probe.fileSize, countStyle: .file)) → ≈ \(ByteCountFormatter.string(fromByteCount: outBytes, countStyle: .file)) (\(delta))")
                                     .font(.footnote.weight(.medium).monospacedDigit())
-                                    .foregroundStyle(.tint)
+                                    .foregroundStyle(delta.hasPrefix("+") ? .orange : .tint)
                                 if plan.bitrateCapped,
                                    probe.videoDataRate > 0, probe.videoDataRate.isFinite {
                                     // Int(Double) traps on non-finite — the
@@ -352,6 +356,7 @@ struct PresetEditorView: View {
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
+                        .listRowBackground(Color.appCard)
                     } else {
                         // ---- TARGET MODE: solved from the budget, not typed ----
                         VStack(alignment: .leading, spacing: 8) {
@@ -390,11 +395,13 @@ struct PresetEditorView: View {
                                     .foregroundStyle(.red)
                             }
                         }
+                        .listRowBackground(Color.appCard)
                     }
                 }
 
                 Section("Frame rate") {
                     Toggle("Cap frame rate", isOn: $fpsCapEnabled)
+                        .listRowBackground(Color.appCard)
                     if fpsCapEnabled {
                         HStack {
                             // 10–120 (step 5): covers lecture 15 / standard
@@ -405,6 +412,7 @@ struct PresetEditorView: View {
                                 .font(.callout.monospacedDigit())
                                 .frame(width: 80, alignment: .trailing)
                         }
+                        .listRowBackground(Color.appCard)
                     }
                     // LECTURE MODE: one tap onto the draft (15 fps · mono ·
                     // lean bitrate) — moved here from the compress bottom bar.
@@ -414,6 +422,7 @@ struct PresetEditorView: View {
                         Label("Lecture mode (15 fps · mono · lean bitrate)",
                               systemImage: "lightbulb")
                     }
+                    .listRowBackground(Color.appCard)
                 }
 
                 Section("Audio") {
@@ -423,14 +432,17 @@ struct PresetEditorView: View {
                             .font(.callout.monospacedDigit())
                             .frame(width: 90, alignment: .trailing)
                     }
+                    .listRowBackground(Color.appCard)
                     // Forced mono: the lecture/screen-recording recipe. The
                     // engine caps the encode so the budget's audio share
                     // can't be broken (the encode never EXCEEDS the planned
                     // audio rate).
                     Toggle("Mono voice track", isOn: $monoAudio)
+                        .listRowBackground(Color.appCard)
                     Text("AAC is encoded by AVFoundation at this budget. Tracks are kept when present.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .listRowBackground(Color.appCard)
                 }
 
                 // REAL HDR → SDR, a deliberate conversion (BT.2100 tone-map
@@ -445,18 +457,22 @@ struct PresetEditorView: View {
                         Text("Convert to SDR").tag(true)
                     }
                     .pickerStyle(.segmented)
+                    .listRowBackground(Color.appCard)
                     if hdrConvert {
                         Text("Tone-maps HDR video (HLG/PQ) into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. SDR sources pass through unchanged. Report shows: \"SDR conversion verified\".")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .listRowBackground(Color.appCard)
                     } else if let probe = contextProbe {
                         Text("Output stays \(probe.tags.humanLabel): fewer devices can show its true colors, but nothing is altered.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .listRowBackground(Color.appCard)
                     } else {
                         Text("Each source keeps its own colors untouched.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .listRowBackground(Color.appCard)
                     }
                 }
             }
@@ -547,6 +563,7 @@ struct PresetManagerSheet: View {
                 Section("Built-in") {
                     ForEach(Preset.builtIn) { preset in
                         row(preset, custom: false)
+                            .listRowBackground(Color.appCard)
                     }
                 }
                 Section {
@@ -554,9 +571,11 @@ struct PresetManagerSheet: View {
                         Text("No custom presets yet — duplicate a built-in or create one to save your own codec, resolution, bitrate and audio recipe.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .listRowBackground(Color.appCard)
                     }
                     ForEach(customPresets) { preset in
                         row(preset, custom: true)
+                            .listRowBackground(Color.appCard)
                     }
                 } header: {
                     Text("Custom")
@@ -564,14 +583,27 @@ struct PresetManagerSheet: View {
                     Text("Presets persist on this iPad and appear in the setup flow.")
                 }
                 Section("Privacy & metadata") {
+                    // Strip-all makes the date toggle inert — disable it
+                    // instead of letting it silently do nothing.
                     Toggle("Keep creation date", isOn: $keepCreationDate)
+                        .disabled(stripAllMetadata)
+                        .listRowBackground(Color.appCard)
                     Toggle("Strip all metadata", isOn: $stripAllMetadata)
-                    Text("Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
+                        .listRowBackground(Color.appCard)
+                    Text(stripAllMetadata
+                         ? "Strip-all is on: every metadata item is removed — the keep-creation-date toggle is inert until you turn Strip-all off."
+                         : "Outputs never carry location data. Strip-all removes the creation date too — a fully anonymous file with no metadata track.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .listRowBackground(Color.appCard)
                 }
             }
             .navigationTitle("Presets")
+            // Same canvas as every other screen (it was the one screen on
+            // system gray); rows pinned to the card token so elevated sheets
+            // can't brighten them.
+            .scrollContentBackground(.hidden)
+            .background(Color.appScreen)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

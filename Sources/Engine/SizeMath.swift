@@ -68,4 +68,27 @@ enum SizeMath {
         let m = Double(bps) / 1e6
         return m < 10 ? String(format: "%.2f", m) : String(format: "%.1f", m)
     }
+
+    /// THE one honest size delta — “−62%” when smaller, “+8%” when the
+    /// output would GROW (the old `max(0, pct)` hid growth behind “−0%”),
+    /// “−<1%”/“+<1%” instead of a lying “−0%”, and “—” without an input.
+    /// Used by the setup bar, the batch line, the editor estimate and the
+    /// done-row savings pill.
+    static func deltaLabel(inBytes: Int64, outBytes: Int64) -> String {
+        guard inBytes > 0 else { return "—" }
+        let p = (1 - Double(outBytes) / Double(inBytes)) * 100
+        if abs(p) < 0.5 { return p >= 0 ? "−<1%" : "+<1%" }
+        return p >= 0 ? String(format: "−%.0f%%", p) : String(format: "+%.0f%%", -p)
+    }
+
+    /// THE one duration formatter — m:ss under an hour, h:mm:ss above
+    /// (the repeated “%d:%02d” sites printed “125:30” for long videos, and
+    /// the report showed encode time as a raw “1834.25 s”).
+    static func durationLabel(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "—" }
+        let total = Int(seconds.rounded())
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%d:%02d", m, s)
+    }
 }

@@ -70,4 +70,9 @@ extension Color {
     /// Elevation-invariant inner tile — replaces
     /// `Color(.tertiarySystemGroupedBackground)`.
     static var appTile: Color { Color(AppTheme.tileColor) }
+    /// BRAND accent — the AccentColor asset (matched to the app icon's
+    /// blue) re-tints `.tint` app-wide: buttons, progress bars, selection
+    /// radios, chips. This token is for sites that need the color
+    /// explicitly; dark mode resolves a lighter shade for contrast.
+    static var appAccent: Color { Color("AccentColor") }
 }

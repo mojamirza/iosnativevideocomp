@@ -51,4 +51,39 @@ final class SizeMathTests: XCTestCase {
             SizeMath.videoBitrate(targetMB: 100, audioBitrate: 128_000, duration: 0),
             SizeMath.minVideoBitrate)
     }
+
+    // MARK: deltaLabel — one honest size delta everywhere
+
+    func testDeltaLabelSavings() {
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 10_000, outBytes: 3_800), "−62%")
+    }
+
+    func testDeltaLabelGrowthIsVisible() {
+        // Growth must read as a positive delta, never hide behind “−0%”.
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 10_000, outBytes: 10_800), "+8%")
+    }
+
+    func testDeltaLabelSubPercentDeltas() {
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 10_000, outBytes: 9_980), "−<1%")
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 10_000, outBytes: 10_020), "+<1%")
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 10_000, outBytes: 10_000), "−<1%")
+    }
+
+    func testDeltaLabelWithoutInput() {
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: 0, outBytes: 500), "—")
+        XCTAssertEqual(SizeMath.deltaLabel(inBytes: -1, outBytes: 500), "—")
+    }
+
+    // MARK: durationLabel — m:ss / h:mm:ss (never “125:30”)
+
+    func testDurationLabelShort() {
+        XCTAssertEqual(SizeMath.durationLabel(0), "0:00")
+        XCTAssertEqual(SizeMath.durationLabel(65.4), "1:05")
+        XCTAssertEqual(SizeMath.durationLabel(7549.6), "2:05:50")
+    }
+
+    func testDurationLabelDegenerate() {
+        XCTAssertEqual(SizeMath.durationLabel(-3), "—")
+        XCTAssertEqual(SizeMath.durationLabel(Double.nan), "—")
+    }
 }

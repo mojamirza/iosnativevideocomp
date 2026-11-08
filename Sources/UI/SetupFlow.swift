@@ -47,6 +47,11 @@ struct SetupFlowView: View {
     /// FIRST-FRAME PRIMING task for the inline preview — see
     /// startPreviewPriming(at:) below.
     @State private var previewPriming: Task<Void, Never>?
+    /// ABOVE THE FOLD: only the SELECTED preset shows by default; “Change…”
+    /// expands the full list (selecting a row collapses back) so the size
+    /// estimate and Compress stay reachable without scrolling past 5+ preset
+    /// rows.
+    @State private var showingAllPresets = false
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -207,25 +212,28 @@ struct SetupFlowView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // BEFORE → AFTER story with a proportional bar.
+            // BEFORE → AFTER story with a proportional bar. The delta uses
+            // THE one shared label: growth reads “+8%” (the old max(0, pct)
+            // hid it behind “−0%”) and sub-percent savings say “−<1%”.
             if let out = estimateBytes, selectedPreset != nil {
                 let input = isBatch ? totalInBytes : (singleProbe.map { trimmed($0).fileSize } ?? 0)
                 let inText = ByteCountFormatter.string(fromByteCount: input, countStyle: .file)
                 let outText = ByteCountFormatter.string(fromByteCount: out, countStyle: .file)
                 let ratio = input > 0 ? Double(out) / Double(input) : 0
-                let pct = input > 0 ? (1 - Double(out) / Double(input)) * 100 : 0
+                let delta = SizeMath.deltaLabel(inBytes: input, outBytes: out)
                 VStack(alignment: .leading, spacing: 7) {
                     if isBatch {
-                        Text(String(format: "%d files · %@ → ≈ %@ (−%.0f%%)",
-                                    videos.count, inText, outText, max(0, pct)))
+                        Text("\(videos.count) files · \(inText) → ≈ \(outText) (\(delta))")
                             .font(.callout.weight(.semibold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
+                            .foregroundStyle(delta.hasPrefix("+") ? .orange : .primary)
                     } else {
-                        Text(String(format: "%@ → ≈ %@ (−%.0f%%)", inText, outText, max(0, pct)))
+                        Text("\(inText) → ≈ \(outText) (\(delta))")
                             .font(.callout.weight(.semibold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
+                            .foregroundStyle(delta.hasPrefix("+") ? .orange : .primary)
                     }
                     // The EFFECTIVE planned bitrate — same plan() as the row
                     // above, so bar and row can never disagree. "(capped)"
@@ -548,7 +556,7 @@ struct SetupFlowView: View {
     }
 
     private func timeString(_ s: Double) -> String {
-        String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
+        SizeMath.durationLabel(s)
     }
 
     /// 8 evenly spaced frames via AVAssetImageGenerator (keyframe-tolerant,
@@ -651,7 +659,7 @@ struct SetupFlowView: View {
                             Text(ByteCountFormatter.string(fromByteCount: probes[i]?.fileSize ?? 0, countStyle: .file))
                             if let p = probes[i] {
                                 Text("·")
-                                Text(String(format: "%d:%02d", Int(p.duration) / 60, Int(p.duration) % 60))
+                                Text(SizeMath.durationLabel(p.duration))
                             }
                         }
                         .font(.caption2)
@@ -724,7 +732,7 @@ struct SetupFlowView: View {
     private func probeGrid(_ probe: ProbeResult) -> some View {
         let cols = [GridItem(.adaptive(minimum: 150), spacing: 10)]
         let cells: [(String, String, String)] = [
-            ("Duration", String(format: "%d:%02d", Int(probe.duration) / 60, Int(probe.duration) % 60), "clock"),
+            ("Duration", SizeMath.durationLabel(probe.duration), "clock"),
             ("Resolution", "\(Int(probe.sourceSize.width))×\(Int(probe.sourceSize.height))", "aspect.ratio"),
             ("Frame rate", String(format: "%.0f fps", probe.nominalFPS), "speedometer"),
             ("Codec", probe.codecSubType, "cpu"),
@@ -762,48 +770,90 @@ struct SetupFlowView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            ForEach(availablePresets, id: \.id) { preset in
-                // The SELECTED row renders the live variant (lecture-mode
-                // tweaks mutate a copy with the same id) so its numbers match
-                // the estimate bar.
-                let displayPreset = (selectedPreset?.id == preset.id) ? selectedPreset! : preset
-                PresetRow(preset: displayPreset,
-                          isSelected: selectedPreset?.id == preset.id,
+            if showingAllPresets || selectedPreset == nil {
+                ForEach(availablePresets, id: \.id) { preset in
+                    presetRow(preset)
+                }
+                Button {
+                    withAnimation(.smooth) { showingAllPresets = false }
+                } label: {
+                    Label("Show fewer", systemImage: "chevron.up")
+                        .font(.callout.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.bordered)
+            } else if let selected = selectedPreset {
+                // COLLAPSED: only the selected preset (with its live
+                // numbers) + Change… — the estimate and Compress are above
+                // the fold.
+                PresetRow(preset: selected,
+                          isSelected: true,
                           probe: singleProbe.map({ trimmed($0) }),
-                          batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil,
-                          batchAvgBitrate: isBatch ? batchAvgBitrate(for: preset) : nil) {
-                    selectedPreset = preset
-                    // The tap IS the selection: persist it now — the old code
-                    // only persisted editor saves, so the last-used preset
-                    // never stuck for plain row selections.
-                    PresetStore.setLastUsedPreset(preset.id)
+                          batchTotalBytes: isBatch ? totalBatchOutBytes(for: selected) : nil,
+                          batchAvgBitrate: isBatch ? batchAvgBitrate(for: selected) : nil) { }
+                    .contextMenu { presetContextMenu(selected) }
+                Button {
+                    withAnimation(.smooth) { showingAllPresets = true }
+                } label: {
+                    Label("Change…", systemImage: "slider.horizontal.3")
+                        .font(.callout.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
-                .contextMenu {
-                    if preset.isUserDefined {
-                        Button {
-                            editingPreset = preset
-                        } label: {
-                            Label("Edit", systemImage: "pencil")
-                        }
-                        Button {
-                            duplicatePreset(preset)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            deletePreset(preset)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    } else {
-                        Button {
-                            duplicatePreset(preset)
-                        } label: {
-                            Label("Duplicate as custom", systemImage: "plus.square.on.square")
-                        }
-                    }
-                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    /// One selectable preset row — shared by the collapsed and expanded
+    /// states. The SELECTED row renders the live variant (lecture-mode
+    /// tweaks mutate a copy with the same id) so its numbers match the
+    /// estimate bar. Selecting collapses the list again.
+    @ViewBuilder
+    private func presetRow(_ preset: Preset) -> some View {
+        let displayPreset = (selectedPreset?.id == preset.id) ? selectedPreset! : preset
+        PresetRow(preset: displayPreset,
+                  isSelected: selectedPreset?.id == preset.id,
+                  probe: singleProbe.map({ trimmed($0) }),
+                  batchTotalBytes: isBatch ? totalBatchOutBytes(for: preset) : nil,
+                  batchAvgBitrate: isBatch ? batchAvgBitrate(for: preset) : nil) {
+            selectedPreset = preset
+            // The tap IS the selection: persist it now — the old code
+            // only persisted editor saves, so the last-used preset
+            // never stuck for plain row selections.
+            PresetStore.setLastUsedPreset(preset.id)
+            showingAllPresets = false
+        }
+        .contextMenu { presetContextMenu(preset) }
+    }
+
+    /// Long-press actions for a preset row (extracted so the collapsed
+    /// selected row offers the same Edit/Duplicate/Delete set).
+    @ViewBuilder
+    private func presetContextMenu(_ preset: Preset) -> some View {
+        if preset.isUserDefined {
+            Button {
+                editingPreset = preset
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button {
+                duplicatePreset(preset)
+            } label: {
+                Label("Duplicate", systemImage: "plus.square.on.square")
+            }
+            Divider()
+            Button(role: .destructive) {
+                deletePreset(preset)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } else {
+            Button {
+                duplicatePreset(preset)
+            } label: {
+                Label("Duplicate as custom", systemImage: "plus.square.on.square")
             }
         }
     }
@@ -1036,11 +1086,12 @@ private struct TrimFilmstripPicker: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Trim window")
         .accessibilityValue("From \(Self.timeString(start)) to \(Self.timeString(end))")
-        .accessibilityAdjustableAction { direction in
-            let step: Double = direction == .decrement ? -1 : 1
-            start = max(0, min(start + step, end - minWindow))
-            end = min(duration, max(end + step, start + minWindow))
-        }
+        // FOUR NAMED ACTIONS: the single adjustable action moved the WHOLE
+        // window by ±1 s, so VoiceOver users could never set an edge.
+        .accessibilityAction(named: "Start earlier") { start = max(0, start - 1) }
+        .accessibilityAction(named: "Start later") { start = min(end - minWindow, start + 1) }
+        .accessibilityAction(named: "End earlier") { end = max(start + minWindow, end - 1) }
+        .accessibilityAction(named: "End later") { end = min(duration, end + 1) }
         .onDisappear { moveAnchor = nil }
     }
 
@@ -1128,7 +1179,7 @@ private struct TrimFilmstripPicker: View {
     }
 
     static func timeString(_ s: Double) -> String {
-        String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
+        SizeMath.durationLabel(s)
     }
 }
 

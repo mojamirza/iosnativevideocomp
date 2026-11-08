@@ -52,6 +52,10 @@ final class JobCoordinator: ObservableObject {
         /// row derives encode speed and ETA from this, proving the job is
         /// alive without inventing fake progress.
         var startedAt: Date?
+        /// TRANSIENT: “Re-encoding to fit…” during a measured correction
+        /// pass — the row says so instead of silently running a second
+        /// encode under an unchanged “Encoding…” label. Not persisted.
+        var passLabel: String?
         /// User-picked poster image (normalized JPEG) — drives the row
         /// thumbnail and is persisted in the record.
         var posterData: Data?
@@ -278,7 +282,10 @@ final class JobCoordinator: ObservableObject {
         let output = workURL
 
         // analyzing
-        setJob(jobID) { $0.state = .analyzing }
+        setJob(jobID) {
+            $0.state = .analyzing
+            $0.passLabel = nil   // a fresh run (or Retry) is not a re-encode
+        }
         bgSubtitle("Analyzing \(job.sourceName)…")
         let encodeStart = Date()
 
@@ -408,9 +415,16 @@ final class JobCoordinator: ObservableObject {
                     // Deliberate progress reset: the measured correction
                     // pass restarts the bar (the monotonic guard in the
                     // callback resumes from 0 cleanly after this).
+                    // startedAt resets TOO — the row's ETA/speed read
+                    // elapsed time since startedAt, so without this they
+                    // folded pass 1 in and showed absurd ETAs (device
+                    // report: “about 90 min left”). passLabel says what is
+                    // actually running.
                     setJob(jobID) {
                         $0.state = .compressing
                         $0.progress = 0
+                        $0.startedAt = Date()
+                        $0.passLabel = "Re-encoding to fit…"
                     }
                     bgSubtitle("Re-encoding \(job.sourceName) to fit…")
 
@@ -712,6 +726,7 @@ final class JobCoordinator: ObservableObject {
         jobs[idx].progress = 0
         jobs[idx].errorMessage = nil
         jobs[idx].report = nil
+        jobs[idx].passLabel = nil
         runQueueIfNeeded()
     }
 
