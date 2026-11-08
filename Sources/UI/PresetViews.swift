@@ -339,7 +339,7 @@ struct PresetEditorView: View {
                                                                 outBytes: outBytes)
                                 Text("\(ByteCountFormatter.string(fromByteCount: probe.fileSize, countStyle: .file)) → ≈ \(ByteCountFormatter.string(fromByteCount: outBytes, countStyle: .file)) (\(delta))")
                                     .font(.footnote.weight(.medium).monospacedDigit())
-                                    .foregroundStyle(delta.hasPrefix("+") ? .orange : .tint)
+                                    .foregroundStyle(delta.hasPrefix("+") ? Color.orange : Color.accentColor)
                                 if plan.bitrateCapped,
                                    probe.videoDataRate > 0, probe.videoDataRate.isFinite {
                                     // Int(Double) traps on non-finite — the
