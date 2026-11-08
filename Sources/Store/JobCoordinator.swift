@@ -35,7 +35,7 @@ final class JobCoordinator: ObservableObject {
         case queued, analyzing, compressing, verifying, done, failed, cancelled
     }
 
-    struct Job: Identifiable {
+    struct Job: Identifiable, Equatable {
         let id: UUID
         var sourceURL: URL
         var sourceName: String
@@ -64,6 +64,34 @@ final class JobCoordinator: ObservableObject {
         var rotationDegrees: Int = 0
         var trimStart: Double = 0
         var trimEnd: Double?
+
+        /// EQUALITY FOR RENDER-SKIPPING: progress ticks republish the whole
+        /// `jobs` array twice a second, which re-built EVERY card — including
+        /// finished ones whose ⋯ menu visibly “ticked” on iPadOS 26 (device
+        /// report). The row compares values instead of rebuilding when
+        /// nothing it renders has changed. `thumbnail` is compared by
+        /// identity (the only non-Value-equatable field; a regenerated
+        /// thumbnail is a new object).
+        static func == (l: Job, r: Job) -> Bool {
+            l.id == r.id
+                && l.state == r.state
+                && l.progress == r.progress
+                && l.passLabel == r.passLabel
+                && l.startedAt == r.startedAt
+                && l.sourceURL == r.sourceURL
+                && l.sourceName == r.sourceName
+                && l.preset == r.preset
+                && l.plan == r.plan
+                && l.report == r.report
+                && l.errorMessage == r.errorMessage
+                && l.outputURL == r.outputURL
+                && l.posterData == r.posterData
+                && l.rotationDegrees == r.rotationDegrees
+                && l.trimStart == r.trimStart
+                && l.trimEnd == r.trimEnd
+                && l.createdAt == r.createdAt
+                && l.thumbnail === r.thumbnail
+        }
     }
 
     @Published var jobs: [Job] = [] {

@@ -14,7 +14,6 @@ struct JobRowView: View, Equatable {
     let coordinator: JobCoordinator
     @Environment(\.horizontalSizeClass) private var hSizeClass
 
-    let job: JobCoordinator.Job
     @State private var showingReport = false
     @State private var showingPlayer = false
     @State private var showingRename = false
