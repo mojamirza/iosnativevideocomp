@@ -11,6 +11,7 @@ struct RootView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     @State private var showingSetup = false
     @State private var importedVideos: [PickedVideo] = []
@@ -24,18 +25,30 @@ struct RootView: View {
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
     @State private var confirmingClearFinished = false
+    /// OWNED column visibility: compact widths start on (and fall back to)
+    /// the DETAIL via the sidebar's Back control; regular widths keep the
+    /// classic side-by-side columns.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
         } detail: {
             interactiveList
         }
-        // PROMINENT DETAIL: at tight Split View widths the plain split view
-        // presented the SIDEBAR as the root — the queue became unreachable.
-        // This style shows the DETAIL first in compact widths; the sidebar
-        // slides over via the leading toggle and is always dismissible.
-        .navigationSplitViewStyle(.prominentDetail)
+        // COMPACT FALLBACK: a selection-less split view presented the
+        // SIDEBAR as the root at tight Split View widths — the queue became
+        // unreachable, and even the slide-over variant had no close control
+        // (the toggle lives on the detail's bar, which the presented sidebar
+        // covers). The visibility is owned HERE: compact widths show the
+        // main page first and the sidebar carries an explicit Back button;
+        // regular widths keep the two columns side by side.
+        .onAppear {
+            columnVisibility = hSizeClass == .compact ? .detailOnly : .all
+        }
+        .onChange(of: hSizeClass) { _, hsize in
+            columnVisibility = hsize == .compact ? .detailOnly : .all
+        }
     }
 
     /// The NavigationSplitView sidebar — a lean utility column: the lifetime
@@ -72,6 +85,23 @@ struct RootView: View {
         // look different between fullscreen and Split View in dark mode.
         .scrollContentBackground(.hidden)
         .background(Color.appScreen)
+        .toolbar {
+            // COMPACT FALLBACK (the guarantee): the presented sidebar has no
+            // system close control of its own — the toggle lives on the
+            // detail's bar, which the sidebar covers. This explicit Back is
+            // always available at tiny widths to return to the main page.
+            ToolbarItem(placement: .cancellationAction) {
+                Group {
+                    if hSizeClass == .compact {
+                        Button {
+                            columnVisibility = .detailOnly
+                        } label: {
+                            Label("Back to queue", systemImage: "chevron.backward")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var versionFooter: String {
