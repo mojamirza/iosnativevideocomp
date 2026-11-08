@@ -45,6 +45,12 @@ struct OptimizerPlan: Hashable {
     /// Files/players show it as the video's icon — and the row thumbnail
     /// uses it directly. nil = automatic frame.
     var posterData: Data?
+    /// PRIVACY POLICY SNAPSHOT (enqueue time): the verifier must describe
+    /// the file by the policy the encode actually RAN under — toggling
+    /// "keep creation date" or "strip all" mid-queue would otherwise make
+    /// the verifier warn about a date the encode was never asked to keep.
+    var privacyKeepCreationDate: Bool = true
+    var privacyStripAllMetadata: Bool = false
 
     var expectedFrames: Int {
         max(1, Int(duration * Double(fps > 0 ? fps : 30)))
@@ -198,6 +204,10 @@ enum QualitySizeOptimizer {
             targetFeasible: feasible,
             sdrConvert: preset.hdrToSDR == true && probe.tags.isHDR
         )
+        // Policy snapshot rides along (see the field docs on OptimizerPlan).
+        plan.privacyKeepCreationDate = PrivacyScrub.keepCreationDate
+        plan.privacyStripAllMetadata = PrivacyScrub.stripAllMetadata
+        return plan
     }
 
     static func evenSize(_ s: CGSize) -> CGSize {

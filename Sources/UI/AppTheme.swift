@@ -47,6 +47,17 @@ enum AppTheme {
                                   blue: 30 / 255.0, alpha: 1)   // #1C1C1E
     static let tileDark = UIColor(red: 44 / 255.0, green: 44 / 255.0,
                                   blue: 46 / 255.0, alpha: 1)   // #2C2C2E
+
+    // HIG METRICS — the recurring radii of the design system, in one place
+    // so rows, thumbnails and tiles can never drift apart again.
+    /// Video thumbnails (Files/TV use tight, squircle-adjacent corners).
+    static let thumbRadius: CGFloat = 6
+    /// Inner tiles (probe grid cells).
+    static let tileRadius: CGFloat = 10
+    /// Medium cards (report items, banners).
+    static let cardRadius: CGFloat = 12
+    /// Large surface cards (setup sheet, report summary).
+    static let largeCardRadius: CGFloat = 16
 }
 
 extension Color {

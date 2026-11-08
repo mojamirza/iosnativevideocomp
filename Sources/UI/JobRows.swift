@@ -49,23 +49,18 @@ struct JobRowView: View {
     }
 
     var body: some View {
-        // Finished rows can be swiped sideways to reveal Delete; active
-        // (queued/encoding) rows can't. Swiping is disabled during batch
-        // selection (taps toggle selection instead).
-        if [.done, .failed, .cancelled].contains(job.state), !inSelectionMode {
-            rowBody
-                .modifier(SwipeToDeleteModifier { confirmingDelete = true })
-        } else {
-            rowBody
-        }
+        // The row is a NATIVE List row: swipe actions and the context menu
+        // come from the framework (the hand-rolled swipe-to-delete modifier
+        // is gone). Batch-selection taps still toggle the row.
+        rowBody
     }
 
-    /// The card WITHOUT modifier chain — kept a separate expression so the
+    /// The row WITHOUT its modifier chain — kept a separate expression so the
     /// whole row (chain included) stays under the type-checker's complexity
     /// budget; combining everything into one expression stalled type-checking.
     private var baseCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 if inSelectionMode {
                     Button {
                         coordinator.toggleSelection(job.id)
@@ -89,7 +84,7 @@ struct JobRowView: View {
 
             if let msg = job.errorMessage {
                 Label(msg, systemImage: "exclamationmark.octagon.fill")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.red)
                     .lineLimit(3)
             }
@@ -110,8 +105,7 @@ struct JobRowView: View {
                 reportRow
             }
         }
-        .padding(14)
-        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.vertical, 4)
         // VoiceOver container: composed summary first, controls stay
         // individually reachable.
         .accessibilityElement(children: .contain)
@@ -122,12 +116,47 @@ struct JobRowView: View {
                 coordinator.toggleSelection(job.id)
             }
         }
+        // HIG: rich content gets a long-press context menu mirroring the ⋯
+        // actions (like Files / Photos rows).
+        .contextMenu { contextMenuItems }
     }
 
     private var rowBody: some View {
         baseCard
-        // Fat-finger protection for destructive actions.
-        .confirmationDialog(
+            // NATIVE swipe actions (List rows) — trailing: Delete on finished
+            // rows, Stop on active ones; leading: Retry where it applies.
+            // Hidden during batch selection (taps toggle selection there).
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if !inSelectionMode {
+                    if [.done, .failed, .cancelled].contains(job.state) {
+                        Button(role: .destructive) {
+                            confirmingDelete = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            confirmingCancel = true
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                        }
+                    }
+                }
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                if !inSelectionMode,
+                   [.failed, .cancelled].contains(job.state),
+                   sourceExists {
+                    Button {
+                        coordinator.retry(jobID: job.id)
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    .tint(.accentColor)
+                }
+            }
+            // Fat-finger protection for destructive actions.
+            .confirmationDialog(
             job.state == .queued ? "Remove from queue?" : "Stop this compression?",
             isPresented: $confirmingCancel,
             titleVisibility: .visible) {
@@ -193,15 +222,17 @@ struct JobRowView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(displayName)
-                .font(.callout.weight(.semibold))
+                // NATIVE list typography: body-size title, footnote metadata
+                // (the Files / Podcasts row hierarchy).
+                .font(.body.weight(.semibold))
                 .lineLimit(1)
             HStack(spacing: 4) {
                 Text(job.preset.name)
-                    .font(.caption2)
+                    .font(.footnote)
                     .lineLimit(1)
-                Text("·").font(.caption2)
+                Text("·").font(.footnote)
                 Text(stateLabel)
-                    .font(.caption2.weight(.semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(stateColor)
             }
             .foregroundStyle(.secondary)
@@ -215,7 +246,7 @@ struct JobRowView: View {
             ProgressView(value: job.progress) {
                 HStack {
                     Text("Encoding… \(Int(job.progress * 100))%")
-                        .font(.caption2)
+                        .font(.footnote)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                         // contentTransition only plays INSIDE an animation
@@ -229,23 +260,23 @@ struct JobRowView: View {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Verifying output integrity…")
-                    .font(.caption2)
+                    .font(.footnote)
             }
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.secondary)
         case .queued:
             HStack(spacing: 6) {
                 Image(systemName: "timer")
-                    .font(.caption2)
-                Text(queuePositionLabel).font(.caption2)
+                    .font(.footnote)
+                Text(queuePositionLabel).font(.footnote)
             }
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.secondary)
         case .analyzing:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Analyzing source…")
-                    .font(.caption2)
+                    .font(.footnote)
             }
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.secondary)
         default:
             EmptyView()
         }
@@ -264,7 +295,7 @@ struct JobRowView: View {
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
                 case .warnings:
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color(UIColor.systemOrange))
+                        .foregroundStyle(Color.orange)
                 case .failed:
                     Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
                 default:
@@ -281,22 +312,22 @@ struct JobRowView: View {
             let report = job.report
             Text(ByteCountFormatter.string(fromByteCount: report?.inBytes ?? 0, countStyle: .file))
                 .strikethrough(!(report?.grew ?? false))
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
             Image(systemName: "arrow.right")
-                .font(.caption2)
+                .font(.footnote)
                 .foregroundStyle(.tertiary)
             Text(ByteCountFormatter.string(fromByteCount: report?.outBytes ?? 0, countStyle: .file))
-                .font(.caption.weight(.bold))
+                .font(.footnote.weight(.bold))
             if report?.grew == true {
                 // Negative savings (output LARGER than source) must be
                 // visible, not rounded to 0%.
                 Text(String(format: "+%.0f%%", abs(report?.savingsPercent ?? 0)))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color(UIColor.systemOrange))
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.orange)
             } else {
                 Text(String(format: "−%.0f%%", report?.savingsPercent ?? 0))
-                    .font(.caption.weight(.bold))
+                    .font(.footnote.weight(.bold))
                     .foregroundStyle(.green)
             }
         }
@@ -318,9 +349,9 @@ struct JobRowView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 74, height: 46)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.thumbRadius))
             } else {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: AppTheme.thumbRadius)
                     .fill(.quaternary)
                     .frame(width: 74, height: 46)
                     .overlay { Image(systemName: "film").foregroundStyle(.secondary) }
@@ -368,17 +399,17 @@ struct JobRowView: View {
         guard !parts.isEmpty else {
             return AnyView(HStack(spacing: 6) {
                 Image(systemName: "gauge.with.needle")
-                    .font(.caption2)
-                Text("Encoding in progress…").font(.caption2)
+                    .font(.footnote)
+                Text("Encoding in progress…").font(.footnote)
             }
-            .foregroundStyle(.tertiary))
+            .foregroundStyle(.secondary))
         }
         return AnyView(HStack(spacing: 6) {
             Image(systemName: "gauge.with.needle")
-                .font(.caption2)
+                .font(.footnote)
                 .foregroundStyle(.tint)
             Text(parts.joined(separator: " · "))
-                .font(.caption2.weight(.medium))
+                .font(.footnote.weight(.medium))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         })
@@ -457,80 +488,66 @@ struct JobRowView: View {
         switch job.state {
         case .done: return .green
         case .failed: return .red
-        case .cancelled: return Color(UIColor.systemOrange)
-        default: return Color(UIColor.systemGray)
+        case .cancelled: return .orange
+        default: return .secondary
         }
+    }
+
+    /// NATIVE row actions: plain SF Symbol icon buttons with 44 pt targets —
+    /// the exact pattern Files/Messages use for row-level actions. Labels
+    /// live in the accessibility layer and the context menu.
+    private func iconButton(_ systemName: String, tint: Color,
+                            a11y: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.body)
+                .foregroundStyle(tint)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(a11y)
     }
 
     @ViewBuilder
     private var actionButtons: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             switch job.state {
             case .queued, .analyzing, .compressing, .verifying:
                 // Active jobs: just the cancel button — nothing else.
-                Button {
-                    confirmingCancel = true
-                } label: {
-                    Label("Cancel", systemImage: "xmark.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.red)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.red.opacity(0.12), in: Capsule())
-                }
-                .buttonStyle(.plain)
+                iconButton("xmark.circle.fill", tint: .red,
+                           a11y: "Cancel compression") { confirmingCancel = true }
 
             case .failed:
-                Button {
-                    coordinator.retry(jobID: job.id)
-                } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.tint.opacity(0.12), in: Capsule())
+                if sourceExists {
+                    iconButton("arrow.clockwise", tint: .accentColor,
+                               a11y: "Retry") { coordinator.retry(jobID: job.id) }
                 }
-                .buttonStyle(.plain)
                 ellipsisMenu
 
             case .cancelled:
                 // Legacy state (only old history records can carry it — new
                 // cancels remove the row entirely). Keep the menu actions.
-                Button {
-                    coordinator.retry(jobID: job.id)
-                } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.tint.opacity(0.12), in: Capsule())
+                if sourceExists {
+                    iconButton("arrow.clockwise", tint: .accentColor,
+                               a11y: "Retry") { coordinator.retry(jobID: job.id) }
                 }
-                .buttonStyle(.plain)
                 ellipsisMenu
 
             case .done:
                 // The next actions people actually take — share it or put
                 // it in Photos — live right on the row; Rename, Report and
-                // Remove stay in the menu.
+                // Remove stay in the context menu.
                 if let out = job.outputURL, outputExists {
-                    Button {
-                        saveToPhotos(out)
-                    } label: {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.tint.opacity(0.12), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Save to Photos")
+                    iconButton("square.and.arrow.down", tint: .accentColor,
+                               a11y: "Save to Photos") { saveToPhotos(out) }
 
                     ShareLink(item: out) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.tint.opacity(0.12), in: Capsule())
+                            .font(.body)
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Share")
                 }
@@ -541,157 +558,76 @@ struct JobRowView: View {
 
     private var ellipsisMenu: some View {
         Menu {
-            if job.report != nil {
-                Button {
-                    showingReport = true
-                } label: {
-                    Label("Integrity report", systemImage: "checklist")
-                }
-            }
-            if job.state == .done, let out = job.outputURL {
-                // The app folder is user-visible in Files — the output can be
-                // deleted out from under a row at any time. Dead actions are
-                // replaced with an honest "file removed" entry.
-                if outputExists {
-                    ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
-                    // One click → straight into the photo library. The icon
-                    // matches the native "Save Video" action.
-                    Button {
-                        saveToPhotos(out)
-                    } label: {
-                        Label("Save to Photos", systemImage: "square.and.arrow.down")
-                    }
-                    Button {
-                        renameText = displayName
-                        showingRename = true
-                    } label: {
-                        Label("Rename…", systemImage: "pencil")
-                    }
-                } else {
-                    Button {
-                        saveNotice = "The compressed file is gone from the app folder (deleted in Files?) — delete this row to clean up."
-                    } label: {
-                        Label("File removed", systemImage: "questionmark.square.dashed")
-                    }
-                }
-            }
-            if [.failed, .cancelled].contains(job.state),
-               // Sources of finished jobs are deleted (storage management) —
-               // offer Retry only while the source still exists.
-               sourceExists {
-                Button("Retry") { coordinator.retry(jobID: job.id) }
-            }
-            if job.state == .failed,
-               let out = job.outputURL,
-               outputExists {
-                // A verifier false positive must not cost the user a finished
-                // encode: promote the (scratch) file to Documents and flip
-                // the row to Done. The report stays attached.
-                Button("Keep anyway") { coordinator.keepFailedOutput(jobID: job.id) }
-            }
-            Divider()
-            Button("Remove from list…", role: .destructive) { confirmingDelete = true }
+            contextMenuItems
         } label: {
             Image(systemName: "ellipsis.circle")
                 .font(.body)
                 .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-    }
-}
-
-/// Swipe-to-delete for finished rows: dragging the row left reveals a red
-/// Delete button behind its trailing edge. Only horizontal-dominant drags
-/// move the row, so vertical scrolling of the list keeps working.
-private struct SwipeToDeleteModifier: ViewModifier {
-    let onDelete: () -> Void
-
-    @State private var offsetX: CGFloat = 0
-    @State private var dragStart: CGFloat?
-
-    private let revealWidth: CGFloat = 92
-
-    /// Respect Reduce Motion: snap without springing.
-    private var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
-
-    /// Whether the delete button is fully revealed (row at max offset).
-    private var revealed: Bool { offsetX <= -revealWidth + 2 }
-
-    func body(content: Content) -> some View {
-        content
-            // Offset FIRST: the transform wraps only the card. Then the
-            // overlay is layered on OUTSIDE that transform, so it stays
-            // pinned at the row's un-shifted trailing edge while the card
-            // slides left to reveal it. The previous counter-offset-
-            // background approach made the revealed button drift/glide
-            // instead of appearing crisply in place.
-            .offset(x: offsetX)
-            .overlay(alignment: .trailing) {
-                deleteButton
-                    .opacity(revealed ? 1 : 0)
-                    .allowsHitTesting(revealed)
-            }
-            .simultaneousGesture(dragGesture)
+        .accessibilityLabel("More actions")
     }
 
-    private var deleteButton: some View {
-        Button {
-            // Snap the row shut while the confirmation dialog appears.
-            withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85)) {
-                offsetX = 0
+    /// The row's actions in ONE place — shared by the ⋯ menu and the
+    /// long-press context menu (HIG: both should mirror each other).
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        if job.report != nil {
+            Button {
+                showingReport = true
+            } label: {
+                Label("Integrity report", systemImage: "checklist")
             }
-            onDelete()
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: "trash.fill").font(.body)
-                Text("Delete").font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.white)
-            .frame(width: revealWidth - 14)
-            .frame(maxHeight: .infinity)
-            .background(Color.red, in: RoundedRectangle(cornerRadius: 12))
         }
-        .buttonStyle(.plain)
-        .padding(.trailing, 7)
-        .padding(.vertical, 7)
-    }
-
-    private var dragGesture: some Gesture {
-        // Short arming distance — a long one made the first stretch of the
-        // drag feel dead, which reads as "laggy" even when tracking cleanly.
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                // Anchor the drag start on the FIRST change regardless of
-                // direction — anchoring late (only once horizontal-dominant)
-                // made the row jump instead of tracking the finger.
-                if dragStart == nil { dragStart = offsetX }
-                // Horizontal-dominant drags only — vertical ones belong to
-                // the list's ScrollView.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let raw = dragStart! + value.translation.width
-                // Rubber-band past the reveal point (soft clamp) and stop
-                // hard at zero; the row moves with the finger, unanimated.
-                let target: CGFloat
-                if raw < -revealWidth {
-                    target = -revealWidth + (raw + revealWidth) * 0.15
-                } else {
-                    target = min(0, raw)
+        if job.state == .done, let out = job.outputURL {
+            // The app folder is user-visible in Files — the output can be
+            // deleted out from under a row at any time. Dead actions are
+            // replaced with an honest "file removed" entry.
+            if outputExists {
+                Button {
+                    showingPlayer = true
+                } label: {
+                    Label("Play", systemImage: "play.fill")
                 }
-                var t = Transaction()
-                t.disablesAnimations = true
-                withTransaction(t) {
-                    offsetX = max(-revealWidth - 24, target)
+                ShareLink(item: out) { Label("Share output", systemImage: "square.and.arrow.up") }
+                // One click → straight into the photo library. The icon
+                // matches the native "Save Video" action.
+                Button {
+                    saveToPhotos(out)
+                } label: {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
                 }
-            }
-            .onEnded { value in
-                defer { dragStart = nil }
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                // A quick flick opens fully even on a short drag; a slow
-                // drag needs to pass half the reveal width.
-                let flick = value.velocity.width < -900
-                withAnimation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.9)) {
-                    offsetX = (flick || offsetX < -revealWidth / 2) ? -revealWidth : 0
+                Button {
+                    renameText = displayName
+                    showingRename = true
+                } label: {
+                    Label("Rename…", systemImage: "pencil")
+                }
+            } else {
+                Button {
+                    saveNotice = "The compressed file is gone from the app folder (deleted in Files?) — delete this row to clean up."
+                } label: {
+                    Label("File removed", systemImage: "questionmark.square.dashed")
                 }
             }
+        }
+        if [.failed, .cancelled].contains(job.state),
+           // Sources of finished jobs are deleted (storage management) —
+           // offer Retry only while the source still exists.
+           sourceExists {
+            Button("Retry") { coordinator.retry(jobID: job.id) }
+        }
+        if job.state == .failed,
+           let out = job.outputURL,
+           outputExists {
+            // A verifier false positive must not cost the user a finished
+            // encode: promote the (scratch) file to Documents and flip
+            // the row to Done. The report stays attached.
+            Button("Keep anyway") { coordinator.keepFailedOutput(jobID: job.id) }
+        }
+        Divider()
+        Button("Remove from list…", role: .destructive) { confirmingDelete = true }
     }
 }
 
@@ -742,7 +678,7 @@ struct ReportSheet: View {
                         }
                         .padding(12)
                         .background(Color.appCard,
-                                    in: RoundedRectangle(cornerRadius: 12))
+                                    in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
                     }
 
                     HStack {
@@ -818,7 +754,7 @@ struct ReportSheet: View {
         }
         .padding(12)
         .background(Color.appCard,
-                    in: RoundedRectangle(cornerRadius: 12))
+                    in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
     }
 
     /// Plain-text form of the report for sharing.
@@ -866,7 +802,7 @@ struct ReportSheet: View {
                     Text("\(passItems.count) checks passed").font(.headline)
                 case .warnings:
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color(UIColor.systemOrange))
+                        .foregroundStyle(Color.orange)
                     Text("\(passItems.count) of \(report.items.count) checks passed").font(.headline)
                 case .failed:
                     Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
@@ -881,7 +817,7 @@ struct ReportSheet: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .foregroundStyle(report.grew && cell.1 == "Grew by"
-                                             ? Color(UIColor.systemOrange) : .primary)
+                                             ? Color.orange : .primary)
                         Text(cell.1)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -897,13 +833,13 @@ struct ReportSheet: View {
         }
         .padding(14)
         .background(Color.appCard,
-                    in: RoundedRectangle(cornerRadius: 16))
+                    in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
     }
 
     private func color(_ s: ReportSeverity) -> Color {
         switch s {
         case .pass: return .green
-        case .warn: return Color(UIColor.systemOrange)
+        case .warn: return Color.orange
         case .fail: return .red
         }
     }
@@ -969,11 +905,11 @@ private struct OutputPlayerSheet: View {
                     VideoPlayer(player: player)
                         .aspectRatio(aspect ?? 16.0 / 9.0, contentMode: .fit)
                         .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius))
                         .padding(.horizontal, 16)
                         .accessibilityLabel("Video preview")
                 } else {
-                    RoundedRectangle(cornerRadius: 12)
+                    RoundedRectangle(cornerRadius: AppTheme.cardRadius)
                         .fill(Color.black)
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .padding(.horizontal, 16)

@@ -103,6 +103,15 @@ enum BackgroundCompress {
 
     /// Drives the queue for the lifetime of one BG task.
     private static func drive(_ task: BGContinuedProcessingTask, expiry: BGExpiryFlag) {
+        // ONE driver loop at a time: a second delivered task (e.g. after the
+        // 60 s stale-submitPending path allows a re-submit) would claim a
+        // different queued job and run TWO encodes concurrently — the
+        // foreground worker is parked while a BG task runs. The running
+        // loop already sweeps the whole queue; refuse the duplicate.
+        guard currentTask == nil else {
+            task.setTaskCompleted(success: false)
+            return
+        }
         currentTask = task
         task.progress.totalUnitCount = 100
         updateSubtitle("Working…")

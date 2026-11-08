@@ -79,8 +79,11 @@ struct FrameCapper {
             // Still inside the open slot (tolerance edge included) — drop.
             return false
         }
-        if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 2.0 / Double(cap) {
-            // Grid lagged more than a full period: re-anchor HERE.
+        if CMTimeGetSeconds(CMTimeSubtract(pts, nextSlot)) > 1.0 / Double(cap) {
+            // Grid lagged more than a full period: re-anchor HERE. (One
+            // period, matching the doc comment — the old 2.0 factor let a
+            // VFR burst keep a few frames over the cap while the stale grid
+            // caught up.)
             nextSlot = CMTimeAdd(pts, period)
             return true
         }
@@ -595,6 +598,35 @@ enum CompressionEngine {
                 }
             }
         }
+        // LAST CHANCE — sample rate: the ladder above only varies the
+        // BITRATE, so a source whose rate the AAC encoder refuses (e.g. a
+        // 96 kHz recording) failed every candidate and would ship SILENT.
+        // Only when NOTHING was accepted (working files are never
+        // reconfigured), retry at the universal 48 kHz; the reader's PCM
+        // output is pinned to the same rate below so the pipe matches.
+        var resampledAudio = false
+        sampleRateFallback: if audioSettings == nil, audioTrack != nil {
+            let sourceRate = audioSampleRate
+            for channels in [encoderChannels, 2] {
+                guard channels == encoderChannels || encoderChannels != 2 else { continue }
+                for rate in audioRateCandidates {
+                    let candidate = [
+                        AVFormatIDKey: kAudioFormatMPEG4AAC,
+                        AVSampleRateKey: 48_000.0,
+                        AVNumberOfChannelsKey: channels,
+                        AVEncoderBitRateKey: max(32_000, rate),
+                    ] as [String: Any]
+                    if writer.canApply(outputSettings: candidate, forMediaType: .audio) {
+                        audioSettings = candidate
+                        audioSampleRate = 48_000.0
+                        audioChannels = channels
+                        resampledAudio = true
+                        NSLog("VidCompress: audio accepted only at 48 kHz (source \(Int(sourceRate)) Hz) — resampling instead of shipping silent")
+                        break sampleRateFallback
+                    }
+                }
+            }
+        }
         if audioSettings == nil {
             // Looks unusable at any config — ship without audio rather than
             // failing the whole job (audio returns 0, the report counts
@@ -733,6 +765,12 @@ enum CompressionEngine {
                 layout.mChannelLayoutTag = kAudioChannelLayoutTag_Mono
                 readerSettings[AVChannelLayoutKey] = Data(
                     bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+            }
+            if resampledAudio {
+                // The 48 kHz fallback: the WRITER resamples to 48 kHz — the
+                // reader's PCM must MATCH that rate, or the writer sees a
+                // stream it never agreed to and the audio pipe stalls/fails.
+                readerSettings[AVSampleRateKey] = audioSampleRate
             }
 
             let candidateOutput = AVAssetReaderTrackOutput(

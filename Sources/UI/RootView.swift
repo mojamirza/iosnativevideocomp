@@ -96,12 +96,12 @@ struct RootView: View {
         }
     }
 
-    /// The drawer's own header (no system nav bar in a drawer): title + the
-    /// explicit way back to the main page.
+    /// The drawer's own header (no system nav bar in a drawer): sidebar-style
+    /// large title + the explicit way back to the main page.
     private var drawerHeader: some View {
         HStack {
             Text("VidCompress")
-                .font(.headline)
+                .font(.title3.weight(.semibold))
             Spacer()
             Button {
                 closeDrawer()
@@ -111,7 +111,7 @@ struct RootView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
     }
 
     /// The shared sidebar rows — the regular split-view column AND the
@@ -215,6 +215,9 @@ struct RootView: View {
                     perform: handleDrop)
             .overlay { dropTargetOverlay }
             .navigationTitle("VidCompress")
+            // LARGE title on the split-view detail (the Files/Notes pattern);
+            // the compact shell overrides this with .inline below.
+            .navigationBarTitleDisplayMode(.large)
             .toolbar { importToolbar }
             // Batch actions (selection mode): a bottom bar like native
             // iPadOS list apps — Select all / Save / Delete.
@@ -284,6 +287,24 @@ struct RootView: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(coordinator.batchNotice ?? "")
+            }
+            // Shortcuts handoff: an unreadable video is removed WITH a
+            // notice — silence read as "the action did nothing".
+            .alert("Couldn't add video", isPresented: Binding(
+                get: { coordinator.importNotice != nil },
+                set: { if !$0 { coordinator.importNotice = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(coordinator.importNotice ?? "")
+            }
+            // Purged unfinished rows (source copies the system removed): a
+            // one-time notice instead of rows silently vanishing.
+            .alert("Some unfinished items were removed", isPresented: Binding(
+                get: { coordinator.purgedRowsNotice != nil },
+                set: { if !$0 { coordinator.purgedRowsNotice = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(coordinator.purgedRowsNotice ?? "")
             }
             // Fat-finger protection for the batch delete.
             .confirmationDialog(
@@ -405,20 +426,76 @@ struct RootView: View {
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
     }
 
-    /// The scrollable queue/history list — base layer of the former body
-    /// chain (content lives in `jobSections` below). Full-width on purpose:
-    /// that is the native iPadOS look in fullscreen, and Split View narrow
-    /// widths adapt on their own.
+    /// The scrollable queue/history list — a NATIVE inset-grouped List:
+    /// system swipe actions, section headers/footers and row animation come
+    /// from the framework instead of hand-rolled re-implementations. Row
+    /// surfaces use the pinned `Color.appCard` token; the List's own grouped
+    /// background is replaced with the pinned canvas color.
     private var queueList: some View {
-        ScrollView {
-            LazyVStack(spacing: 14) {
-                jobSections
+        List {
+            if let step = importStep {
+                Section {
+                    ImportStatusCard(step: step)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
             }
-            .padding(.vertical)
+
+            if StorageFallback.inMemoryOnly {
+                Section {
+                    storageFallbackBanner
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
+
+            if coordinator.jobs.isEmpty {
+                Section {
+                    EmptyState(photoItems: $photoItems,
+                               onFiles: { showFiles = true })
+                        .frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
+
+            let active = coordinator.activeJobs
+            let finished = coordinator.finishedJobs
+
+            if !active.isEmpty {
+                Section {
+                    QueueStatusBar()
+                        .listRowBackground(Color.appCard)
+                        .listRowSeparator(.hidden)
+                    ForEach(active) { job in
+                        JobRowView(job: job)
+                            .listRowBackground(Color.appCard)
+                    }
+                } header: {
+                    // List headers are auto-styled (footnote, caps, secondary).
+                    Text("In progress · \(active.count)")
+                }
+            }
+
+            if !finished.isEmpty {
+                Section {
+                    ForEach(finished) { job in
+                        JobRowView(job: job)
+                            .listRowBackground(Color.appCard)
+                    }
+                } header: {
+                    Text("History · \(finished.count)")
+                } footer: {
+                    // Storage transparency lives in the section footer — the
+                    // native place for exactly this kind of policy note.
+                    StorageFooter()
+                }
+            }
         }
-        // TRUE black in dark mode on every screen-level container (see
-        // Color.appScreen) — fullscreen, Split View and Stage Manager all
-        // show the same AMOLED-black canvas; light mode is unchanged.
+        .listStyle(.insetGrouped)
+        // Same screen-level token as every other screen (Color.appScreen) —
+        // fullscreen, Split View and Stage Manager all show the same canvas.
+        .scrollContentBackground(.hidden)
         .background(Color.appScreen)
     }
 
@@ -426,55 +503,6 @@ struct RootView: View {
     // inside the type-checker's complexity budget (CI hit "unable to
     // type-check this expression in reasonable time" once drag & drop landed
     // inline; the same rule the row card already documents).
-
-    @ViewBuilder
-    private var jobSections: some View {
-        // Import progress card (per-file, counts up during a batch copy).
-        if let step = importStep {
-            ImportStatusCard(step: step)
-        }
-
-        if coordinator.jobs.isEmpty {
-            EmptyState(photoItems: $photoItems,
-                       onFiles: { showFiles = true })
-                .padding(.top, 40)
-        }
-
-        // SwiftData fell back to an in-memory store this
-        // launch (corrupt document store): the banner explains
-        // instead of letting history silently vanish.
-        if StorageFallback.inMemoryOnly {
-            storageFallbackBanner
-        }
-
-        let active = coordinator.activeJobs
-        let finished = coordinator.finishedJobs
-
-        if !active.isEmpty {
-            QueueStatusBar()
-            sectionHeader("In progress", icon: "hourglass", count: active.count)
-            ForEach(active) { job in
-                JobRowView(job: job)
-                    // STABLE identity: ".id(job.id + state)" rebuilt every row on
-                    // each state change — the completion haptics never fired
-                    // (observer re-created around the event) and any open
-                    // dialog/sheet inside a row closed. State is a plain value
-                    // read; identity must stay constant per job.
-                    .padding(.horizontal)
-            }
-        }
-
-        if !finished.isEmpty {
-            sectionHeader("History", icon: "clock", count: finished.count)
-            ForEach(finished) { job in
-                JobRowView(job: job)
-                    .padding(.horizontal)
-            }
-        }
-
-        StorageFooter()
-            .padding(.top, 6)
-    }
 
     private var importToolbar: some ToolbarContent {
         // Single Group + explicit return: the two-group builder form
@@ -644,25 +672,6 @@ struct RootView: View {
         importedVideos = []
     }
 
-    private func sectionHeader(_ title: String, icon: String, count: Int) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.footnote.bold())
-                .foregroundStyle(.tint)
-            Text(title)
-                .font(.headline)
-            Spacer()
-            Text("\(count)")
-                .font(.caption.bold())
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.tint.opacity(0.15), in: Capsule())
-                .foregroundStyle(.tint)
-        }
-        .padding(.horizontal)
-        .padding(.top, 6)
-    }
-
     /// One-time banner (stable per-process flag set in App.init): the
     /// SwiftData store failed to open and history runs memory-only.
     private var storageFallbackBanner: some View {
@@ -673,9 +682,8 @@ struct RootView: View {
                 .font(.footnote)
         }
         .padding(12)
-        .background(Color(UIColor.systemYellow).opacity(0.18),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .background(Color.yellow.opacity(0.18),
+                    in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
     }
 }
 
@@ -774,8 +782,7 @@ private struct ImportStatusCard: View {
             Spacer()
         }
         .padding(12)
-        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
+        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
     }
 }
 
@@ -820,10 +827,9 @@ private struct QueueStatusBar: View {
             }
             ProgressView(value: fraction)
         }
-        .padding(12)
-        .background(Color.appCard,
-                    in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal)
+        // The row surface comes from the List (listRowBackground) — no card
+        // chrome of its own, just comfortable insets.
+        .padding(.vertical, 6)
     }
 }
 
@@ -844,7 +850,7 @@ private struct SidebarSavingsSection: View {
             Section("Lifetime") {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill")
-                        .foregroundStyle(Color(UIColor.systemGreen))
+                        .foregroundStyle(.green)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("You've saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
                             .font(.callout.weight(.semibold))
@@ -960,43 +966,37 @@ private struct EmptyState: View {
     let onFiles: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "video.badge.ellipsis")
-                .font(.system(size: 52))
-                .foregroundStyle(.tertiary)
-            Text("No compressions yet")
-                .font(.title3.weight(.semibold))
-            Text("Pick one video — or a whole batch — from your library or the Files app to start.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            // Real entry points, not just directions.
-            HStack(spacing: 12) {
-                // .current encoding: deliver the ORIGINAL pixels — the
-                // default may transcode an HDR clip to SDR before the
-                // color-safe engine ever sees it.
+        // NATIVE empty state (iOS 17+ ContentUnavailableView): the exact
+        // layout and typography Apple uses in Files / TV / Podcasts — big
+        // tertiary glyph, title, caption — with real entry-point actions.
+        VStack(spacing: 16) {
+            ContentUnavailableView {
+                Label("No compressions yet", systemImage: "video.badge.ellipsis")
+            } description: {
+                Text("Pick one video — or a whole batch — from your library or the Files app to start.")
+            } actions: {
+                // .current encoding: deliver the ORIGINAL pixels — the default
+                // may transcode an HDR clip to SDR before the color-safe engine
+                // ever sees it.
                 PhotosPicker(selection: $photoItems, matching: .videos,
                              preferredItemEncoding: .current) {
                     Label("Photos", systemImage: "photo.on.rectangle.angled")
-                        .font(.callout.weight(.semibold))
-                        .frame(minWidth: 110)
-                        .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
 
                 Button(action: onFiles) {
                     Label("Files", systemImage: "folder")
-                        .font(.callout.weight(.semibold))
-                        .frame(minWidth: 110)
-                        .padding(.vertical, 12)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.large)
             }
 
             Text("Or drag & drop videos here from Files or Photos while in Split View.")
                 .font(.footnote)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
         }
     }
 }

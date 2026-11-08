@@ -5,8 +5,8 @@ import UIKit
 
 /// Shortcuts action: "Compress video". The intent hands the video to the
 /// app via a persisted INBOX (Application Support, outside the Files-visible
-/// folder); the app enqueues it on launch with the built-in High-quality
-/// preset — the same flow a normal import takes, minus the setup screen.
+/// folder); the app enqueues it on launch with the preset last used in the
+/// setup flow — the same flow a normal import takes, minus the setup screen.
 ///
 /// (A Share extension was considered for the same job: it needs an App Group
 /// entitlement to move a video across the extension↔app sandbox, which free
@@ -17,7 +17,9 @@ struct CompressVideoIntent: AppIntent {
 
     static let title: LocalizedStringResource = "Compress video"
     static var description: IntentDescription {
-        "Add a video to the VidCompress queue with the built-in High-quality preset."
+        // Matches consume(): the preset is the one last run from setup,
+        // not a fixed built-in.
+        "Add a video to the VidCompress queue using your last-used preset."
     }
     // Launches the app so the queue worker owns the encode (as always).
     static var openAppWhenRun: Bool { true }
@@ -113,7 +115,11 @@ enum VideoInbox {
 
         let marker = directory.appendingPathComponent("\(UUID().uuidString).json")
         let payload = try JSONEncoder().encode(Marker(urls: [target.standardizedFileURL.path]))
-        try payload.write(to: marker)
+        // ATOMIC: consume() scans for *.json — a plain write can expose a
+        // half-written marker, which consume() treats as corrupt and deletes
+        // (video never enqueued, no feedback). The atomic temp+rename makes
+        // a marker visible only once it is complete.
+        try payload.write(to: marker, options: .atomic)
     }
 
     /// Paths of videos currently marked in the inbox. The launch/orphan
@@ -163,8 +169,12 @@ enum VideoInbox {
                     let url = URL(fileURLWithPath: rawPath)
                     guard fm.fileExists(atPath: url.path) else { continue }
                     guard let probe = try? await ProbeResult.probe(url: url) else {
-                        // Undecodable handoff: delete the copy, keep the app tidy.
+                        // Undecodable handoff: delete the copy — but SAY so.
+                        // The old silent delete meant “I ran the action and
+                        // nothing happened.” The notice surfaces as a
+                        // RootView alert.
                         try? fm.removeItem(at: url)
+                        coordinator.importNotice = "“\(url.lastPathComponent)” shared from Shortcuts couldn't be read as a video and was removed."
                         continue
                     }
                     // Respect the user's habitual choice: the last preset

@@ -89,6 +89,14 @@ final class JobCoordinator: ObservableObject {
     /// match the task identifier, and submission then fails silently.
     /// Foreground compression is unaffected.
     @Published var backgroundSubmissionDenied = false
+    /// One-shot notices surfaced as alerts by RootView:
+    /// · importNotice — a Shortcuts handoff video couldn't be read (the old
+    ///   silent delete read as “nothing happened”).
+    /// · purgedRowsNotice — queued/failed records whose import copies were
+    ///   purged out from under them (imports now live in Application
+    ///   Support, so this is rare — but it must never be SILENT again).
+    @Published var importNotice: String?
+    @Published var purgedRowsNotice: String?
     private var submitDenialNoticed = false
     private var modelContext: ModelContext?
 
@@ -1208,6 +1216,10 @@ final class JobCoordinator: ObservableObject {
             }
             if kept.count < records.count { try? context.save() }
             var purgedRecords = false
+            /// Rows DELETED for a missing source — surfaced to the user
+            /// (never silently): queued/failed work vanishing without a
+            /// word was the worst failure mode of the old storage layout.
+            var purgedWorkRows = 0
             for r in kept {
                 // Defensive: a re-entrant load must not touch records of
                 // rows that are already live in memory.
@@ -1226,6 +1238,7 @@ final class JobCoordinator: ObservableObject {
                     guard fm.fileExists(atPath: srcURL.path) else {
                         context.delete(r)
                         purgedRecords = true
+                        purgedWorkRows += 1
                         continue
                     }
                     if state == .queued {
@@ -1257,6 +1270,7 @@ final class JobCoordinator: ObservableObject {
                     guard fm.fileExists(atPath: srcURL.path) else {
                         context.delete(r)
                         purgedRecords = true
+                        purgedWorkRows += 1
                         continue
                     }
                 }
@@ -1298,6 +1312,11 @@ final class JobCoordinator: ObservableObject {
                 ))
             }
             if purgedRecords { try? context.save() }
+            if purgedWorkRows > 0 {
+                purgedRowsNotice = purgedWorkRows == 1
+                    ? "One unfinished compression was removed from the list — its source copy no longer exists in the app's storage. The original is still in your library; import it again."
+                    : "\(purgedWorkRows) unfinished compressions were removed from the list — their source copies no longer exist in the app's storage. The originals are still in your library; import them again."
+            }
         } catch {
             // History is best-effort; never block the UI.
         }
@@ -1511,13 +1530,23 @@ final class JobCoordinator: ObservableObject {
         try? target.setResourceValues(values)
     }
 
-    /// Import copies live in Caches/Imports — the Files app doesn't show the
-    /// caches folder, so pending sources never clutter "On My iPad".
-    /// (Caches can be purged by the system under storage pressure, but every
-    /// import here belongs to a pending/failed job we'd happily retry from
-    /// the original library selection anyway.)
+    /// Import copies live in Application Support/Imports. NOT Caches: iOS
+    /// may purge Caches under storage pressure, which silently deleted the
+    /// source of a QUEUED job — loadHistory() then purged the record with
+    /// no message and a multi-GB batch could vanish between launches. Import
+    /// copies are RETRYABLE WORK, not caches: they live where the system
+    /// leaves them alone (excluded from iCloud backups — the originals are
+    /// in the user's library anyway), and the launch sweep still cleans
+    /// finished jobs' leftovers.
     static nonisolated func importsDirectory() -> URL {
-        cachesDirectory().appendingPathComponent("Imports", isDirectory: true)
+        applicationSupportDirectory().appendingPathComponent("Imports", isDirectory: true)
+    }
+
+    static nonisolated func applicationSupportDirectory() -> URL {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory,
+                                           in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     /// Scratch space for IN-PROGRESS encodes — Caches/Working. A run encodes
@@ -1531,7 +1560,8 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// One-time move from the old layout (Documents/Compressed + Documents/Imports)
-    /// to the new one (outputs at Documents root, imports in Caches/Imports).
+    /// to the new one (outputs at Documents root, imports in Application
+    /// Support/Imports — previously Caches/Imports, which iOS may purge).
     /// MUST run before loadHistory() builds rows — paths are derived from the
     /// directory getters, so files must be in their new homes first.
     static func migrateLegacyStorage() {
@@ -1547,15 +1577,23 @@ final class JobCoordinator: ObservableObject {
             try? fm.removeItem(at: legacyOutputs)
         }
 
+        // Imports: Documents/Imports (v1) AND Caches/Imports (≤v1.6) both
+        // move into Application Support/Imports. The Caches move is the
+        // purge-resistance fix — records keep referencing file NAMES, so
+        // rows resolve against the new home automatically.
         let legacyImports = documentsDirectory().appendingPathComponent("Imports", isDirectory: true)
-        if fm.fileExists(atPath: legacyImports.path) {
-            try? fm.createDirectory(at: importsDirectory(), withIntermediateDirectories: true)
-            for file in (try? fm.contentsOfDirectory(at: legacyImports, includingPropertiesForKeys: nil)) ?? [] {
-                let dst = importsDirectory().appendingPathComponent(file.lastPathComponent)
+        let cacheImports = cachesDirectory().appendingPathComponent("Imports", isDirectory: true)
+        let target = importsDirectory()
+        try? fm.createDirectory(at: target, withIntermediateDirectories: true)
+        excludedFromBackup(target)
+        for src in [legacyImports, cacheImports] {
+            guard fm.fileExists(atPath: src.path) else { continue }
+            for file in (try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil)) ?? [] {
+                let dst = target.appendingPathComponent(file.lastPathComponent)
                 if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
                 try? fm.moveItem(at: file, to: dst)
             }
-            try? fm.removeItem(at: legacyImports)
+            try? fm.removeItem(at: src)
         }
     }
 }

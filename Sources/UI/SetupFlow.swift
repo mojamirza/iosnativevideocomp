@@ -254,7 +254,7 @@ struct SetupFlowView: View {
                         Label("Little to gain — the source is already leaner than this preset targets.",
                               systemImage: "exclamationmark.circle")
                             .font(.caption)
-                            .foregroundStyle(Color(UIColor.systemOrange))
+                            .foregroundStyle(Color.orange)
                     }
                 }
             }
@@ -274,6 +274,7 @@ struct SetupFlowView: View {
                 .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             .disabled(!canStart)
         }
         .padding(.horizontal, 16)
@@ -301,12 +302,21 @@ struct SetupFlowView: View {
 
     // MARK: adjust (single video)
 
+    /// HIG GROUPED-LIST HEADER: footnote-weight, small caps, secondary — the
+    /// section header style Apple uses across Settings/Files (custom scroll
+    /// views must opt in explicitly).
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+
     /// Rotate + trim controls: a Photos-style filmstrip with draggable
     /// yellow end handles (TrimFilmstripPicker below) and an inline player
     /// that previews exactly the selected window.
     private func adjustSection(_ probe: ProbeResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Adjust").font(.caption.bold()).foregroundStyle(.secondary)
+            sectionHeader("Adjust")
 
             // PHOTOS-STYLE TRIM: one filmstrip with draggable yellow end
             // handles (live time labels) and a middle drag that moves the
@@ -347,7 +357,7 @@ struct SetupFlowView: View {
                     if previewIsPlaying, let p = previewPlayer {
                         TrimPreview(player: p)
                             .frame(height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .clipShape(RoundedRectangle(cornerRadius: AppTheme.tileRadius))
                     }
                 }
                 // Adjusting while previewing restarts from the new window edge.
@@ -411,7 +421,7 @@ struct SetupFlowView: View {
             }
         }
         .padding(14)
-        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
         // Leaving the setup sheet (or scrolling the section away) must not
         // leave preview audio playing behind the app.
         .onDisappear {
@@ -588,7 +598,7 @@ struct SetupFlowView: View {
                 .font(.title2)
                 .foregroundStyle(.tint)
                 .frame(width: 44, height: 44)
-                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AppTheme.tileRadius))
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(videos.count) videos selected")
                     .font(.callout.weight(.semibold))
@@ -599,7 +609,7 @@ struct SetupFlowView: View {
             Spacer()
         }
         .padding(14)
-        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
     }
 
     private var totalInBytes: Int64 {
@@ -618,7 +628,7 @@ struct SetupFlowView: View {
     /// Per-video rows for a batch: thumbnail, name, size, duration.
     private var batchList: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Videos").font(.caption.bold()).foregroundStyle(.secondary)
+            sectionHeader("Videos")
             ForEach(videos.indices, id: \.self) { i in
                 HStack(spacing: 10) {
                     if let thumb = videos[i].thumbnail {
@@ -667,7 +677,7 @@ struct SetupFlowView: View {
                     }
                 }
                 .padding(10)
-                .background(Color.appCard, in: RoundedRectangle(cornerRadius: 12))
+                .background(Color.appCard, in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
             }
         }
     }
@@ -679,9 +689,9 @@ struct SetupFlowView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .frame(width: 120, height: 74)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.tileRadius))
             } else {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: AppTheme.tileRadius)
                     .fill(.quaternary)
                     .frame(width: 120, height: 74)
                     .overlay {
@@ -708,7 +718,7 @@ struct SetupFlowView: View {
             Spacer()
         }
         .padding(14)
-        .background(Color.appCard, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.appCard, in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
     }
 
     private func probeGrid(_ probe: ProbeResult) -> some View {
@@ -722,7 +732,7 @@ struct SetupFlowView: View {
             ("Color", probe.tags.humanLabel, "paintpalette"),
         ]
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Source").font(.caption.bold()).foregroundStyle(.secondary)
+            sectionHeader("Source")
             LazyVGrid(columns: cols, spacing: 10) {
                 ForEach(cells, id: \.0) { cell in
                     VStack(alignment: .leading, spacing: 3) {
@@ -736,7 +746,7 @@ struct SetupFlowView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(Color.appTile, in: RoundedRectangle(cornerRadius: 10))
+                    .background(Color.appTile, in: RoundedRectangle(cornerRadius: AppTheme.tileRadius))
                 }
             }
         }
@@ -744,8 +754,8 @@ struct SetupFlowView: View {
 
     private var presetSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Preset").font(.caption.bold()).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                sectionHeader("Preset")
                 Spacer()
                 Text("detailed · output size · bitrate")
                     .font(.caption2)
@@ -1022,7 +1032,7 @@ private struct TrimFilmstripPicker: View {
             .coordinateSpace(.named("trimStrip"))
         }
         .frame(height: 64)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.tileRadius))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Trim window")
         .accessibilityValue("From \(Self.timeString(start)) to \(Self.timeString(end))")
@@ -1137,7 +1147,9 @@ private struct PresetRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                // MODERN radio glyph: `circle.inset.filled` is the selected-
+                // state shape current Apple apps use (Reminders, Files).
+                Image(systemName: isSelected ? "circle.inset.filled" : "circle")
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -1221,7 +1233,7 @@ private struct PresetRow: View {
             // Selected follows the APP TINT (accent) — a hard .blue ignored
             // the tint each preset row's chips/badges already use.
             .background(isSelected ? Color.accentColor.opacity(0.10) : Color.appCard,
-                        in: RoundedRectangle(cornerRadius: 12))
+                        in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
         }
         .buttonStyle(.plain)
     }

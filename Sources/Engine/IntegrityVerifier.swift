@@ -311,13 +311,16 @@ enum IntegrityVerifier {
                 items.append(ReportItem("privacy.location", "No location metadata",
                     "Outputs are scrubbed of location on purpose (compact privacy).", .pass))
             }
-            if PrivacyScrub.stripAllMetadata {
+            // POLICY SNAPSHOT (enqueue time, carried on the plan): the
+            // report must describe the policy the encode ran under — a
+            // mid-queue toggle of the settings must not rewrite history.
+            if plan.privacyStripAllMetadata {
                 // User-chosen policy: the file ships with NO metadata track.
                 // (Report ids are UNIQUE per check — the shared "privacy" id
                 // made ForEach mis-render/duplicate items in the report sheet.)
                 items.append(ReportItem("privacy.metadata", "Metadata stripped by setting",
                     "Your strip-all setting removed every metadata item — the file is fully anonymous. Location is never carried on any setting.", .pass))
-            } else if PrivacyScrub.keepCreationDate {
+            } else if plan.privacyKeepCreationDate {
                 // A source that never CARRIED a date cannot "drop" one —
                 // only run the check when the source actually had it, or
                 // every date-less screen recording warns forever.

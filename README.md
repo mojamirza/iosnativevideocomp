@@ -36,7 +36,7 @@ A professional, **100% native** (no external frameworks) iPad video compressor w
 
 ## Feature map
 
-- **Presets**: 3 built-ins (High quality keep-resolution HEVC 8 Mbps · Medium 720p 4 Mbps · Low 480p 1.5 Mbps) + a full custom editor — codec (HEVC / H.264), resolution class (keep … 4K), **fixed bitrate** (log slider + exact typed value) or **guaranteed MB target**, fps cap, audio bitrate, mono voice track, HDR→SDR. Live per-preset estimated output size and quality hints. Presets persist; the last-used selection sticks.
+- **Presets**: 5 built-ins (High quality keep-resolution HEVC 8 Mbps · Medium 720p 4 Mbps · Low 480p 1.5 Mbps · Lecture small 720p · Lecture sharp 1080p) + a full custom editor — codec (HEVC / H.264), resolution class (keep … 4K), **fixed bitrate** (log slider + exact typed value) or **guaranteed MB target**, fps cap, audio bitrate, mono voice track, HDR→SDR. Live per-preset estimated output size and quality hints. Presets persist; the last-used selection sticks.
 - **Encoder**: hardware VideoToolbox — the only selectable video encoder on iOS (a software-encoder request crashes the writer on device; verified). The quality levers are the offline session, Main10 for HDR, and measured re-encode passes.
 - **Import**: PhotosPicker (original pixels — `preferredItemEncoding: .current`, so the picker never pre-transcodes HDR), the Files app picker and **drag & drop** in Split View, all multi-select for batches; plus a **Shortcuts action** ("Compress video") that hands videos to the queue. Multitasking (Split View / Stage Manager, all four orientations) is fully supported.
 - **Adjust (single video)**: rotate (90°/180°/270°, display-space track transform — pixels untouched), **trim** (bounds the read to the selected window), and a **custom poster** — choose any image from your library; it is embedded as QuickTime artwork in the output. Note: the Photos app always generates its own video preview and ignores embedded artwork — the poster shows in Files on a Mac, VLC, Plex and similar players, and the in-app integrity report verifies it was embedded.
@@ -44,7 +44,7 @@ A professional, **100% native** (no external frameworks) iPad video compressor w
 - **Menu bar (iPadOS 26 windowed mode)**: Import / Queue / Help menus beside the system menus — ⌘O import from Files, ⇧⌘N new preset, ⌘. cancel active job, Clear Finished… (confirmed), About & Settings sheet with the privacy toggle. No custom "File" menu: iPadOS shows the system File menu separately rather than merging, which duplicated it.
 - **Background compression** (iOS 26+): encodes keep running when you leave the app with progress on the system indicator; a revoked task turns its jobs into retryable rows — never silent loss.
 - **Privacy scrub**: outputs never carry location metadata; the creation date is kept by default (toggle in setup). If a muxer ever refuses the date item, the encode retries once without metadata rather than failing the job.
-- **Storage**: outputs land in the app's Files folder (On My iPad → VidCompress) and are excluded from iCloud backups; import copies and encode scratch live in Caches and are cleaned automatically (including on cancelled setups).
+- **Storage**: outputs land in the app's Files folder (On My iPad → VidCompress) and are excluded from iCloud backups; import copies live in Application Support (also excluded from backups — never in purgeable Caches, so a queued batch can't be silently wiped by the system) and encode scratch lives in Caches, cleaned automatically (including on cancelled setups).
 
 ## Project layout
 
@@ -72,7 +72,7 @@ Tests/                          SizeMath, Plan, QualityMath, ColorTags (CI-runna
 
 ## Build the app locally
 
-1. Requires a Mac with Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+1. Requires a Mac with Xcode 26+ (the background-compression APIs ship only in the iOS 26 SDK) and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 2. `xcodegen generate`
 3. Open `VidCompress.xcodeproj`, set your **Team** in the target's Signing & Capabilities, then Run on an iPad / iPad simulator.
 
@@ -100,6 +100,29 @@ Then run the workflow manually (workflow_dispatch) to get the signed IPA artifac
 A personal-access token was pasted into the conversation. Treat it as **compromised**:
 1. Revoke it: GitHub → **Settings → Developer settings → Personal access tokens → delete**.
 2. Regenerate a new fine-grained token. Never commit tokens to the repo — store them as **secrets**, and use `git push` with the token kept in shell env vars, never written into files.
+
+## Changelog
+
+### v1.7.0 — build 21 (Apple-design pass + engine hardening)
+
+**Engine / backend**
+- Shortcuts handoff: the inbox marker is written ATOMICALLY — a half-written marker could be read as corrupt, deleted, and the video silently never enqueued.
+- Shortcuts action description now matches behavior ("your last-used preset", not a fixed built-in).
+- Background driver: a second delivered BG task can no longer start a second driver loop (two concurrent encodes were possible via the 60 s stale-submit path).
+- FrameCapper re-anchors after ONE period of lag (was two) — matching its documented intent; VFR bursts no longer keep a few frames over the cap.
+- Audio: a source whose sample rate the AAC encoder rejects (e.g. 96 kHz recordings) no longer ships SILENT — a last-chance 48 kHz resample runs (reader and writer rates pinned together).
+- Queued/failed jobs can no longer be silently wiped by iOS: import copies moved from purgeable Caches to Application Support (excluded from backups, legacy locations migrated). If rows are ever purged anyway, a notice explains it instead of silence.
+- Unreadable Shortcuts videos surface a notice instead of being removed without feedback.
+- The integrity verifier reads the privacy policy SNAPSHOT taken at enqueue time (a mid-queue toggle no longer produces false "date dropped" warnings).
+
+**UI / design (Apple HIG alignment)**
+- Queue rebuilt as a native inset-grouped List: system swipe-to-delete, section headers/footers, native row animation — the hand-rolled swipe modifier is gone.
+- Native `ContentUnavailableView` empty state; HIG-style section headers; semantic SwiftUI colors everywhere (no UIColor bridges).
+- Row actions are native icon buttons with 44 pt targets; context menus on rows; consistent SF Symbols and list typography (body titles, footnote subtitles, monospaced digits).
+- Preset rows use the modern `circle.inset.filled` selection glyph; setup sheet uses Apple's grouped-list header style.
+
+### v1.6.3 — build 20
+- Compact drawer: main page first, swipe both ways between main page and sidebar.
 
 ## Known design decisions
 

@@ -138,12 +138,12 @@ struct PresetEditorView: View {
         switch bpp {
         case ..<0.045:
             return ("Low for \(res) — expect blockiness on busy motion",
-                    Color(UIColor.systemOrange))
+                    Color.orange)
         case ..<0.20:
             return ("Good for \(res) — a sensible bitrate", .green)
         default:
             return ("High for \(res) — most bits exceed what the pixels can use",
-                    Color(UIColor.systemTeal))
+                    Color.teal)
         }
     }
 
@@ -345,7 +345,7 @@ struct PresetEditorView: View {
                                     Label("Using \(SizeMath.mbpsLabel(plan.videoBitrate)) Mbps — the source only contains about \(srcMbps) Mbps, so more bits would only grow the file.",
                                           systemImage: "gauge.with.dots.needle.bottom.50percent")
                                         .font(.footnote)
-                                        .foregroundStyle(Color(UIColor.systemOrange))
+                                        .foregroundStyle(Color.orange)
                                 }
                             }
                             Text("Drag the bar or tap the number next to it to type an exact value. Lower = smaller file.")
