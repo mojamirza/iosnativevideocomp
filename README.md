@@ -103,6 +103,15 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.1 — build 27 (deep re-review fixes)
+
+Full folder-by-folder re-review (App, Engine, Models, Store, UI, Tests). Three fixes from it:
+- Privacy scrub: the ENCODER now writes metadata by the enqueue-time policy snapshot — the verifier already judged files by it, so a mid-queue toggle of "keep creation date"/"strip all" silently diverged encoder and verifier and produced false "date dropped" warnings on the rest of a batch.
+- Renaming an output refreshes the row's cached file-existence flags (the file moved; stale flags pointed row actions at the old path).
+- The preset manager's delete confirmation is an alert (consistent with every other destructive prompt after the dialog-anchoring failures).
+
+Everything else verified sound in the pass: queue worker/BG-driver handoff and claim ordering, cancel/retry/delete paths, scratch promotion and sweeps, legacy storage migration, the AAC ladder + 48 kHz fallback, FrameCapper cadence (incl. unit tests), SessionAnchor probe/engine agreement, verifier checks (duration/decode/color/bit-depth/privacy/target-size/quality mapping), trim math, stall watchdogs, Shortcuts handoff (atomic markers, orphan sweep keep-set), and the notification gating.
+
 ### v1.8.0 — build 26 (design direction round)
 
 **Identity & hierarchy**

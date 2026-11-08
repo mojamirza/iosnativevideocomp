@@ -172,6 +172,12 @@ struct JobRowView: View {
         .onChange(of: job.state) { _, _ in
             refreshExistence()
         }
+        // A rename MOVES the output file: the cached existence flags must
+        // re-check against the new path (stale flags made the row offer
+        // actions against a path that no longer exists).
+        .onChange(of: job.outputURL) { _, _ in
+            refreshExistence()
+        }
     }
 
     private var titleBlock: some View {

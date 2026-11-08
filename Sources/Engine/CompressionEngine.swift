@@ -294,7 +294,12 @@ enum CompressionEngine {
         // switch.
         // ------------------------------------------------------------------
         var metadata: [AVMetadataItem] = allowMetadata
-            ? await PrivacyScrub.items(for: asset)
+            ? await PrivacyScrub.items(
+                for: asset,
+                // THE ENQUEUE-TIME SNAPSHOT the verifier judges by — never
+                // the live settings (see PrivacyScrub.items docs).
+                keepCreationDate: plan.privacyKeepCreationDate,
+                stripAllMetadata: plan.privacyStripAllMetadata)
             : []
         // The poster arrives normalized (JPEG ≤1024px) from setup. The
         // COMMON artwork identifier maps onto the container's own cover-art

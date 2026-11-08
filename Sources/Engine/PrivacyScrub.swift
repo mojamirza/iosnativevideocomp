@@ -54,7 +54,17 @@ enum PrivacyScrub {
     /// engine calls this off the main actor, and `load(.commonMetadata)` is
     /// the modern non-blocking accessor (the old synchronous `commonMetadata`
     /// could stall on slow storage).
-    static func items(for source: AVAsset) async -> [AVMetadataItem] {
+    ///
+    /// POLICY SNAPSHOT (v1.8.1): the policy comes from the PLAN (enqueue
+    /// time), not the live UserDefaults — the verifier judges the file by
+    /// the enqueue-time snapshot, so the encoder must WRITE by that same
+    /// snapshot. Reading the live settings here re-introduced the original
+    /// bug through the back door: a mid-queue toggle made the engine drop
+    /// the date while the verifier (snapshot) still expected it → a false
+    /// “date dropped” warning on every later job of the batch.
+    static func items(for source: AVAsset,
+                      keepCreationDate: Bool,
+                      stripAllMetadata: Bool) async -> [AVMetadataItem] {
         guard keepCreationDate, !stripAllMetadata, !sessionDisabled else { return [] }
         let common = (try? await source.load(.commonMetadata)) ?? []
         let src = common.first {

@@ -623,10 +623,10 @@ struct PresetManagerSheet: View {
             .sheet(item: $editingPreset) { preset in
                 PresetEditorView(existing: preset) { p in saved(p) }
             }
-            .confirmationDialog(
-                "Delete \"\(pendingDelete?.name ?? "")\"?",
-                isPresented: $confirmingDelete,
-                titleVisibility: .visible) {
+            // ALERT (not a confirmationDialog): destructive prompts from
+            // anchored dialogs failed on device; alerts need no anchor.
+            .alert("Delete \"\(pendingDelete?.name ?? "")\"?",
+                   isPresented: $confirmingDelete) {
                 Button("Delete", role: .destructive) {
                     if let p = pendingDelete { delete(p) }
                     pendingDelete = nil
