@@ -103,6 +103,13 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.4 — build 30 (verify phase can no longer stick)
+
+Device report: a job sat on “Verifying output integrity…” indefinitely (done only after force-quitting and relaunching). Three hardening changes in the verify phase:
+- The verify watchdog was a ONE-SHOT 75 s sleep gated on device uptime — but its sleep runs on the CONTINUOUS clock, which advances while uptime freezes (device sleep / app suspension mid-verify). One suspension could consume the watchdog without it ever acting, leaving a wedged verify with no recovery. The watchdog now RE-ARMS every 5 s and fires as soon as ≥74 s of active time have passed since verify started.
+- Second-level backstop: run() now races the verify call against its own 120 s in-run timer — even a lost watchdog can no longer wedge the row; a timeout synthesizes the honest “verification timed out” report and the job completes.
+- A background revocation landing during verification no longer deletes a FINISHED encode: if the file is already verified and promoted, the job completes as done (the old path marked it failed and deleted the verified file, wasting real work).
+
 ### v1.8.3 — build 29 (scroll fix for many cards)
 
 - Swipe-to-delete's drag gesture was attached with `.simultaneousGesture`, so every finished card ran a drag recognizer alongside the scroll view's pan. With a long list, the recognizers fought: vertical drags that started ON a card stalled instead of scrolling, and only touches on the background between cards scrolled. The gesture is now exclusive (`.gesture`) — SwiftUI's ScrollView resolves by direction: vertical drags scroll (from anywhere, cards included), horizontal drags swipe the card.

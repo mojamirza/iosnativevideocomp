@@ -501,23 +501,59 @@ final class JobCoordinator: ObservableObject {
             // MONOTONIC deadline (systemUptime, not Date()): wall-clock
             // jumps (NTP sync, timezone) could fire the backstop early or
             // late. systemUptime is monotonic.
+            // RE-ARMING (device report, v1.8.3): the old ONE-SHOT 75 s sleep
+            // was gated on uptime — but Task.sleep runs on the CONTINUOUS
+            // clock, which advances while systemUptime FREEZES (device
+            // sleep/app suspension mid-verify). One suspension could consume
+            // the watchdog without it acting, leaving a wedged verify with
+            // no recovery — the row stuck on “Verifying…” until relaunch.
+            // The backstop now re-arms every 5 s and fires as soon as ≥74 s
+            // of ACTIVE time have passed.
             let verifyDeadline = ProcessInfo.processInfo.systemUptime
             verifyWatchdogs[jobID] = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 75_000_000_000)
-                guard !Task.isCancelled else { return }
-                self?.forceVerifyTerminal(jobID: jobID, output: output,
-                                          encodeSeconds: Date().timeIntervalSince(encodeStart),
-                                          startedAt: verifyDeadline)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    if ProcessInfo.processInfo.systemUptime - verifyDeadline >= 74 {
+                        self.forceVerifyTerminal(jobID: jobID, output: output,
+                                                 encodeSeconds: Date().timeIntervalSince(encodeStart),
+                                                 startedAt: verifyDeadline)
+                        return
+                    }
+                }
             }
 
-            // Integrity verification (third pillar).
-            let report = await IntegrityVerifier.verify(
-                source: job.sourceURL,
-                output: output,
-                probe: plan.source,
-                plan: plan,
-                encodeSeconds: Date().timeIntervalSince(encodeStart)
-            )
+            // Integrity verification (third pillar) — raced against a SECOND
+            // hard backstop INSIDE run(): even if the watchdog Task above is
+            // ever lost (suspension gap, cancellation), this guarantees run()
+            // receives A report and the row can never stick on “Verifying…”.
+            let report: IntegrityReport = await withTaskGroup(
+                of: IntegrityReport?.self) { group in
+                group.addTask {
+                    await IntegrityVerifier.verify(
+                        source: job.sourceURL,
+                        output: output,
+                        probe: plan.source,
+                        plan: plan,
+                        encodeSeconds: Date().timeIntervalSince(encodeStart)
+                    )
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 120_000_000_000)
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                return first ?? IntegrityReport(
+                    items: [ReportItem("verify", "Verification timed out",
+                        "The integrity checks did not finish; the output was finalized by the encoder — if it plays in Files, it is good.", .warn)],
+                    inBytes: plan.source.fileSize,
+                    outBytes: ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0,
+                    outputBitrateMbps: nil,
+                    encodeSeconds: Date().timeIntervalSince(encodeStart),
+                    outputDuration: nil)
+            }
             // The watchdog is no longer needed — a fast Retry must not race
             // it during the NEXT verification. (Per-row: only THIS job's
             // watchdog is cancelled; a concurrent verify keeps its own.)
@@ -575,15 +611,19 @@ final class JobCoordinator: ObservableObject {
                 }
                 // A cancel that landed during verification: honour it — remove
                 // the row entirely, unless iOS interrupted us (then keep a
-                // retryable failed row).
+                // retryable failed row). INTERRUPTED-BUT-COMPLETED: when the
+                // revocation landed while verification was running, the
+                // encode is FINISHED and the file is verified + promoted —
+                // complete as done instead of deleting real work (the old
+                // markInterrupted path threw away a good encode).
                 if flags.cancelled {
                     if systemInterrupted.contains(jobID) {
-                        markInterrupted(jobID: jobID, output: promoted)
+                        systemInterrupted.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
+                        try? await Task.sleep(nanoseconds: 200_000_000)
+                        return
                     }
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                    return
                 }
                 saveRecord(jobID: jobID, outputName: promoted.lastPathComponent,
                            report: reportData, state: "done")
