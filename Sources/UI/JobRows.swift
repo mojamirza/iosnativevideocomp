@@ -1160,7 +1160,15 @@ private struct SwipeToDeleteModifier: ViewModifier {
                     .opacity(revealed ? 1 : 0)
                     .allowsHitTesting(revealed)
             }
-            .simultaneousGesture(dragGesture)
+            // EXCLUSIVE gesture (NOT simultaneous): a simultaneous drag
+            // recognizer tracked every touch on the card alongside the
+            // scroll view's pan — with many cards the two recognizers
+            // fought, vertical drags ON CARDS stalled, and only touches on
+            // the background between cards scrolled (device report).
+            // SwiftUI's ScrollView resolves an exclusive DragGesture by
+            // DIRECTION: vertical drags belong to the scroll, horizontal
+            // drags activate the swipe.
+            .gesture(dragGesture)
     }
 
     private var deleteButton: some View {

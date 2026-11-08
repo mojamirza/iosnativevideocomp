@@ -103,6 +103,10 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.3 — build 29 (scroll fix for many cards)
+
+- Swipe-to-delete's drag gesture was attached with `.simultaneousGesture`, so every finished card ran a drag recognizer alongside the scroll view's pan. With a long list, the recognizers fought: vertical drags that started ON a card stalled instead of scrolling, and only touches on the background between cards scrolled. The gesture is now exclusive (`.gesture`) — SwiftUI's ScrollView resolves by direction: vertical drags scroll (from anywhere, cards included), horizontal drags swipe the card.
+
 ### v1.8.2 — build 28 (no more card churn during encodes)
 
 - The ⋯ menu (and every finished card) visibly “ticked” while a compression ran: progress ticks republish the whole `jobs` array twice a second, and each tick re-rendered EVERY card — including unchanged finished ones — which on iPadOS 26 made the ⋯ menu flash like a lightbulb. Cards now skip re-renders when nothing they render changed: `Job` is `Equatable` and `JobRowView` compares `job` + the three coordinator values it renders (selection mode, own selection, queued count) instead of subscribing to the whole coordinator. The encoding card still updates live; unchanged cards are left completely untouched.
