@@ -7,21 +7,11 @@ import AVFoundation
 // Root screen: pillar banner + list of compression jobs,
 // with the "compressing row" (progress + cancel + error + report).
 
-// The sidebar's navigation destinations. Exactly ONE exists — the queue
-// (the app's main page) — and the detail column renders it unconditionally.
-// The selection exists purely so the SYSTEM owns compact-width navigation:
-// the queue pushes with a native back button, and popping it returns to the
-// sidebar. (A custom back button writing `columnVisibility` cannot dismiss
-// a compact sidebar — SwiftUI ignores programmatic visibility changes in
-// that presentation, which is exactly why the v1.6.1 Back button was dead.)
-private enum SidebarDestination: Hashable {
-    case queue
-}
-
 struct RootView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     @State private var showingSetup = false
     @State private var importedVideos: [PickedVideo] = []
@@ -35,33 +25,99 @@ struct RootView: View {
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
     @State private var confirmingClearFinished = false
-    /// Pre-selected so compact widths push the main page at launch; popping
-    /// it with the system back button reveals the sidebar. In regular
-    /// widths it just marks the sidebar's active column.
-    @State private var selection: SidebarDestination? = .queue
+
+    // COMPACT DRAWER (tiny windowed/Split View widths): the MAIN PAGE is the
+    // base layer and the sidebar slides OVER it — edge-swipe opens, swipe
+    // left / backdrop tap / Done closes. NavigationSplitView's compact
+    // presentations kept landing on the sidebar and offered no reliable way
+    // back (programmatic columnVisibility is ignored while presented, and a
+    // pre-set selection did not push the detail on iPadOS 26), so compact is
+    // owned by this drawer; regular widths keep the side-by-side split view.
+    @State private var sidebarOpen = false
+    /// Live drag position 0…1 (nil while not dragging).
+    @State private var dragProgress: CGFloat?
+    /// Progress when the current drag began.
+    @State private var dragAnchor: CGFloat?
 
     var body: some View {
+        if hSizeClass == .compact {
+            compactShell
+        } else {
+            regularShell
+        }
+    }
+
+    // MARK: shells
+
+    /// Regular/fullscreen widths: the classic side-by-side split view.
+    private var regularShell: some View {
         NavigationSplitView {
-            sidebar
+            sidebarList
         } detail: {
             interactiveList
         }
     }
 
-    /// The NavigationSplitView sidebar — a lean utility column headed by the
-    /// single selection destination ("Queue", the main page) so the system
-    /// drives compact-width push/pop with a native back button, followed by
-    /// the lifetime savings, preset management and settings. Import lives in
-    /// the detail column (toolbar, empty state, drag & drop) and queue
-    /// controls live on the queue itself.
-    private var sidebar: some View {
-        List(selection: $selection) {
-            // The single destination row: tapping it in compact pushes the
-            // main page; in regular it marks the active column (the native
-            // split-view sidebar pattern, like Mail's mailbox list).
-            Label("Queue", systemImage: "list.bullet")
-                .tag(SidebarDestination.queue)
+    /// Compact widths: main page first, sidebar as an interactive drawer.
+    private var compactShell: some View {
+        GeometryReader { geo in
+            let drawerWidth = min(320, geo.size.width * 0.82)
+            let progress = drawerProgress
+            ZStack(alignment: .leading) {
+                // MAIN PAGE — the base layer: compact always lands here.
+                // (A NavigationStack hosts it so the toolbar — import
+                // buttons, the drawer opener — keeps rendering outside of
+                // NavigationSplitView.)
+                NavigationStack {
+                    interactiveList
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+                .offset(x: progress * drawerWidth * 0.25)
+                .simultaneousGesture(openEdgeGesture(width: drawerWidth))
 
+                // Backdrop: dims with progress, tap closes.
+                Color.black.opacity(0.35 * Double(progress))
+                    .ignoresSafeArea()
+                    .allowsHitTesting(progress > 0.02)
+                    .onTapGesture { closeDrawer() }
+
+                // SIDEBAR drawer panel.
+                VStack(spacing: 0) {
+                    drawerHeader
+                    sidebarList
+                }
+                .frame(width: drawerWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color.appScreen.ignoresSafeArea())
+                .offset(x: drawerWidth * (progress - 1))
+                .shadow(color: .black.opacity(0.25 * Double(progress)), radius: 18, x: 4)
+                .gesture(closeGesture(width: drawerWidth))
+            }
+        }
+    }
+
+    /// The drawer's own header (no system nav bar in a drawer): title + the
+    /// explicit way back to the main page.
+    private var drawerHeader: some View {
+        HStack {
+            Text("VidCompress")
+                .font(.headline)
+            Spacer()
+            Button {
+                closeDrawer()
+            } label: {
+                Label("Main page", systemImage: "chevron.backward")
+                    .font(.callout.weight(.semibold))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    /// The shared sidebar rows — the regular split-view column AND the
+    /// compact drawer panel both render this.
+    private var sidebarList: some View {
+        List {
             SidebarSavingsSection()
 
             Section("Presets") {
@@ -88,6 +144,59 @@ struct RootView: View {
         // look different between fullscreen and Split View in dark mode.
         .scrollContentBackground(.hidden)
         .background(Color.appScreen)
+    }
+
+    // MARK: compact drawer gestures
+
+    private var drawerProgress: CGFloat {
+        if let dragProgress { return min(max(dragProgress, 0), 1) }
+        return sidebarOpen ? 1 : 0
+    }
+
+    /// Leading-edge swipe (first 16pt, horizontal-dominant) opens the
+    /// drawer — the main page's vertical scroll and the rows' swipe-to-
+    /// delete are untouched (they start further in / dominate vertically).
+    private func openEdgeGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { v in
+                guard v.startLocation.x < 16,
+                      abs(v.translation.width) > abs(v.translation.height) else { return }
+                if dragAnchor == nil { dragAnchor = sidebarOpen ? 1 : 0 }
+                dragProgress = (dragAnchor ?? 0) + v.translation.width / width
+            }
+            .onEnded { v in
+                snapDrawer(finalProgress: dragProgress ?? (sidebarOpen ? 1 : 0),
+                           velocity: v.velocity.width)
+            }
+    }
+
+    /// Horizontal swipe on the drawer panel closes it (flick-aware).
+    private func closeGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { v in
+                guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                if dragAnchor == nil { dragAnchor = sidebarOpen ? 1 : 0 }
+                dragProgress = (dragAnchor ?? 1) + v.translation.width / width
+            }
+            .onEnded { v in
+                snapDrawer(finalProgress: dragProgress ?? (sidebarOpen ? 1 : 0),
+                           velocity: v.velocity.width)
+            }
+    }
+
+    private func snapDrawer(finalProgress: CGFloat, velocity: CGFloat) {
+        let open = finalProgress > 0.5 || velocity > 320
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+            sidebarOpen = open
+        }
+        dragAnchor = nil
+        dragProgress = nil
+    }
+
+    private func closeDrawer() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+            sidebarOpen = false
+        }
     }
 
     private var versionFooter: String {
@@ -372,6 +481,18 @@ struct RootView: View {
         // defeated ToolbarContentBuilder inference (CI type-check error).
         return Group {
             ToolbarItemGroup(placement: .topBarLeading) {
+                // COMPACT DRAWER: the main page owns an explicit opener in
+                // addition to the leading-edge swipe.
+                if hSizeClass == .compact {
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                            sidebarOpen = true
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.leading")
+                    }
+                    .accessibilityLabel("Open sidebar")
+                }
                 // SELECTION mode entry (native list-app pattern): batch save
                 // and batch delete for finished rows.
                 if !coordinator.jobs.isEmpty {
