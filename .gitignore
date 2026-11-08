@@ -17,3 +17,4 @@ joblog.txt
 ci-log*.txt
 
 ci-iconlog.txt
+ci-run-log.txt
