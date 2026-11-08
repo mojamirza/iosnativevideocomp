@@ -186,7 +186,7 @@ enum QualitySizeOptimizer {
         // pure geometric rescale, no tonemapping, tags preserved. Rotated
         // sources scale with transposed encode dimensions so the preferred-
         // transform stays consistent.
-        return OptimizerPlan(
+        var result = OptimizerPlan(
             outputSize: outputSize,
             videoBitrate: videoBitrate,
             audioBitrate: audioBitrate,
@@ -205,9 +205,9 @@ enum QualitySizeOptimizer {
             sdrConvert: preset.hdrToSDR == true && probe.tags.isHDR
         )
         // Policy snapshot rides along (see the field docs on OptimizerPlan).
-        plan.privacyKeepCreationDate = PrivacyScrub.keepCreationDate
-        plan.privacyStripAllMetadata = PrivacyScrub.stripAllMetadata
-        return plan
+        result.privacyKeepCreationDate = PrivacyScrub.keepCreationDate
+        result.privacyStripAllMetadata = PrivacyScrub.stripAllMetadata
+        return result
     }
 
     static func evenSize(_ s: CGSize) -> CGSize {
