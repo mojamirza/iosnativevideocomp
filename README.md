@@ -103,6 +103,10 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.2 — build 28 (no more card churn during encodes)
+
+- The ⋯ menu (and every finished card) visibly “ticked” while a compression ran: progress ticks republish the whole `jobs` array twice a second, and each tick re-rendered EVERY card — including unchanged finished ones — which on iPadOS 26 made the ⋯ menu flash like a lightbulb. Cards now skip re-renders when nothing they render changed: `Job` is `Equatable` and `JobRowView` compares `job` + the three coordinator values it renders (selection mode, own selection, queued count) instead of subscribing to the whole coordinator. The encoding card still updates live; unchanged cards are left completely untouched.
+
 ### v1.8.1 — build 27 (deep re-review fixes)
 
 Full folder-by-folder re-review (App, Engine, Models, Store, UI, Tests). Three fixes from it:

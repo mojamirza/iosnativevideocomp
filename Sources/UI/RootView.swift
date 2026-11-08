@@ -486,7 +486,8 @@ struct RootView: View {
                         .padding(.horizontal)
                     sectionHeader("In progress", icon: "hourglass", count: active.count)
                     ForEach(active) { job in
-                        JobRowView(job: job)
+                        JobRowView(job: job, coordinator: coordinator)
+                            .equatable()
                             .padding(.horizontal)
                     }
                 }
@@ -499,7 +500,8 @@ struct RootView: View {
                     HistoryHeroCard()
                         .padding(.horizontal)
                     ForEach(finished) { job in
-                        JobRowView(job: job)
+                        JobRowView(job: job, coordinator: coordinator)
+                            .equatable()
                             .padding(.horizontal)
                     }
                 }

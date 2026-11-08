@@ -4,8 +4,14 @@ import AVKit
 
 /// The "compressing row": source info, live progress with cancel, error states
 /// with retry, and the finished row with the output integrity report.
-struct JobRowView: View {
-    @EnvironmentObject private var coordinator: JobCoordinator
+struct JobRowView: View, Equatable {
+    let job: JobCoordinator.Job
+    /// Passed in (not @EnvironmentObject) so the row can SKIP re-renders:
+    /// an EnvironmentObject subscription re-rendered every card twice a
+    /// second during encodes, which made the finished cards' ⋯ menus visibly
+    /// “tick” on iPadOS 26. `==` compares everything the row renders —
+    /// environment reads (size class) bypass == and still update.
+    let coordinator: JobCoordinator
     @Environment(\.horizontalSizeClass) private var hSizeClass
 
     let job: JobCoordinator.Job
@@ -38,6 +44,23 @@ struct JobRowView: View {
     }
     private var isSelectedRow: Bool {
         coordinator.selectedIDs.contains(job.id)
+    }
+
+    /// RENDER-SKIP (see the Job == docs): everything the row renders is
+    /// derived from `job` plus these three coordinator values — a progress
+    /// tick on ANOTHER job compares equal here and the card (and its ⋯
+    /// menu) is left completely untouched. Actions are method calls on the
+    /// shared coordinator instance, so skipping costs nothing.
+    static func == (l: Self, r: Self) -> Bool {
+        l.job == r.job
+            && l.coordinator === r.coordinator
+            && l.coordinator.selectionMode == r.coordinator.selectionMode
+            && l.coordinator.selectedIDs.contains(l.job.id)
+                == r.coordinator.selectedIDs.contains(r.job.id)
+            // Queue-rank shifts (the “next up”/“#N in line” label) always
+            // involve a job entering or leaving the queued set.
+            && l.coordinator.jobs.filter { $0.state == .queued }.count
+                == r.coordinator.jobs.filter { $0.state == .queued }.count
     }
 
     private var displayName: String {
