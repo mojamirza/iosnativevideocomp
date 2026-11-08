@@ -7,11 +7,21 @@ import AVFoundation
 // Root screen: pillar banner + list of compression jobs,
 // with the "compressing row" (progress + cancel + error + report).
 
+// The sidebar's navigation destinations. Exactly ONE exists — the queue
+// (the app's main page) — and the detail column renders it unconditionally.
+// The selection exists purely so the SYSTEM owns compact-width navigation:
+// the queue pushes with a native back button, and popping it returns to the
+// sidebar. (A custom back button writing `columnVisibility` cannot dismiss
+// a compact sidebar — SwiftUI ignores programmatic visibility changes in
+// that presentation, which is exactly why the v1.6.1 Back button was dead.)
+private enum SidebarDestination: Hashable {
+    case queue
+}
+
 struct RootView: View {
     @EnvironmentObject private var coordinator: JobCoordinator
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     @State private var showingSetup = false
     @State private var importedVideos: [PickedVideo] = []
@@ -25,40 +35,33 @@ struct RootView: View {
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
     @State private var confirmingClearFinished = false
-    /// OWNED column visibility: compact widths start on (and fall back to)
-    /// the DETAIL via the sidebar's Back control; regular widths keep the
-    /// classic side-by-side columns.
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Pre-selected so compact widths push the main page at launch; popping
+    /// it with the system back button reveals the sidebar. In regular
+    /// widths it just marks the sidebar's active column.
+    @State private var selection: SidebarDestination? = .queue
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView {
             sidebar
         } detail: {
             interactiveList
         }
-        // COMPACT FALLBACK: a selection-less split view presented the
-        // SIDEBAR as the root at tight Split View widths — the queue became
-        // unreachable, and even the slide-over variant had no close control
-        // (the toggle lives on the detail's bar, which the presented sidebar
-        // covers). The visibility is owned HERE: compact widths show the
-        // main page first and the sidebar carries an explicit Back button;
-        // regular widths keep the two columns side by side.
-        .onAppear {
-            columnVisibility = hSizeClass == .compact ? .detailOnly : .all
-        }
-        .onChange(of: hSizeClass) { _, hsize in
-            columnVisibility = hsize == .compact ? .detailOnly : .all
-        }
     }
 
-    /// The NavigationSplitView sidebar — a lean utility column: the lifetime
-    /// savings headline, preset management (create/edit/duplicate/delete plus
-    /// the metadata policy) and About & Settings. Import lives in the detail
-    /// column (toolbar, empty state, drag & drop) and queue controls live on
-    /// the queue itself (status bar + rows) — the earlier Import/Queue
-    /// sidebar sections duplicated both and crowded the column.
+    /// The NavigationSplitView sidebar — a lean utility column headed by the
+    /// single selection destination ("Queue", the main page) so the system
+    /// drives compact-width push/pop with a native back button, followed by
+    /// the lifetime savings, preset management and settings. Import lives in
+    /// the detail column (toolbar, empty state, drag & drop) and queue
+    /// controls live on the queue itself.
     private var sidebar: some View {
-        List {
+        List(selection: $selection) {
+            // The single destination row: tapping it in compact pushes the
+            // main page; in regular it marks the active column (the native
+            // split-view sidebar pattern, like Mail's mailbox list).
+            Label("Queue", systemImage: "list.bullet")
+                .tag(SidebarDestination.queue)
+
             SidebarSavingsSection()
 
             Section("Presets") {
@@ -85,23 +88,6 @@ struct RootView: View {
         // look different between fullscreen and Split View in dark mode.
         .scrollContentBackground(.hidden)
         .background(Color.appScreen)
-        .toolbar {
-            // COMPACT FALLBACK (the guarantee): the presented sidebar has no
-            // system close control of its own — the toggle lives on the
-            // detail's bar, which the sidebar covers. This explicit Back is
-            // always available at tiny widths to return to the main page.
-            ToolbarItem(placement: .cancellationAction) {
-                Group {
-                    if hSizeClass == .compact {
-                        Button {
-                            columnVisibility = .detailOnly
-                        } label: {
-                            Label("Back to queue", systemImage: "chevron.backward")
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private var versionFooter: String {
