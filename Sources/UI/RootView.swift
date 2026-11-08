@@ -316,6 +316,39 @@ struct RootView: View {
             } message: {
                 Text("The selected videos and their history entries will be removed. This cannot be undone.")
             }
+            // SINGLE-ROW DELETE confirmation — presented HERE (list level),
+            // not in the row: dialogs from inside List rows — worst of all
+            // from a mid-swipe row — silently failed to anchor on iPadOS 26
+            // and the delete appeared to skip confirmation. Swipe actions,
+            // action buttons and ⋯ menus all arm pendingDeleteID.
+            .confirmationDialog(
+                "Delete this item?",
+                isPresented: Binding(
+                    get: { coordinator.pendingDeleteID != nil },
+                    set: { if !$0 { coordinator.pendingDeleteID = nil } }),
+                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { coordinator.confirmPendingDelete() }
+                Button("Keep", role: .cancel) { }
+            } message: {
+                Text("The compressed video and its history entry will be removed. This cannot be undone.")
+            }
+            // SINGLE-ROW CANCEL/STOP confirmation — same root-level anchor.
+            .confirmationDialog(
+                coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
+                    ? "Remove from queue?" : "Stop this compression?",
+                isPresented: Binding(
+                    get: { coordinator.pendingCancelID != nil },
+                    set: { if !$0 { coordinator.pendingCancelID = nil } }),
+                titleVisibility: .visible) {
+                Button(coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
+                       ? "Remove from queue" : "Stop & discard",
+                       role: .destructive) { coordinator.confirmPendingCancel() }
+                Button("Keep going", role: .cancel) { }
+            } message: {
+                Text(coordinator.jobs.first(where: { $0.id == coordinator.pendingCancelID })?.state == .queued
+                     ? "The queued job will be removed from the list."
+                     : "Encoding progress will be lost and the partial file deleted.")
+            }
             // Fat-finger protection for Clear Finished (menu bar).
             .confirmationDialog(
                 "Delete all finished rows?",
@@ -426,53 +459,16 @@ struct RootView: View {
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
     }
 
-    /// The queue screen — TWO branches (both are fixes for real device
-    /// feedback on the v1.7.0 List conversion):
-    /// · EMPTY — the native ContentUnavailableView fills a plain ScrollView.
-    ///   It is designed as a scroll view's ROOT, not a List row: inside a
-    ///   row its layout collapses and its big action buttons (bordered /
-    ///   borderedProminent) don't reliably receive taps on iPadOS 26 —
-    ///   "the big photo and file buttons are broken, the toolbar ones are
-    ///   fine" was exactly this. Outside the List both work.
-    /// · POPULATED — the native inset-grouped List: system swipe actions,
-    ///   section headers/footers and row animation from the framework. The
-    ///   QueueStatusBar is PINNED above it via safeAreaInset: a `.bordered`
-    ///   control inside a List row is not a reliable tap target (the Pause
-    ///   button regressed exactly there), and a pinned bar also stays
-    ///   visible while history scrolls — better than the old in-list slot.
-    @ViewBuilder
+    /// The queue screen — ONE List container for EVERY state (empty or
+    /// not): the previous List↔ScrollView branch flip ran exactly on the
+    /// delete→add path (delete the last row → ScrollView, add → List
+    /// again) and is a container transition SwiftUI animates poorly — a
+    /// device crash was reported right there. When the queue is empty the
+    /// List simply has no sections, and the empty state rides ABOVE it as
+    /// an overlay (NOT a List row: ContentUnavailableView's layout
+    /// collapses and its bordered action buttons don't tap reliably inside
+    /// rows on iPadOS 26 — the v1.7.1 fix, kept).
     private var queueList: some View {
-        if coordinator.jobs.isEmpty {
-            emptyStateScreen
-        } else {
-            populatedList
-        }
-    }
-
-    /// EMPTY ROOT: ContentUnavailableView in its documented container. The
-    /// transient import card and the storage banner ride along above it.
-    private var emptyStateScreen: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if let step = importStep {
-                    ImportStatusCard(step: step)
-                        .padding(.horizontal)
-                }
-                if StorageFallback.inMemoryOnly {
-                    storageFallbackBanner
-                        .padding(.horizontal)
-                }
-                EmptyState(photoItems: $photoItems,
-                           onFiles: { showFiles = true })
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 24)
-            .padding(.bottom, 24)
-        }
-        .background(Color.appScreen)
-    }
-
-    private var populatedList: some View {
         List {
             if let step = importStep {
                 Section {
@@ -525,6 +521,26 @@ struct RootView: View {
         // fullscreen, Split View and Stage Manager all show the same canvas.
         .scrollContentBackground(.hidden)
         .background(Color.appScreen)
+        // EMPTY STATE overlay: fills the blank zero-section canvas and owns
+        // every tap there (the List has no rows to compete with).
+        .overlay {
+            if coordinator.jobs.isEmpty {
+                VStack(spacing: 16) {
+                    if let step = importStep {
+                        ImportStatusCard(step: step)
+                            .padding(.horizontal)
+                    }
+                    if StorageFallback.inMemoryOnly {
+                        storageFallbackBanner
+                            .padding(.horizontal)
+                    }
+                    EmptyState(photoItems: $photoItems,
+                               onFiles: { showFiles = true })
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.appScreen)
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             // LIVE QUEUE BAR — pinned OUTSIDE the List (see queueList docs):
             // its Pause control is a plain SwiftUI tap target here, and the

@@ -10,8 +10,6 @@ struct JobRowView: View {
     let job: JobCoordinator.Job
     @State private var showingReport = false
     @State private var showingPlayer = false
-    @State private var confirmingCancel = false
-    @State private var confirmingDelete = false
     @State private var showingRename = false
     @State private var renameText = ""
     @State private var saveNotice: String?
@@ -106,23 +104,19 @@ struct JobRowView: View {
             }
         }
         .padding(.vertical, 4)
-        // FULL-ROW HIT AREA: without an explicit shape, a tap gesture only
-        // hit-tests RENDERED content — the transparent trailing spacer
-        // (wide, now that rows carry no card background of their own) fell
-        // through to the List, so selection taps missed at the card's end.
-        // An explicit Rectangle shape makes the whole row tappable; child
-        // buttons still win inside their own bounds.
-        .contentShape(Rectangle())
+        // SELECTION TAP (selection mode only): a permanent contentShape +
+        // tap gesture on row content interferes with the List's native
+        // swipe gestures (device report: swiped rows behaved "weird"), so
+        // the full-row hit shape exists ONLY while selection mode is on —
+        // where swipes are disabled anyway. Normal-mode rows keep their
+        // swipe/column gestures untouched. See SelectionTapModifier below.
+        .modifier(SelectionTapModifier(active: inSelectionMode) {
+            coordinator.toggleSelection(job.id)
+        })
         // VoiceOver container: composed summary first, controls stay
         // individually reachable.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(a11ySummary)
-        // Batch selection: tapping anywhere toggles the row.
-        .onTapGesture {
-            if inSelectionMode {
-                coordinator.toggleSelection(job.id)
-            }
-        }
         // HIG: rich content gets a long-press context menu mirroring the ⋯
         // actions (like Files / Photos rows).
         .contextMenu { contextMenuItems }
@@ -137,13 +131,18 @@ struct JobRowView: View {
                 if !inSelectionMode {
                     if [.done, .failed, .cancelled].contains(job.state) {
                         Button(role: .destructive) {
-                            confirmingDelete = true
+                            // ARM ONLY — the confirmation dialog presents
+                            // from the ROOT LIST (RootView), not from this
+                            // mid-swipe row: in-row dialogs are not reliably
+                            // anchored on iPadOS 26 and silently skipped
+                            // the fat-finger step (device report).
+                            coordinator.requestDelete(jobID: job.id)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
                     } else {
                         Button(role: .destructive) {
-                            confirmingCancel = true
+                            coordinator.requestCancel(jobID: job.id)
                         } label: {
                             Label("Stop", systemImage: "stop.fill")
                         }
@@ -162,32 +161,10 @@ struct JobRowView: View {
                     .tint(.accentColor)
                 }
             }
-            // Fat-finger protection for destructive actions.
-            .confirmationDialog(
-            job.state == .queued ? "Remove from queue?" : "Stop this compression?",
-            isPresented: $confirmingCancel,
-            titleVisibility: .visible) {
-            Button(job.state == .queued ? "Remove from queue" : "Stop & discard",
-                   role: .destructive) {
-                coordinator.cancel(jobID: job.id)
-            }
-            Button("Keep going", role: .cancel) {}
-        } message: {
-            Text(job.state == .queued
-                 ? "The queued job will be removed from the list."
-                 : "Encoding progress will be lost and the partial file deleted.")
-        }
-        .confirmationDialog(
-            "Delete this item?",
-            isPresented: $confirmingDelete,
-            titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                coordinator.delete(jobID: job.id)
-            }
-            Button("Keep", role: .cancel) {}
-        } message: {
-            Text("The compressed video and its history entry will be removed. This cannot be undone.")
-        }
+            // Fat-finger confirmations for destructive actions present from
+            // the ROOT LIST (RootView, pendingDeleteID/pendingCancelID) —
+            // NOT from the row: in-row dialogs were silently skipped on
+            // device. Nothing dialog-related is attached here anymore.
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
@@ -523,7 +500,7 @@ struct JobRowView: View {
             case .queued, .analyzing, .compressing, .verifying:
                 // Active jobs: just the cancel button — nothing else.
                 iconButton("xmark.circle.fill", tint: .red,
-                           a11y: "Cancel compression") { confirmingCancel = true }
+                           a11y: "Cancel compression") { coordinator.requestCancel(jobID: job.id) }
 
             case .failed:
                 if sourceExists {
@@ -634,7 +611,7 @@ struct JobRowView: View {
             Button("Keep anyway") { coordinator.keepFailedOutput(jobID: job.id) }
         }
         Divider()
-        Button("Remove from list…", role: .destructive) { confirmingDelete = true }
+        Button("Remove from list…", role: .destructive) { coordinator.requestDelete(jobID: job.id) }
     }
 }
 
@@ -1094,5 +1071,25 @@ private struct OutputPlayerSheet: View {
             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         measureAspect(for: next)
+    }
+}
+
+/// Full-row tap target for BATCH SELECTION, active only while selection
+/// mode is on: .contentShape(Rectangle()) + tap make the whole row
+/// (trailing spacer included) toggle the checkmark — the pre-List bug this
+/// first fixed. Permanent row-wide shapes/gestures interfere with the
+/// List's native swipe gestures, so normal-mode rows get NONE of this.
+private struct SelectionTapModifier: ViewModifier {
+    let active: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .contentShape(Rectangle())
+                .onTapGesture(perform: action)
+        } else {
+            content
+        }
     }
 }

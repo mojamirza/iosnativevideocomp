@@ -776,6 +776,32 @@ final class JobCoordinator: ObservableObject {
     @Published var selectedIDs: Set<UUID> = []
     /// Result notice for batch actions (surfaced as an alert by RootView).
     @Published var batchNotice: String?
+    /// PENDING DESTRUCTIVE ACTIONS — destructive intents from List rows
+    /// (swipe actions, ⋯ menus, action buttons) only ARM here; RootView
+    /// presents the confirmation dialog from the LIST LEVEL, whose
+    /// presentation anchor is stable. A confirmationDialog presented from
+    /// INSIDE a List row — and worst of all from a MID-SWIPE row — is not
+    /// reliably anchored on iPadOS 26: the dialog silently failed, the
+    /// delete appeared to skip the fat-finger step, and the presentation
+    /// conflict left the row half-swiped (device report, v1.7.1).
+    @Published var pendingDeleteID: UUID?
+    @Published var pendingCancelID: UUID?
+
+    /// Arms the destructive actions (see the pending-ID docs above).
+    func requestDelete(jobID: UUID) { pendingDeleteID = jobID }
+    func requestCancel(jobID: UUID) { pendingCancelID = jobID }
+
+    func confirmPendingDelete() {
+        guard let id = pendingDeleteID else { return }
+        pendingDeleteID = nil
+        delete(jobID: id)
+    }
+
+    func confirmPendingCancel() {
+        guard let id = pendingCancelID else { return }
+        pendingCancelID = nil
+        cancel(jobID: id)
+    }
 
     func enterSelectionMode() {
         selectionMode = true
@@ -1024,7 +1050,9 @@ final class JobCoordinator: ObservableObject {
             predicate: #Predicate { $0.jobID == jobID })
         if let r = try? context.fetch(descriptor).first {
             r.stateRaw = state.rawValue
-            try? context.save()
+            do { try context.save() } catch {
+                NSLog("VidCompress: state save failed for \(jobID.uuidString): \(error)")
+            }
         }
     }
 
@@ -1422,16 +1450,32 @@ final class JobCoordinator: ObservableObject {
             trimEnd: job.trimEnd
         )
         context.insert(record)
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            NSLog("VidCompress: saving record for \(jobID.uuidString) failed: \(error)")
+        }
     }
 
     private func removeRecord(jobID: UUID) {
         guard let context = modelContext else { return }
         let descriptor = FetchDescriptor<JobRecord>(predicate: #Predicate { $0.jobID == jobID })
-        if let records = try? context.fetch(descriptor) {
+        // DELETE + SAVE + VERIFY: a silently failed save left deleted rows
+        // alive across relaunches (device report, v1.7.1) — and a context
+        // still holding a half-deleted record then CRASHED the next insert
+        // ("add a video → crash"). Retry the delete once and verify the
+        // store actually dropped it; log loudly when it didn't.
+        for attempt in 1...2 {
+            guard let records = try? context.fetch(descriptor), !records.isEmpty else { return }
             for r in records { context.delete(r) }
-            try? context.save()
+            do {
+                try context.save()
+            } catch {
+                NSLog("VidCompress: record save failed (attempt \(attempt)): \(error)")
+            }
+            if (try? context.fetch(descriptor))?.isEmpty == true { return }
         }
+        NSLog("VidCompress: record \(jobID.uuidString) could NOT be removed from the store")
     }
 
     // MARK: helpers

@@ -103,6 +103,14 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.7.3 — build 24 (swipe/delete reliability + crash fix)
+
+Three device-reported issues around the new swipe-to-delete, all rooted in presenting destructive confirmations FROM INSIDE List rows:
+- Swipe delete skipped the fat-finger confirmation and behaved erratically: a `confirmationDialog` presented from a mid-swipe List row is not reliably anchored on iPadOS 26 — it silently failed. Destructive intents (swipe, ⋯ menu, action buttons) now only ARM a pending request on the coordinator; the confirmation presents from the ROOT LIST with a stable anchor. Applies to Stop/Remove-from-queue too.
+- Crash when adding a video after a delete + deleted row reappearing after relaunch: the SwiftData record removal could fail silently (`try? save`), leaving a half-deleted record in the context — the next insert then crashed, and the record survived relaunches. `removeRecord` now DELETE + SAVE + VERIFY (with one retry) and all record saves log failures loudly instead of swallowing them.
+- The row-wide `contentShape(Rectangle())` tap target (v1.7.1 selection fix) interfered with the List's native swipe gestures — it is now applied ONLY in selection mode, where swipes are disabled anyway.
+- The queue screen no longer flips containers between List and ScrollView on the empty↔populated transition (that flip sat exactly on the reported delete→add crash path): the empty state is an overlay over the always-present List.
+
 ### v1.7.2 — build 23 (Pause actually stops the encode)
 
 - Pause now stops the queue WHERE IT STANDS: the in-flight encode is cancelled and its job returns to the queue (partial output discarded — VideoToolbox cannot resume a half-written file), so Resume restarts it fresh. The old semantics ("let the in-flight job finish") read on device as a broken button: the progress bar kept climbing through the tap.
