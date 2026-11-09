@@ -199,6 +199,18 @@ struct SetupFlowView: View {
                         }
                     } else if let probe = singleProbe {
                         probeGrid(probe)
+                    } else if analysisDone {
+                        // FAILED PROBE (single video): analyze() completed
+                        // without a usable probe — an indeterminate spinner
+                        // here reads as an app hang (the bottom bar says
+                        // "None of the selected files could be analyzed"
+                        // while the row spins forever; the only exit is
+                        // Cancel). Say what the batch list says per row:
+                        // this video failed to read.
+                        Label("This video couldn't be analyzed — it may be unsupported.",
+                              systemImage: "xmark.octagon")
+                            .font(.callout)
+                            .foregroundStyle(.red)
                     } else {
                         HStack {
                             ProgressView()
