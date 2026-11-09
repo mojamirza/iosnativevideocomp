@@ -90,10 +90,8 @@ struct SetupFlowView: View {
     // nothing in the file depends on it surviving (a re-presented sheet
     // starts harmless).
 
-    @ObservedObject var session: SetupSession
-
-    /// Each durable field is a plain pass-through to the session — reads
-    /// AND writes (`probes[i] = …`, `selectedPreset = …`) both route there.
+    // Each durable field is a plain pass-through to the session — reads
+    // AND writes (`probes[i] = …`, `selectedPreset = …`) both route there.
     private var probes: [ProbeResult?] {
         get { session.probes }
         set { session.probes = newValue }
