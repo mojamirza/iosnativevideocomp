@@ -1132,10 +1132,11 @@ private struct SelectionTapModifier: ViewModifier {
 /// Long-press context menus are OFF while selection mode is on — the native
 /// Photos/Files pattern (tapping long just selects there too) and the
 /// blocking factor for the menu's destructive items firing mid-selection.
-private struct SelectionContextMenuModifier: ViewModifier {
+private struct SelectionContextMenuModifier<Items: View>: ViewModifier {
     let active: Bool
-    let items: () -> some View
+    let items: () -> Items
 
+    @ViewBuilder
     func body(content: Content) -> some View {
         if active {
             content
