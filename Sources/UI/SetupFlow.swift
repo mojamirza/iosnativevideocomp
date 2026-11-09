@@ -212,6 +212,17 @@ struct SetupFlowView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // TARGET-SIZE GATE (single video): the button is disabled BELOW —
+            // this row is the WHY. The preset's target can't fit the clip's
+            // length, so every encode would end in the same verification
+            // failure; the fix is the user picking a larger target.
+            if singleInfeasible {
+                Label("This target can't fit the video's length — pick a larger target.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
             // BEFORE → AFTER story with a proportional bar. The delta uses
             // THE one shared label: growth reads “+8%” (the old max(0, pct)
             // hid it behind “−0%”) and sub-percent savings say “−<1%”.
@@ -283,7 +294,11 @@ struct SetupFlowView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(!canStart)
+            // singleInfeasible / batchNothingStartable: an unreachable
+            // target is not a starting signal — the full encode could only
+            // end in the verification failure the row already predicted
+            // ("Too small" / "Too small for this length").
+            .disabled(!canStart || singleInfeasible || batchNothingStartable)
         }
         .padding(.horizontal, 16)
         // Top inset only matters when content sits above the button (estimate,
@@ -304,6 +319,7 @@ struct SetupFlowView: View {
     private var hasContextRows: Bool {
         errorText != nil
             || (estimateBytes != nil && selectedPreset != nil)
+            || singleInfeasible
     }
 
     // MARK: subviews
@@ -667,10 +683,21 @@ struct SetupFlowView: View {
                         // Per-video OUTPUT estimate next to the input size.
                         if let p = probes[i],
                            analysisDone, let preset = selectedPreset {
-                            Text(String(format: "→ ≈ %.0f MB",
-                                        QualitySizeOptimizer.plan(preset: preset, probe: p).estimatedSizeMB()))
-                                .font(.caption2.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(.tint)
+                            let rowPlan = QualitySizeOptimizer.plan(preset: preset, probe: p)
+                            if rowPlan.targetFeasible {
+                                Text(String(format: "→ ≈ %.0f MB",
+                                            rowPlan.estimatedSizeMB()))
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(.tint)
+                            } else {
+                                // Infeasible: this row will NOT be enqueued
+                                // (the batch gate in start() skips it) — a
+                                // fake "≈ X MB" would promise an output the
+                                // planner already knows it can't reach.
+                                Text("Too small for this length")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.red)
+                            }
                         }
                     }
                     Spacer()
@@ -869,6 +896,9 @@ struct SetupFlowView: View {
         var seconds: Double = 0
         for p in probes where p != nil {
             let plan = QualitySizeOptimizer.plan(preset: preset, probe: p!)
+            // Same agreement as totalBatchOutBytes: infeasible rows are
+            // skipped by the batch gate — they must not dilute the average.
+            guard plan.targetFeasible else { continue }
             bits += Double(plan.videoBitrate) * plan.duration
             seconds += plan.duration
         }
@@ -882,7 +912,13 @@ struct SetupFlowView: View {
         var valid = 0
         var total: Int64 = 0
         for p in probes where p != nil {
-            total += QualitySizeOptimizer.plan(preset: preset, probe: p!).estimatedBytes
+            let plan = QualitySizeOptimizer.plan(preset: preset, probe: p!)
+            // AGREE WITH THE BATCH GATE in start(): infeasible rows are
+            // SKIPPED (never enqueued), so the bar's total must not count
+            // their unreachable outputs — "≈ X MB total" would include
+            // videos the notice says weren't queued.
+            guard plan.targetFeasible else { continue }
+            total += plan.estimatedBytes
             valid += 1
         }
         return valid > 0 ? total : nil
@@ -893,9 +929,37 @@ struct SetupFlowView: View {
         return QualitySizeOptimizer.plan(preset: preset, probe: trimmed(probe))
     }
 
+    /// TARGET-SIZE GATE (single video): the target the preset promises is
+    /// physically unreachable for THIS clip's length (bitrate floor ×
+    /// duration > target). The planner's correction passes can never close
+    /// a gap that big, so the encode would run to completion — minutes per
+    /// video — only to fail at verification. Gated BEFORE it runs instead:
+    /// the button is disabled and the bar explains why.
+    private var singleInfeasible: Bool {
+        guard !isBatch, let plan = estimate else { return false }
+        return !plan.targetFeasible
+    }
+
+    /// BATCH gate, complete form: every valid row is infeasible, so
+    /// pressing Compress could not enqueue a single job — the button is
+    /// disabled instead (the per-row "Too small for this length" text is
+    /// the explanation). Partial batches stay enabled: the good rows go
+    /// through and the skipped ones surface via the coordinator's notice.
+    private var batchNothingStartable: Bool {
+        guard isBatch, analysisDone, let preset = selectedPreset else { return false }
+        let valid = probes.compactMap { $0 }
+        guard !valid.isEmpty else { return false }
+        return valid.allSatisfy {
+            !QualitySizeOptimizer.plan(preset: preset, probe: $0).targetFeasible
+        }
+    }
+
     private var buttonTitle: String {
         if !analysisDone { return "Analyzing…" }
         guard selectedPreset != nil else { return "Choose a preset" }
+        // The gate states itself: a greyed "Compress" that never explains
+        // is the failure mode this round is fixing.
+        if singleInfeasible || batchNothingStartable { return "Target too small" }
         return isBatch ? "Compress \(videos.count) videos" : "Compress"
     }
 
@@ -909,12 +973,25 @@ struct SetupFlowView: View {
         // Commit-time truth for "last used": the preset that actually ran
         // (covers the lecture-mode variant too, which shares the base id).
         PresetStore.setLastUsedPreset(preset.id)
+        // FEASIBILITY GATE: a target-size plan that can't fit the clip's
+        // length (bitrate floor × duration > target) is not enqueued — its
+        // encode would run to completion ONLY to fail at verification (the
+        // planner floors the bitrate; no correction pass can close a gap
+        // that big). Single videos are already blocked at the button
+        // (singleInfeasible); in a BATCH one infeasible file must not hold
+        // the other jobs hostage, so it is skipped with a notice instead.
+        var skippedNames: [String] = []
+        var enqueued = 0
         for i in videos.indices {
             guard let rawProbe = probes[i] else { continue }
             // Single video: plan against the TRIMMED window (estimates, the
             // target-size solve and the encode must all agree).
             let probe = isBatch ? rawProbe : trimmed(rawProbe)
             var plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)
+            if isBatch && !plan.targetFeasible {
+                skippedNames.append(videos[i].url.lastPathComponent)
+                continue
+            }
             if !isBatch {
                 // Per-video adjustments (single video only): rotation, the
                 // trim window and the poster image live on the plan, not the
@@ -929,8 +1006,19 @@ struct SetupFlowView: View {
             }
             coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,
                                 preset: preset, thumbnail: videos[i].thumbnail)
+            enqueued += 1
         }
-        onDone()
+        if !skippedNames.isEmpty {
+            coordinator.skippedNotice = skippedNames.count == 1
+                ? "“\(skippedNames[0])” wasn't queued: the selected target can't fit its length. Pick a larger target for it."
+                : "\(skippedNames.count) videos weren't queued: the selected target can't fit their length. Pick a larger target for them."
+        }
+        // ALL rows infeasible (or none valid): stay in setup so the user can
+        // pick a bigger target — closing the sheet now would read as a no-op
+        // action and make the user hunt for rows that never appeared.
+        if enqueued > 0 {
+            onDone()
+        }
     }
 
     // MARK: preset management

@@ -301,6 +301,17 @@ struct RootView: View {
             } message: {
                 Text(coordinator.batchNotice ?? "")
             }
+            // Setup skipped enqueueing infeasible target-size rows (an
+            // encode that could only end in a verification failure is not
+            // run). The user DESERVES the count: silence would read as
+            // "the app did less than promised".
+            .alert("Videos skipped", isPresented: Binding(
+                get: { coordinator.skippedNotice != nil },
+                set: { if !$0 { coordinator.skippedNotice = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(coordinator.skippedNotice ?? "")
+            }
             // Shortcuts handoff: an unreadable video is removed WITH a
             // notice — silence read as "the action did nothing".
             .alert("Couldn't add video", isPresented: Binding(

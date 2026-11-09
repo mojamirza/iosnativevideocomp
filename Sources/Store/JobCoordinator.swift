@@ -820,6 +820,10 @@ final class JobCoordinator: ObservableObject {
     @Published var selectedIDs: Set<UUID> = []
     /// Result notice for batch actions (surfaced as an alert by RootView).
     @Published var batchNotice: String?
+    /// Setup skipped ENQUEUING target-size-infeasible rows (they would run
+    /// the full encode only to fail at verification); surfaced as an alert
+    /// so "skipped" never reads as "silently did less than promised".
+    @Published var skippedNotice: String?
     /// PENDING DESTRUCTIVE ACTIONS — destructive intents from List rows
     /// (swipe actions, ⋯ menus, action buttons) only ARM here; RootView
     /// presents the confirmation dialog from the LIST LEVEL, whose
