@@ -810,6 +810,10 @@ final class JobCoordinator: ObservableObject {
         removeRecord(jobID: jobID)
         withAnimation { jobs.remove(at: idx) }
         cancelFlags.removeValue(forKey: jobID)
+        // A removed row must not survive as a phantom selection entry (see
+        // pruneSelection) — single deletes from the ⋯ menu can hit rows
+        // inside an active selection.
+        pruneSelection()
     }
 
     // MARK: Batch selection (history)
@@ -861,6 +865,28 @@ final class JobCoordinator: ObservableObject {
         selectedIDs = []
     }
 
+    /// SELECTION HYGIENE: selected IDs that no longer sit on a selectable
+    /// (finished) row are PHANTOMS — the navigation title would advertise
+    /// "N selected" for rows that don't exist, the batch-delete alert would
+    /// name N items of which some are gone, and batch Save would quietly
+    /// skip them (inert). Removable paths (⋯ delete, cancel's removeRow,
+    /// watchdog purges, Clear Finished — reachable from the menu bar
+    /// WHILE selecting) can take a selected row away, so every REMOVAL
+    /// path prunes through here. When NOTHING selectable remains while
+    /// the mode is on, the mode EXITS: the toolbar's Cancel control is
+    /// gated on !jobs.isEmpty and would otherwise vanish (687–688), leaving
+    /// "Select all" + a bottom bar whose actions target nothing — a
+    /// lying, stuck-looking state.
+    private func pruneSelection() {
+        let selectable = Set(jobs
+            .filter { [.done, .failed, .cancelled].contains($0.state) }
+            .map(\.id))
+        selectedIDs.formIntersection(selectable)
+        if selectionMode && selectable.isEmpty {
+            exitSelectionMode()
+        }
+    }
+
     func toggleSelection(_ id: UUID) {
         if selectedIDs.contains(id) {
             selectedIDs.remove(id)
@@ -874,6 +900,10 @@ final class JobCoordinator: ObservableObject {
         selectedIDs = Set(jobs
             .filter { [.done, .failed, .cancelled].contains($0.state) }
             .map(\.id))
+        // Re-selecting is also pruning: a stale selection (phantom IDs that
+        // lost their rows through another removal path) cannot survive a
+        // fresh select-all.
+        pruneSelection()
     }
 
     /// Batch delete: every selected finished row (record + output + import
@@ -951,6 +981,9 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// Deletes every finished row (same per-row delete as the ⋯ menu).
+    /// REACHABLE WHILE SELECTING (menu bar / confirm dialog): without
+    /// pruning, selectedIDs keeps pointing at the deleted rows — the title
+    /// advertises a count that no longer exists and batch Save goes inert.
     func clearFinished() {
         let ids = jobs
             .filter { [.done, .failed, .cancelled].contains($0.state) }
@@ -958,6 +991,9 @@ final class JobCoordinator: ObservableObject {
         for id in ids {
             delete(jobID: id)
         }
+        // delete() prunes per row; when the queue emptied entirely this
+        // also exits selection mode (nothing left to select).
+        pruneSelection()
     }
 
     /// Removes a job's row + record + partial output entirely (used by cancel
@@ -973,6 +1009,10 @@ final class JobCoordinator: ObservableObject {
             withAnimation { jobs.remove(at: idx) }
         }
         refreshMenuState()
+        // Cancel/watchdog removals must not leave a phantom selection entry
+        // behind (pruneSelection also exits the mode when NOTHING
+        // selectable remains).
+        pruneSelection()
     }
 
     /// "Keep anyway" on a failed-integrity row: the verifier is software and
