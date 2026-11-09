@@ -144,8 +144,12 @@ struct JobRowView: View, Equatable {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(a11ySummary)
         // HIG: rich content gets a long-press context menu mirroring the ⋯
-        // actions (like Files / Photos rows).
-        .contextMenu { contextMenuItems }
+        // actions (like Files / Photos rows) — SUPPRESSED during selection
+        // (native multi-select behavior; the menu also routed destructive
+        // actions exactly when the rows are acting as checkmarks).
+        .modifier(SelectionContextMenuModifier(active: inSelectionMode) {
+            contextMenuItems
+        })
     }
 
     private var rowBody: some View {
@@ -1121,6 +1125,22 @@ private struct SelectionTapModifier: ViewModifier {
                 .onTapGesture(perform: action)
         } else {
             content
+        }
+    }
+}
+
+/// Long-press context menus are OFF while selection mode is on — the native
+/// Photos/Files pattern (tapping long just selects there too) and the
+/// blocking factor for the menu's destructive items firing mid-selection.
+private struct SelectionContextMenuModifier: ViewModifier {
+    let active: Bool
+    let items: () -> some View
+
+    func body(content: Content) -> some View {
+        if active {
+            content
+        } else {
+            content.contextMenu { items() }
         }
     }
 }

@@ -25,6 +25,10 @@ struct RootView: View {
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
     @State private var confirmingClearFinished = false
+    /// OWNED split-view column visibility (regular widths): selection mode
+    /// collapses to detail-only so the floating sidebar can never overlay
+    /// the selection toolbar; exiting restores the automatic layout.
+    @State private var regularColumns: NavigationSplitViewVisibility = .automatic
 
     // COMPACT DRAWER (tiny windowed/Split View widths): the MAIN PAGE is the
     // base layer and the sidebar slides OVER it — edge-swipe opens, swipe
@@ -49,9 +53,10 @@ struct RootView: View {
 
     // MARK: shells
 
-    /// Regular/fullscreen widths: the classic side-by-side split view.
+    /// Regular/fullscreen widths: the classic side-by-side split view, with
+    /// OWNED column visibility (selection mode drives it).
     private var regularShell: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $regularColumns) {
             sidebarList
         } detail: {
             interactiveList
@@ -214,19 +219,26 @@ struct RootView: View {
                     isTargeted: $dropActive,
                     perform: handleDrop)
             .overlay { dropTargetOverlay }
-            .navigationTitle("VidCompress")
+            .navigationTitle(
+                // SELECTION MODE shows the count like Photos does; the
+                // shelf title returns on exit.
+                coordinator.selectionMode && !coordinator.selectedIDs.isEmpty
+                    ? "\(coordinator.selectedIDs.count) selected"
+                    : "VidCompress")
             // LARGE title on the split-view detail (the Files/Notes pattern);
             // the compact shell overrides this with .inline below.
             .navigationBarTitleDisplayMode(.large)
             .toolbar { importToolbar }
-            // Batch actions (selection mode): a bottom bar like native
-            // iPadOS list apps — Select all / Save / Delete. Hidden while
-            // the compact drawer is open (it floats in the system toolbar
-            // layer and clashed with the drawer — device report).
+            // Batch actions (selection mode): Save/Delete hug the TRAILING
+            // edge (a leading Spacer keeps them clear of any overlay that
+            // slides in from the leading edge — iPadOS 26's floating sidebar
+            // covered a leading "Select all" on device). "Select all" itself
+            // lives in the TOP bar while selecting (the native Mail
+            // pattern), never behind anything. Hidden while the compact
+            // drawer is open (it floats in the system-toolbar layer).
             .toolbar {
                 if coordinator.selectionMode && !mainChromeHiddenByDrawer {
                     ToolbarItemGroup(placement: .bottomBar) {
-                        Button("Select all") { coordinator.selectAllFinished() }
                         Spacer()
                         Button {
                             Task { await coordinator.saveSelectedToPhotos() }
@@ -234,7 +246,6 @@ struct RootView: View {
                             Label("Save", systemImage: "square.and.arrow.down")
                         }
                         .disabled(coordinator.selectedIDs.isEmpty)
-                        Spacer()
                         Button(role: .destructive) {
                             confirmingBatchDelete = true
                         } label: {
@@ -667,19 +678,40 @@ private struct HistoryHeroCard: View {
                     .accessibilityLabel("Open sidebar")
                 }
                 // SELECTION mode entry (native list-app pattern): batch save
-                // and batch delete for finished rows.
+                // and batch delete for finished rows. On regular widths the
+                // split view CLOSES ITS SIDEBAR while selecting — the
+                // floating sidebar slid over the selection bottom bar's
+                // leading area on device (the "Select all fell behind" bug
+                // is structurally impossible then: trailing-anchored items
+                // only, sidebar closed). Exiting selects restores it.
                 if !coordinator.jobs.isEmpty {
                     Button(coordinator.selectionMode ? "Cancel" : "Select") {
                         if coordinator.selectionMode {
                             coordinator.exitSelectionMode()
+                            if hSizeClass != .compact {
+                                withAnimation {
+                                    regularColumns = .automatic
+                                }
+                            }
                         } else {
                             coordinator.enterSelectionMode()
+                            if hSizeClass != .compact {
+                                withAnimation {
+                                    regularColumns = .detailOnly
+                                }
+                            }
                         }
                     }
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if !coordinator.selectionMode {
+                if coordinator.selectionMode {
+                    // SELECT ALL lives in the TOP bar during selection (the
+                    // native Mail pattern) — the leading slot of a bottom
+                    // bar is exactly where iPadOS 26's floating sidebar
+                    // overlays landed on it (device report).
+                    Button("Select all") { coordinator.selectAllFinished() }
+                } else {
                     // DIRECT toolbar buttons: a PhotosPicker nested inside a
                     // Menu is unreliable on device (the sheet can be swallowed
                     // by the menu's dismissal). The empty-state pickers — which
