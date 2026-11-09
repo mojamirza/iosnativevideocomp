@@ -155,6 +155,15 @@ struct SetupFlowView: View {
     /// estimate and Compress stay reachable without scrolling past 5+ preset
     /// rows.
     @State private var showingAllPresets = false
+    /// RE-ENTRANT START GUARD: the Compress button stays enabled until the
+    /// sheet actually dismisses (onDone → showingSetup = false → dismissal
+    /// animation), so a fast double tap re-enters the still-mounted button's
+    /// action and enqueues the whole batch TWICE — per video: two SwiftData
+    /// rows (insert+save is real work, widest window precisely on large
+    /// batches), two encodes racing one import copy, and when the first
+    /// job completes it removes that copy so the duplicate can never run.
+    /// Transient by design: a fresh sheet is a fresh instance.
+    @State private var didEnqueue = false
 
     var availablePresets: [Preset] { Preset.builtIn + customPresets }
 
@@ -402,7 +411,10 @@ struct SetupFlowView: View {
             // target is not a starting signal — the full encode could only
             // end in the verification failure the row already predicted
             // ("Too small" / "Too small for this length").
-            .disabled(!canStart || singleInfeasible || batchNothingStartable)
+            // didEnqueue: commit already ran (double-tap re-entrancy) — the
+            // remaining taps until dismissal are no-ops.
+            .disabled(!canStart || singleInfeasible || batchNothingStartable
+                      || didEnqueue)
         }
         .padding(.horizontal, 16)
         // Top inset only matters when content sits above the button (estimate,
@@ -1092,6 +1104,10 @@ struct SetupFlowView: View {
         // reach a subscript (the reviewer's latent OOB; never observed on
         // device, but a one-line guard beats a crash).
         guard session.probes.count == videos.count else { return }
+        // COMMIT GUARD: the enqueues below must happen exactly once for
+        // this session — see didEnqueue (double tap = double batch).
+        guard !didEnqueue else { return }
+        didEnqueue = true
         // Commit-time truth for "last used": the preset that actually ran
         // (covers the lecture-mode variant too, which shares the base id).
         PresetStore.setLastUsedPreset(preset.id)
@@ -1137,9 +1153,13 @@ struct SetupFlowView: View {
         }
         // ALL rows infeasible (or none valid): stay in setup so the user can
         // pick a bigger target — closing the sheet now would read as a no-op
-        // action and make the user hunt for rows that never appeared.
+        // action and make the user hunt for rows that never appeared. The
+        // guard RE-ARMS there: nothing was enqueued, so the next tap (with a
+        // bigger preset) must be allowed to run.
         if enqueued > 0 {
             onDone()
+        } else {
+            didEnqueue = false
         }
     }
 
