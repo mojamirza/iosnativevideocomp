@@ -29,6 +29,13 @@ struct RootView: View {
     /// collapses to detail-only so the floating sidebar can never overlay
     /// the selection toolbar; exiting restores the automatic layout.
     @State private var regularColumns: NavigationSplitViewVisibility = .automatic
+    /// DURABLE SETUP SESSION: owned HERE — outside the compact/regular body
+    /// branches — so the shell swap across the size-class threshold (which
+    /// tears the setup sheet's subtree down and re-presents it with
+    /// showingSetup still true) cannot take the user's session with it:
+    /// probes, the trim window, rotation, a picked poster and the preset
+    /// choice all survive the re-presentation. Reset on every NEW import.
+    @StateObject private var setupSession = SetupSession()
 
     // COMPACT DRAWER (tiny windowed/Split View widths): the MAIN PAGE is the
     // base layer and the sidebar slides OVER it — edge-swipe opens, swipe
@@ -383,7 +390,8 @@ struct RootView: View {
                 setupSheetDismiss()
             }) {
                 SetupFlowView(videos: importedVideos,
-                              onDone: { showingSetup = false })
+                              onDone: { showingSetup = false },
+                              session: setupSession)
                     .presentationDetents([.large])
             }
             // MENU BAR sheets (File → New Preset, Help → About & Settings).
@@ -786,6 +794,11 @@ private struct HistoryHeroCard: View {
                 importError = "The dropped videos could not be imported."
             } else {
                 importedVideos = picked
+                // NEW import → fresh session (see the comment at the other
+                // import paths): the drop path matches pick/library, so a
+                // cancelled run of the same files also doesn't resurrect
+                // a stale session.
+                setupSession.reset(for: picked)
                 showingSetup = true
             }
         }
@@ -818,6 +831,13 @@ private struct HistoryHeroCard: View {
             importError = "The selected videos could not be imported."
         } else {
             importedVideos = picked
+            // NEW import → fresh session: a cancelled run of the SAME
+            // files must not resurrect its trim/rotation/poster (a
+            // 5-second trim the user had abandoned would silently
+            // reappear). Shell-swap REPLAY keeps its session precisely
+            // because this runs only on the import paths — not on
+            // re-presentation.
+            setupSession.reset(for: picked)
             showingSetup = true
         }
     }
@@ -844,6 +864,13 @@ private struct HistoryHeroCard: View {
             importError = "The selected files could not be copied into the app's storage."
         } else {
             importedVideos = picked
+            // NEW import → fresh session: a cancelled run of the SAME
+            // files must not resurrect its trim/rotation/poster (a
+            // 5-second trim the user had abandoned would silently
+            // reappear). Shell-swap REPLAY keeps its session precisely
+            // because this runs only on the import paths — not on
+            // re-presentation.
+            setupSession.reset(for: picked)
             showingSetup = true
         }
     }

@@ -9,6 +9,59 @@ struct PickedVideo: Identifiable {
     var thumbnail: UIImage?
 }
 
+/// DURABLE SETUP SESSION: every piece of setup state a user could lose to a
+/// RE-PRESENTED sheet. RootView's compact/regular shell swap (dragging the
+/// Split View divider across the horizontal size-class threshold) tears the
+/// setup sheet's whole subtree down and re-presents it with `showingSetup`
+/// still true — @State dies with the subtree, so the v1.8.0 fix preserved
+/// only the IMPORT COPIES while the visible session (probes, the trim
+/// window, rotation, a picked poster, the preset choice) reset silently.
+/// The dangerous variant: a 5-second trim vanishes without any visible
+/// sign, and the next Compress encodes the UNTRIMMED clip.
+///
+/// Owned by RootView (`@StateObject`), passed into every built
+/// SetupFlowView. Analyze() is IDEMPOTENT against the same video set
+/// (shell-swap replay adds nothing) and calls `reset(for:)` itself when a
+/// DIFFERENT video set arrives, so RootView's import paths need no
+/// reset calls of their own.
+@MainActor
+final class SetupSession: ObservableObject {
+    @Published var probes: [ProbeResult?] = []
+    @Published var analysisDone = false
+    @Published var errorText: String?
+    @Published var selectedPreset: Preset?
+    @Published var customPresets: [Preset] = PresetStore.loadCustom()
+    // ADJUST (single video): trim window, rotation, poster.
+    @Published var rotation = 0
+    @Published var trimStart = 0.0
+    @Published var trimEnd = 0.0
+    /// Filmstrip frames — slot i owns one eighth of the strip (nil slot =
+    /// failed grab; see SetupFlowView for the full contract).
+    @Published var filmstrip: [UIImage?] = []
+    @Published var posterData: Data?
+    @Published var posterPreview: UIImage?
+
+    /// Paths whose probes/adjust-state this session describes. A shell-swap
+    /// re-presentation of the SAME import reuses everything above; a
+    /// genuinely NEW import (different set) starts fresh — reset() below.
+    private(set) var videoKeys: [String] = []
+
+    /// Fresh session state for a new import.
+    func reset(for videos: [PickedVideo]) {
+        probes = Array(repeating: nil, count: videos.count)
+        analysisDone = false
+        errorText = nil
+        selectedPreset = nil
+        rotation = 0
+        trimStart = 0
+        trimEnd = 0
+        filmstrip = []
+        posterData = nil
+        posterPreview = nil
+        videoKeys = videos.map { $0.url.standardizedFileURL.path }
+    }
+}
+
 /// Shown right after picking video(s): probe summary, preset selection with a
 /// live *estimated output size / bitrate*, and the Compress button.
 /// A batch (N > 1) applies ONE preset to all videos; per-file estimates and
@@ -18,27 +71,79 @@ struct SetupFlowView: View {
 
     let videos: [PickedVideo]
     let onDone: () -> Void
+    /// DURABLE SETUP SESSION — owned by RootView (SetupSession doc below).
+    /// The shell swap across the compact/regular threshold tears this
+    /// sheet's whole subtree down and re-presents it; @State dies with the
+    /// subtree, so everything worth keeping lives HERE.
+    @ObservedObject var session: SetupSession
 
-    @State private var probes: [ProbeResult?]
-    @State private var analysisDone = false
-    @State private var errorText: String?
-    @State private var selectedPreset: Preset?
-    @State private var customPresets: [Preset] = PresetStore.loadCustom()
+    // DURABLE per-import state (see SetupSession): probes, analysis flag,
+    // preset selection, adjust state (trim/rotation), the filmstrip frames
+    // and the poster. A shell swap (dragging the Split View divider over
+    // the compact/regular threshold) tears the sheet's subtree down and
+    // re-presents it; @State dies with the subtree — sessions live on the
+    // RootView-owned ObservableObject instead. Accessed below through
+    // GET/SET computed properties of the same names, so every existing
+    // read/write site stays untouched.
+    //
+    // TRANSIENT UI state stays @State: it reinitializes on the swap and
+    // nothing in the file depends on it surviving (a re-presented sheet
+    // starts harmless).
+
+    @ObservedObject var session: SetupSession
+
+    /// Each durable field is a plain pass-through to the session — reads
+    /// AND writes (`probes[i] = …`, `selectedPreset = …`) both route there.
+    private var probes: [ProbeResult?] {
+        get { session.probes }
+        set { session.probes = newValue }
+    }
+    private var analysisDone: Bool {
+        get { session.analysisDone }
+        set { session.analysisDone = newValue }
+    }
+    private var errorText: String? {
+        get { session.errorText }
+        set { session.errorText = newValue }
+    }
+    private var selectedPreset: Preset? {
+        get { session.selectedPreset }
+        set { session.selectedPreset = newValue }
+    }
+    private var customPresets: [Preset] {
+        get { session.customPresets }
+        set { session.customPresets = newValue }
+    }
+    private var rotation: Int {
+        get { session.rotation }
+        set { session.rotation = newValue }
+    }
+    private var trimStart: Double {
+        get { session.trimStart }
+        set { session.trimStart = newValue }
+    }
+    private var trimEnd: Double {
+        get { session.trimEnd }
+        set { session.trimEnd = newValue }
+    }
+    private var filmstrip: [UIImage?] {
+        get { session.filmstrip }
+        set { session.filmstrip = newValue }
+    }
+    private var posterData: Data? {
+        get { session.posterData }
+        set { session.posterData = newValue }
+    }
+    private var posterPreview: UIImage? {
+        get { session.posterPreview }
+        set { session.posterPreview = newValue }
+    }
+
+    // TRANSIENT UI state: editor sheets, inline preview plumbing, "Change…"
+    // expansion, the PhotosPicker's item cache.
     @State private var showEditor = false
     @State private var editingPreset: Preset?
-    // ADJUST (single video): rotate + trim with a thumbnail filmstrip,
-    // plus a custom poster image (embedded as the output's artwork).
-    @State private var rotation: Int = 0
-    @State private var trimStart: Double = 0
-    @State private var trimEnd: Double = 0
-    // Each SLOT is always present after load (nil = that frame failed to
-    // grab): slot i must own exactly one eighth of the strip, otherwise a
-    // failed mid-frame shrinks every later frame's slot and the trim window
-    // no longer lines up with the times it represents.
-    @State private var filmstrip: [UIImage?] = []
     @State private var posterItem: PhotosPickerItem?
-    @State private var posterData: Data?
-    @State private var posterPreview: UIImage?
     // INLINE TRIM PREVIEW: an AVPlayer over the ORIGINAL file that plays
     // exactly [trimStart, trimEnd). What you set is what you see.
     @State private var previewPlayer: AVPlayer?
@@ -57,10 +162,11 @@ struct SetupFlowView: View {
 
     var isBatch: Bool { videos.count > 1 }
 
-    init(videos: [PickedVideo], onDone: @escaping () -> Void) {
+    init(videos: [PickedVideo], onDone: @escaping () -> Void,
+         session: SetupSession) {
         self.videos = videos
         self.onDone = onDone
-        _probes = State(initialValue: Array(repeating: nil, count: videos.count))
+        self.session = session
     }
 
     var body: some View {
@@ -346,8 +452,8 @@ struct SetupFlowView: View {
             // handles (live time labels) and a middle drag that moves the
             // whole window — replaces the two slider rows + nudge buttons.
             TrimFilmstripPicker(frames: filmstrip,
-                                start: $trimStart,
-                                end: $trimEnd,
+                                start: $session.trimStart,
+                                end: $session.trimEnd,
                                 duration: probe.duration,
                                 onDrag: { stopPreview() })
             Text("Keeping \(timeString(trimEnd - trimStart)) of \(timeString(probe.duration))")
@@ -511,17 +617,22 @@ struct SetupFlowView: View {
         // The cutoff observer is (re)attached on every start and removed on
         // every stop: it cuts playback at the live trimEnd (State reads
         // through storage, so dragging the end handle while playing is
-        // honored too).
+        // honored too). MUXER ANCHOR: trim values are OUTPUT-timeline
+        // seconds, but this player runs on the SOURCE timeline, which
+        // starts at the probe's startOffset (edited/exported clips carry a
+        // nonzero anchor). The engine seeks the encoder the same way
+        // (plan.source.startOffset + trim) — the preview must, too.
+        let anchor = singleProbe?.startOffset ?? 0
         previewObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(value: 1, timescale: 10),
             queue: .main) { time in
-                if CMTimeGetSeconds(time) >= trimEnd
-                    || CMTimeGetSeconds(time) < trimStart - 0.05 {
+                if CMTimeGetSeconds(time) >= anchor + trimEnd
+                    || CMTimeGetSeconds(time) < anchor + trimStart - 0.05 {
                     stopPreview()
                 }
             }
         previewIsPlaying = true
-        startPreviewPriming(player, at: trimStart)
+        startPreviewPriming(player, at: anchor + trimStart)
     }
 
     /// FIRST-FRAME PRIMING (the 180°-rotation flash): a fresh AVPlayer has
@@ -589,7 +700,15 @@ struct SetupFlowView: View {
         let count = 8
         var imgs: [UIImage?] = Array(repeating: nil, count: count)
         for i in 0..<count {
-            let t = CMTime(seconds: probe.duration * (Double(i) + 0.5) / Double(count),
+            // MUXER ANCHOR: the strip's labels count OUTPUT-timeline time
+            // (0…duration), so its frames must be sampled at
+            // startOffset + slot seconds — the same raw-time mapping the
+            // engine uses when it reads the trim window on the real file.
+            // Without the anchor a shifted-source strip showed frames from
+            // BEFORE the export anchor ("what you set is what you see"
+            // violated by exactly the anchor amount).
+            let t = CMTime(seconds: probe.startOffset
+                                + probe.duration * (Double(i) + 0.5) / Double(count),
                            preferredTimescale: 600)
             if let (img, _) = try? await gen.image(at: t) {
                 imgs[i] = UIImage(cgImage: img)
@@ -1056,6 +1175,18 @@ struct SetupFlowView: View {
     // MARK: analysis
 
     private func analyze() async {
+        // SHELL-SWAP IDEMPOTENCE: the compact/regular threshold swap tears
+        // this sheet down and re-presents it (.task re-fires) while the
+        // RootView-owned session already holds this import's FULL analysis
+        // — re-running would re-probe the entire batch and re-init the
+        // trim window, discarding the user's adjustment. Same set + done →
+        // nothing to do; a DIFFERENT set gets a fresh session.
+        let keys = videos.map { $0.url.standardizedFileURL.path }
+        if session.videoKeys == keys {
+            guard !session.analysisDone else { return }
+        } else {
+            session.reset(for: videos)
+        }
         selectedPreset = {
             let last = PresetStore.lastUsedPresetID()
             return availablePresets.first { $0.id == last } ?? Preset.builtIn[0]
