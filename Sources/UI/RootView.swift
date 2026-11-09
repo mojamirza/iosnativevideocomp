@@ -50,6 +50,20 @@ struct RootView: View {
     /// Progress when the current drag began.
     @State private var dragAnchor: CGFloat?
 
+    /// IN-FLIGHT IMPORT GATE: Photos (onChange), Files (fileImporter) and
+    /// drag-and-drop each run independently — with a multi-GB copy in
+    /// progress, none of them can know the work overlaps unless the UI
+    /// PREVENTS starting a second one. Without this gate two concurrent
+    /// loops both write importStep, the last finisher wins
+    /// `importedVideos`, and the loser's copies are unreachable for
+    /// deletion at setup dismissal (they wait for the once-per-process
+    /// launch sweep). Toolbar import controls and both empty-state pickers
+    /// disable while this is set; every import function guards on it too
+    /// (state has no visibility into a sheet already on screen).
+    @State private var isImporting = false
+    /// The ONE guard all three entry points and the disabled controls read.
+    private var importBusy: Bool { importStep != nil || isImporting }
+
     var body: some View {
         if hSizeClass == .compact {
             compactShell
@@ -604,7 +618,8 @@ struct RootView: View {
                             .padding(.horizontal)
                     }
                     EmptyState(photoItems: $photoItems,
-                               onFiles: { showFiles = true })
+                               onFiles: { showFiles = true },
+                               disabled: importBusy)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.appScreen)
@@ -744,6 +759,7 @@ private struct HistoryHeroCard: View {
                         Image(systemName: "photo.on.rectangle.angled")
                     }
                     .accessibilityLabel("Import from Photos")
+                    .disabled(importBusy)
 
                     Button {
                         showFiles = true
@@ -751,6 +767,7 @@ private struct HistoryHeroCard: View {
                         Image(systemName: "folder.badge.plus")
                     }
                     .accessibilityLabel("Import from Files")
+                    .disabled(importBusy)
                 }
             }
             }
@@ -774,8 +791,15 @@ private struct HistoryHeroCard: View {
     /// Drop entry point: movies dropped from Files or Photos enter the same
     /// setup flow as picked videos.
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard !showingSetup, !providers.isEmpty else { return false }
+        // Drop gate (see importBusy): a second drop during an active
+        // import is refused, never queued alongside it. The flag is HELD
+        // across the detached copy work — @State reads/writes run on the
+        // MainActor here — and cleared when the Task body finishes, so no
+        // importer can be presented over this one's in-flight loop.
+        guard !showingSetup, !isImporting, !providers.isEmpty else { return false }
+        isImporting = true
         Task {
+            defer { isImporting = false }
             var picked: [PickedVideo] = []
             var i = 0
             for provider in providers {
@@ -806,6 +830,15 @@ private struct HistoryHeroCard: View {
     }
 
     private func importFromLibrary(_ items: [PhotosPickerItem]) async {
+        // OVERLAP GATE: Photos, Files and drag-drop are independent entry
+        // points — without this, picking from Files while a multi-GB
+        // Photos copy is loading lets both loops race importStep and
+        // importedVideos, leaking the loser's copies (setup dismissal can
+        // only delete what the WINNER put in importedVideos). The gate is
+        // also why the import controls disable while it is held.
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         var picked: [PickedVideo] = []
         var i = 0
         for item in items {
@@ -843,6 +876,11 @@ private struct HistoryHeroCard: View {
     }
 
     private func importFromFiles(_ urls: [URL]) async {
+        // OVERLAP GATE (see importFromLibrary): the Files picker must not
+        // start a second copy loop over an in-flight import.
+        guard !isImporting else { return }
+        isImporting = true
+        defer { isImporting = false }
         var picked: [PickedVideo] = []
         var i = 0
         for url in urls {
@@ -1192,6 +1230,10 @@ private struct AboutSettingsSheet: View {
 private struct EmptyState: View {
     @Binding var photoItems: [PhotosPickerItem]
     let onFiles: () -> Void
+    /// Import controls go INACTIVE while an import is in flight (the
+    /// overlap gate) — starting a second copy loop races importStep and
+    /// leaked the loser's copies.
+    var disabled: Bool = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -1228,6 +1270,7 @@ private struct EmptyState: View {
                 }
                 .buttonStyle(.bordered)
             }
+            .disabled(disabled)
 
             Text("Or drag & drop videos here from Files or Photos while in Split View.")
                 .font(.footnote)

@@ -94,47 +94,47 @@ struct SetupFlowView: View {
     // AND writes (`probes[i] = …`, `selectedPreset = …`) both route there.
     private var probes: [ProbeResult?] {
         get { session.probes }
-        set { session.probes = newValue }
+        nonmutating set { session.probes = newValue }
     }
     private var analysisDone: Bool {
         get { session.analysisDone }
-        set { session.analysisDone = newValue }
+        nonmutating set { session.analysisDone = newValue }
     }
     private var errorText: String? {
         get { session.errorText }
-        set { session.errorText = newValue }
+        nonmutating set { session.errorText = newValue }
     }
     private var selectedPreset: Preset? {
         get { session.selectedPreset }
-        set { session.selectedPreset = newValue }
+        nonmutating set { session.selectedPreset = newValue }
     }
     private var customPresets: [Preset] {
         get { session.customPresets }
-        set { session.customPresets = newValue }
+        nonmutating set { session.customPresets = newValue }
     }
     private var rotation: Int {
         get { session.rotation }
-        set { session.rotation = newValue }
+        nonmutating set { session.rotation = newValue }
     }
     private var trimStart: Double {
         get { session.trimStart }
-        set { session.trimStart = newValue }
+        nonmutating set { session.trimStart = newValue }
     }
     private var trimEnd: Double {
         get { session.trimEnd }
-        set { session.trimEnd = newValue }
+        nonmutating set { session.trimEnd = newValue }
     }
     private var filmstrip: [UIImage?] {
         get { session.filmstrip }
-        set { session.filmstrip = newValue }
+        nonmutating set { session.filmstrip = newValue }
     }
     private var posterData: Data? {
         get { session.posterData }
-        set { session.posterData = newValue }
+        nonmutating set { session.posterData = newValue }
     }
     private var posterPreview: UIImage? {
         get { session.posterPreview }
-        set { session.posterPreview = newValue }
+        nonmutating set { session.posterPreview = newValue }
     }
 
     // TRANSIENT UI state: editor sheets, inline preview plumbing, "Change…"
@@ -496,7 +496,7 @@ struct SetupFlowView: View {
             HStack {
                 Text("Rotate").font(.caption2)
                 Spacer()
-                Picker("Rotate", selection: $rotation) {
+                Picker("Rotate", selection: $session.rotation) {
                     Text("Native").tag(0)
                     Text("90°").tag(90)
                     Text("180°").tag(180)
@@ -1087,6 +1087,11 @@ struct SetupFlowView: View {
 
     private func start() {
         guard let preset = selectedPreset, analysisDone else { return }
+        // COUNT GUARD: probes and videos are indexed positionally below —
+        // a rebuilt sheet presenting a different video count must never
+        // reach a subscript (the reviewer's latent OOB; never observed on
+        // device, but a one-line guard beats a crash).
+        guard session.probes.count == videos.count else { return }
         // Commit-time truth for "last used": the preset that actually ran
         // (covers the lecture-mode variant too, which shares the base id).
         PresetStore.setLastUsedPreset(preset.id)
@@ -1183,6 +1188,14 @@ struct SetupFlowView: View {
         if session.videoKeys == keys {
             guard !session.analysisDone else { return }
         } else {
+            session.reset(for: videos)
+        }
+        // COUNT GUARD (latent OOB): writes below index probes by position —
+        // sized by reset() above ONLY when keys differed. A stale-sized
+        // array with fresh keys (the sheet re-evaluated with a different
+        // videos array while the session survived) would write out of
+        // bounds; size it honestly instead.
+        if session.probes.count != videos.count {
             session.reset(for: videos)
         }
         selectedPreset = {
