@@ -21,8 +21,11 @@ struct VidCompressApp: App {
             // Fall back to an in-memory store if the document store is
             // corrupt — the previous silent fallback made HISTORY vanish
             // with no explanation (records written this session die with
-            // the app). The flag turns that into a visible banner.
+            // the app). The flag turns that into a visible banner, and the
+            // log keeps the ORIGINAL error for triage (why did the open
+            // fail — disk full, corrupt WAL, permissions?).
             StorageFallback.inMemoryOnly = true
+            NSLog("VidCompress: opening the SwiftData store failed (\(error)) — falling back to an in-memory container. History is unavailable this session; the launch sweep is disabled.")
             container = try! ModelContainer(
                 for: JobRecord.self,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)

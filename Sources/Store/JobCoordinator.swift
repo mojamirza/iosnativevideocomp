@@ -1108,6 +1108,14 @@ final class JobCoordinator: ObservableObject {
 
     private static var swept = false
 
+    /// True when the queue's view of reality is INCOMPLETE — (a) the store
+    /// fell back to an in-memory container (records empty) or (b) the last
+    /// loadHistory fetch threw a transient error. The launch sweep derives
+    /// its keep-set from that same array, so it must not act on it: sweeping
+    /// with a partial/empty jobs list DELETES the import copies queued
+    /// batches still reference. An irreversible path — flagged and skipped.
+    private var historyUnreliable = false
+
     /// Storage sweep at launch: removes orphaned files in Caches/Imports/
     /// (import copies no job needs) and Caches/Working/ (scratch files of
     /// crashed attempts). Outputs in Documents are NEVER swept — files there
@@ -1127,6 +1135,20 @@ final class JobCoordinator: ObservableObject {
     func cleanupOrphans() {
         guard !Self.swept else { return }
         Self.swept = true
+        // IRREVERSIBLE-PATH GUARD: keepSources below is derived from the
+        // IN-MEMORY jobs array. Two failure modes make that array a FALSE
+        // report of what the queue still needs — (a) corrupt store →
+        // in-memory fallback, (b) a transient fetch throw in loadHistory
+        // (swallowed as best-effort). Both present jobs as EMPTY (or a
+        // strict subset) while the files on disk belong to rows the records
+        // still reference; sweeping either way destroys those copies with
+        // no recovery. When history is not authoritative, the sweep is
+        // skipped for the WHOLE session (leaked orphans cost disk bytes —
+        // disagreeing between sweep and store loses user data bytes).
+        if StorageFallback.inMemoryOnly || historyUnreliable {
+            NSLog("VidCompress: skipping the launch sweep — history is not authoritative (inMemoryOnly=\(StorageFallback.inMemoryOnly), loadFailed=\(historyUnreliable)). Import copies are conserved this session.")
+            return
+        }
 
         let fm = FileManager.default
         var keepSources = Set<String>()
@@ -1410,7 +1432,12 @@ final class JobCoordinator: ObservableObject {
                     : "\(purgedWorkRows) unfinished compressions were removed from the list — their source copies no longer exist in the app's storage. The originals are still in your library; import them again."
             }
         } catch {
-            // History is best-effort; never block the UI.
+            // History is best-effort; never block the UI. But the queue's
+            // view of reality is INCOMPLETE from now on — remember it so
+            // the launch sweep cannot act on a partially-loaded (often
+            // empty) jobs array and delete queued import copies.
+            historyUnreliable = true
+            NSLog("VidCompress: history fetch failed — the launch sweep is disabled this session: \(error)")
         }
         let existingIDs = Set(jobs.map { $0.id })
         jobs.append(contentsOf: out.filter { !existingIDs.contains($0.id) })

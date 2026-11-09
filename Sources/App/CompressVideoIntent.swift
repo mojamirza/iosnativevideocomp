@@ -127,12 +127,16 @@ enum VideoInbox {
     /// here waiting for the app to become active — the sweep would
     /// otherwise delete it as an orphan after the 1-hour freshness window
     /// even though the marker (the intent to compress it) still exists.
+    /// CLAIMED (`.processing`) markers count too — they record the same
+    /// intent, just mid-handoff (a kill between claim and commit must not
+    /// turn their copies into swept orphans).
     static func pendingPaths() -> Set<String> {
         let fm = FileManager.default
         guard let markers = try? fm.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil) else { return [] }
         var paths = Set<String>()
-        for marker in markers where marker.pathExtension == "json" {
+        for marker in markers
+        where ["json", "processing"].contains(marker.pathExtension) {
             guard let payload = try? Data(contentsOf: marker),
                   let decoded = try? JSONDecoder().decode(Marker.self, from: payload)
             else { continue }
@@ -141,9 +145,6 @@ enum VideoInbox {
         return paths
     }
 
-    /// One-shot request handoff: the Shortcuts intent can finish copying a
-    /// multi-GB file AFTER the app became active, so a single pass can miss
-    /// the marker — keep passing until the inbox is empty (bounded).
     @MainActor
     static func consume(with coordinator: JobCoordinator) async {
         guard !consumeInFlight else { return }
@@ -153,6 +154,24 @@ enum VideoInbox {
         var pass = 0
         while pass < 3 {
             pass += 1
+            guard let listing = try? fm.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil) else { return }
+            // RECOVERY of a KILLED run: a marker claimed for processing but
+            // never committed stays as `.processing` forever — renew it to
+            // the ordinary pending set so this run processes it. The old
+            // delete-then-work order made any kill in the multi-second
+            // probe/plan/thumbnail window destroy the ONLY record of the
+            // handoff (copies were swept later; the Shortcut silently did
+            // nothing). One already-enqueued video can re-enqueue as a
+            // duplicate row after the recovery — but the dedup guard below
+            // skips active jobs, so the real-world cost is nothing next
+            // to the pre-fix total loss.
+            for stale in listing where stale.pathExtension == "processing" {
+                try? fm.moveItem(at: stale, to: stale
+                    .deletingPathExtension().appendingPathExtension("json"))
+            }
+            // FRESH scan AFTER recovery: renewed markers are ordinary json
+            // markers in THIS pass.
             guard let markers = try? fm.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: nil) else { return }
             let jsons = markers.filter { $0.pathExtension == "json" }
@@ -164,10 +183,34 @@ enum VideoInbox {
                     try? fm.removeItem(at: marker)
                     continue
                 }
-                try? fm.removeItem(at: marker)
+                // CLAIM: rename to `.processing` FIRST, commit (delete) only
+                // after EVERY URL is enqueued. A kill any time in between
+                // leaves the claim behind → the recovery pass above (and the
+                // sweep's keep set) still represents the handoff.
+                let claimed = marker
+                    .deletingPathExtension().appendingPathExtension("processing")
+                try? fm.moveItem(at: marker, to: claimed)
+                let work = fm.fileExists(atPath: claimed.path) ? claimed : marker
                 for rawPath in decoded.urls {
                     let url = URL(fileURLWithPath: rawPath)
-                    guard fm.fileExists(atPath: url.path) else { continue }
+                    guard fm.fileExists(atPath: url.path) else {
+                        // Missing copy: SAY so — the probe-failure branch
+                        // already surfaces a notice; the old silent
+                        // continue read as "the action did nothing".
+                        coordinator.importNotice = "“\(url.lastPathComponent)” shared from Shortcuts is no longer in the inbox (its copy was removed)."
+                        continue
+                    }
+                    // DEDUP against the recovery path: if the previous run
+                    // enqueued this very copy before being killed, an active
+                    // job (queued/resumed) already owns it — re-enqueueing
+                    // would compress the same video twice.
+                    let path = url.standardizedFileURL.path
+                    if coordinator.jobs.contains(where: {
+                        $0.sourceURL.standardizedFileURL.path == path &&
+                        [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+                    }) {
+                        continue
+                    }
                     guard let probe = try? await ProbeResult.probe(url: url) else {
                         // Undecodable handoff: delete the copy — but SAY so.
                         // The old silent delete meant “I ran the action and
@@ -190,6 +233,8 @@ enum VideoInbox {
                     coordinator.enqueue(source: url, probe: probe, plan: plan,
                                         preset: preset, thumbnail: thumb)
                 }
+                // COMMIT — only now does the handoff record go away.
+                try? fm.removeItem(at: work)
             }
         }
     }
