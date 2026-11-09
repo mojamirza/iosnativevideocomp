@@ -954,9 +954,27 @@ private struct HistoryHeroCard: View {
 // MARK: - Shared queue summary (ONE source of truth)
 
 extension JobCoordinator {
-    /// Jobs that are queued or in flight (the array is newest-first).
+    /// Jobs that are queued or in flight, in EXECUTION ORDER (oldest
+    /// first): the queue workers pick the OLDEST queued row (the array is
+    /// newest-first for history — enqueue inserts at 0 — and the worker
+    /// takes `lastIndex`), so the natural reading of "In progress" is
+    /// currently-working FIRST, then next up, then the rest of the line.
+    /// Filtering alone rendered the section in the REVERSE execution
+    /// order — the encoding row at the bottom, "next up" second from
+    /// bottom. Sorting here (not in the array!) is display-only: history
+    /// stays newest-first and the pick rule is untouched. Safe for all
+    /// consumers: progress/headline are order-insensitive.
     var activeJobs: [Job] {
         jobs.filter { [.queued, .analyzing, .compressing, .verifying].contains($0.state) }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    /// Jobs ACTIVELY WORKING (analyzing/compressing/verifying) — "in
+    /// flight" must not count rows that are merely WAITING (queued), or
+    /// the status bar says "3 jobs in flight" while one encodes and two
+    /// just queue.
+    var workingJobs: [Job] {
+        jobs.filter { [.analyzing, .compressing, .verifying].contains($0.state) }
     }
 
     /// Terminal jobs (done / failed / cancelled).
@@ -1057,7 +1075,9 @@ private struct QueueStatusBar: View {
 
     // Status math lives ONCE on the coordinator (queueHeadline / queueProgress
     // / activeJobs) — the sidebar card and this bar can never disagree.
-    private var active: [JobCoordinator.Job] { coordinator.activeJobs }
+    /// "In flight" counts only WORKING jobs (see workingJobs) — waiting
+    /// (queued) rows would inflate the claim.
+    private var working: [JobCoordinator.Job] { coordinator.workingJobs }
     private var fraction: Double { coordinator.queueProgress }
     private var headline: String { coordinator.queueHeadline }
 
@@ -1071,7 +1091,7 @@ private struct QueueStatusBar: View {
                     Text(headline)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text("Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") in flight")
+                    Text("Queue \(Int((fraction * 100).rounded()))% · \(working.count) job\(working.count == 1 ? "" : "s") in flight")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
