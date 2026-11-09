@@ -30,6 +30,14 @@ struct OptimizerPlan: Hashable {
     /// (10-bit decode → CI tone-map → 8-bit 709 encode) and the verifier
     /// expects an 8-bit 709 output instead of a 10-bit HDR one.
     var sdrConvert: Bool = false
+    /// The codec the OUTPUT actually gets: an H.264 request is SILENTLY
+    /// upgraded to HEVC for 10-bit/HDR sources (H.264 is 8-bit only — the
+    /// encode path would fail otherwise; CompressionEngine). The file
+    /// stamp, the history record's codecLabel and the setup UI must all
+    /// say what the file IS, not what was requested. nil only on plans
+    /// built by hand — plan() always fills it, and the engine falls back
+    /// to the same rule when nil.
+    var effectiveCodec: VideoCodec? = nil
     /// USER ROTATION (degrees clockwise, applied in display space on top of
     /// the source's own transform). 0/90/180/270; 0 = keep native
     /// orientation. The encoded frame geometry is unchanged — rotation is a
@@ -207,6 +215,15 @@ enum QualitySizeOptimizer {
         // Policy snapshot rides along (see the field docs on OptimizerPlan).
         result.privacyKeepCreationDate = PrivacyScrub.keepCreationDate
         result.privacyStripAllMetadata = PrivacyScrub.stripAllMetadata
+        // EFFECTIVE CODEC: IDENTICAL to the engine's rule (CompressionEngine
+        // ~line 361 — wants10Bit/encode10Bit): H.264 is 8-bit only, so a
+        // 10-bit/HDR source (without a requested SDR conversion, which
+        // re-renders 8-bit) encodes as HEVC. Carried in the plan so the
+        // filename stamp, the record's codecLabel and the setup chips read
+        // the same value without re-deriving — no "…_h264.mp4" HEVC file.
+        let wants10Bit = probe.tags.isHDR || probe.bitDepth >= 10
+        result.effectiveCodec = (wants10Bit && !result.sdrConvert
+                                 && preset.codec == .h264) ? .hevc : preset.codec
         return result
     }
 

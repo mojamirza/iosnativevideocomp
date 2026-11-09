@@ -586,7 +586,8 @@ final class JobCoordinator: ObservableObject {
             if encodeOK {
                 guard let promoted = promote(output,
                                              sourceName: job.sourceName,
-                                             preset: job.preset) else {
+                                             preset: job.preset,
+                                             codec: job.plan?.effectiveCodec) else {
                     let msg = "Couldn't save the file to Files — free up storage and tap Retry."
                     setJob(jobID) {
                         $0.state = .failed
@@ -724,7 +725,8 @@ final class JobCoordinator: ObservableObject {
         // name ("<jobID>.mp4"), loadHistory would find no such file in
         // Documents ("File removed"), and the sweep would erase it.
         if let final = promote(output, sourceName: jobs[idx].sourceName,
-                               preset: jobs[idx].preset) {
+                               preset: jobs[idx].preset,
+                               codec: jobs[idx].plan?.effectiveCodec) {
             jobs[idx].state = .done
             jobs[idx].report = report
             jobs[idx].outputURL = final
@@ -981,7 +983,8 @@ final class JobCoordinator: ObservableObject {
               jobs[idx].state == .failed,
               let work = jobs[idx].outputURL else { return }
         guard let final = promote(work, sourceName: jobs[idx].sourceName,
-                                  preset: jobs[idx].preset) else { return }
+                                  preset: jobs[idx].preset,
+                                  codec: jobs[idx].plan?.effectiveCodec) else { return }
         let report = jobs[idx].report
         jobs[idx].state = .done
         jobs[idx].outputURL = final
@@ -1481,7 +1484,11 @@ final class JobCoordinator: ObservableObject {
             errorMessage: errorText,
             reportJSON: report,
             presetJSON: try? JSONEncoder().encode(job.preset),
-            codecLabel: job.preset.codec.displayName,
+            // The codec the FILE actually carries — an H.264 request on a
+            // 10-bit/HDR source encodes as HEVC (plan.effectiveCodec is the
+            // shared decision); a record saying H.264 over an HEVC file
+            // would make history and Files disagree.
+            codecLabel: (job.plan?.effectiveCodec ?? job.preset.codec).displayName,
             resolutionLabel: job.preset.resolution.displayName,
             posterData: job.posterData,
             rotationDegrees: job.rotationDegrees,
@@ -1575,7 +1582,7 @@ final class JobCoordinator: ObservableObject {
             detail: error)
     }
 
-    private func presetStamp(_ preset: Preset) -> String {
+    private func presetStamp(_ preset: Preset, codec: VideoCodec? = nil) -> String {
         let raw = preset.name.lowercased()
         let words = raw.split(separator: " ", omittingEmptySubsequences: true)
             .prefix(2).joined(separator: "-")
@@ -1586,10 +1593,11 @@ final class JobCoordinator: ObservableObject {
         // so the user can still tell which preset produced which file
         // (resolution + bitrate appear right in the name) instead of a
         // useless pile of video_preset.mp4, video_preset (2).mp4, …
-        // The codec family rides along in every stamp: users producing both
-        // HEVC and H.264 variants of the same source can tell the files
-        // apart in Files without opening them.
-        let codecTag = "-\(preset.codec.rawValue)"
+        // The codec family rides along in every stamp — and it's the
+        // EFFECTIVE codec (an H.264 request on a 10-bit/HDR source becomes
+        // HEVC; callers pass the plan's `effectiveCodec`): the filename
+        // must never claim an H.264 file that is HEVC on disk.
+        let codecTag = "-\((codec ?? preset.codec).rawValue)"
         if cleaned.isEmpty {
             let fallback = "\(preset.resolution.rawValue)-\(String(format: "%.1f", preset.fixedBitrateMbps))mbps"
                 .lowercased()
@@ -1622,7 +1630,8 @@ final class JobCoordinator: ObservableObject {
     /// cheap rename). Returns nil when the move fails — callers must treat
     /// that as a failure, not a "done with the file in scratch" (the sweep
     /// erases scratch and the record would lie about it).
-    private func promote(_ work: URL, sourceName: String, preset: Preset) -> URL? {
+    private func promote(_ work: URL, sourceName: String, preset: Preset,
+                         codec: VideoCodec? = nil) -> URL? {
         let fm = FileManager.default
         let outDir = Self.outputsDirectory()
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -1630,7 +1639,8 @@ final class JobCoordinator: ObservableObject {
         // name past the 255-byte path-component limit and make the move
         // fail; trim the base so the full name always fits.
         let base = String((sourceName as NSString).deletingPathExtension.prefix(100))
-        let final = Self.uniqueOutputURL(in: outDir, base: base, stamp: presetStamp(preset))
+        let final = Self.uniqueOutputURL(
+            in: outDir, base: base, stamp: presetStamp(preset, codec: codec))
         do {
             try fm.moveItem(at: work, to: final)
             Self.excludedFromBackup(final)

@@ -1208,7 +1208,17 @@ private struct PresetRow: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.primary)
                     HStack(spacing: 6) {
-                        TagChip(text: preset.codec == .hevc ? "HEVC" : "H.264")
+                        // CODEC chip says what the file WILL BE: for a
+                        // 10-bit/HDR probe the engine upgrades an H.264
+                        // request to HEVC (plan.effectiveCodec carries the
+                        // same decision offline). Without a probe (batch)
+                        // per-source depth differs across the batch — the
+                        // requested codec is then the only honest label.
+                        let codecChip = probe.flatMap {
+                            QualitySizeOptimizer.plan(preset: preset,
+                                                      probe: $0).effectiveCodec
+                        } ?? preset.codec
+                        TagChip(text: codecChip == .hevc ? "HEVC" : "H.264")
                         TagChip(text: preset.resolution.displayName)
                         if preset.audioChannels == 1 {
                             TagChip(text: "Mono voice")

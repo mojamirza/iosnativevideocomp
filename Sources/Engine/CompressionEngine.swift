@@ -360,7 +360,12 @@ enum CompressionEngine {
         // ------------------------------------------------------------------
         let wants10Bit = plan.isHDR || plan.sourceBitDepth >= 10
         let encode10Bit = wants10Bit && !sdrConvert
-        let encodeCodec: VideoCodec = (encode10Bit && preset.codec == .h264) ? .hevc : preset.codec
+        // SINGLE SOURCE OF TRUTH: the planner already decided which codec
+        // the output gets (plan.effectiveCodec — the file stamp and the
+        // record's codecLabel read the SAME value). nil only on hand-built
+        // plans → the identical rule here.
+        let encodeCodec: VideoCodec = plan.effectiveCodec
+            ?? ((encode10Bit && preset.codec == .h264) ? .hevc : preset.codec)
         if encodeCodec == .h264 {
             // H.264: High profile — better compression than Main at the same
             // compatibility (High has decoded everywhere for a decade).
