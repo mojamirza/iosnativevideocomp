@@ -103,6 +103,14 @@ A personal-access token was pasted into the conversation. Treat it as **compromi
 
 ## Changelog
 
+### v1.8.5 — build 31 (platform gesture host + drawer chrome fix)
+
+**Scrolling on cards** — the v1.8.3 exclusive-gesture change was not enough: a SwiftUI DragGesture bolted onto scroll content still fights the scroll recognizer on iPadOS 26, exclusive or not. The separated cards are now HOSTED IN A LIST (plain style, transparent background, hidden separators, zero insets) — the cards look exactly the same, but scrolling and swiping are handled by the platform: vertical drags scroll from anywhere (cards included), horizontal drags on a finished card reveal the native swipe actions. The custom SwipeToDeleteModifier is gone.
+- Native swipes: trailing Delete on finished cards / Stop on active ones, leading Retry on failed ones — all arming the root-level confirmations, never deleting outright.
+- Selection mode: full-card tap target kept (selection-mode-only content shape); swipes yield while selecting.
+
+**Drawer chrome fix** — in selection mode, opening the compact drawer left the Select all / Save / Delete bottom bar floating in the system toolbar layer above the drawer. Main-page toolbar chrome (both bars) now hides while the drawer is open and returns when it closes.
+
 ### v1.8.4 — build 30 (verify phase can no longer stick)
 
 Device report: a job sat on “Verifying output integrity…” indefinitely (done only after force-quitting and relaunching). Three hardening changes in the verify phase:

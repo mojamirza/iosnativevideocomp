@@ -220,9 +220,11 @@ struct RootView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar { importToolbar }
             // Batch actions (selection mode): a bottom bar like native
-            // iPadOS list apps — Select all / Save / Delete.
+            // iPadOS list apps — Select all / Save / Delete. Hidden while
+            // the compact drawer is open (it floats in the system toolbar
+            // layer and clashed with the drawer — device report).
             .toolbar {
-                if coordinator.selectionMode {
+                if coordinator.selectionMode && !mainChromeHiddenByDrawer {
                     ToolbarItemGroup(placement: .bottomBar) {
                         Button("Select all") { coordinator.selectAllFinished() }
                         Spacer()
@@ -453,68 +455,131 @@ struct RootView: View {
             .sensoryFeedback(.error, trigger: coordinator.failureTick)
     }
 
-    /// The queue screen — SEPARATED CARDS (the v1.6.3 presentation,
-    /// restored by request): each job is its own rounded card on the AMOLED
-    /// canvas, the queue bar and import card are cards too, section headers
-    /// are the card-era icon+count style, and swipe-to-delete is the proven
-    /// custom modifier (native swipeActions only exist in List). All engine
-    /// and persistence fixes stay — only the container changed.
+    /// The queue screen — SEPARATED CARDS hosted in a LIST (v1.8.5): the
+    /// cards look exactly like the v1.6.3 presentation (own rounded surface
+    /// on the AMOLED canvas, icon+count section headers, spacing between),
+    /// but the CONTAINER is the platform's — UIKit-grade scrolling and
+    /// NATIVE swipe actions. A DragGesture bolted onto scroll content kept
+    /// fighting the scroll recognizer on iPadOS 26 (device reports: cards
+    /// could not be scrolled, only the background; exclusive vs simultaneous
+    /// made no difference). All destructive intents still arm the root-level
+    /// confirmations; when the queue is empty the list has no rows and the
+    /// empty state rides above it as an overlay (ContentUnavailableView
+    /// and bordered buttons are not List-row safe — v1.7.1 lesson kept).
     private var queueList: some View {
-        ScrollView {
-            LazyVStack(spacing: 14) {
+        List {
+            if !coordinator.jobs.isEmpty {
                 if let step = importStep {
                     ImportStatusCard(step: step)
                         .padding(.horizontal)
+                        .cardListRow()
                 }
 
                 if StorageFallback.inMemoryOnly {
                     storageFallbackBanner
                         .padding(.horizontal)
-                }
-
-                if coordinator.jobs.isEmpty {
-                    EmptyState(photoItems: $photoItems,
-                               onFiles: { showFiles = true })
-                        .padding(.top, 40)
+                        .cardListRow()
                 }
 
                 let active = coordinator.activeJobs
                 let finished = coordinator.finishedJobs
 
                 if !active.isEmpty {
+                    sectionHeader("In progress", icon: "hourglass", count: active.count)
+                        .cardListRow()
                     QueueStatusBar()
                         .padding(.horizontal)
-                    sectionHeader("In progress", icon: "hourglass", count: active.count)
+                        .cardListRow()
                     ForEach(active) { job in
                         JobRowView(job: job, coordinator: coordinator)
                             .equatable()
                             .padding(.horizontal)
+                            .padding(.vertical, 7)
+                            .cardListRow()
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode {
+                                    Button(role: .destructive) {
+                                        coordinator.requestCancel(jobID: job.id)
+                                    } label: {
+                                        Label("Stop", systemImage: "stop.fill")
+                                    }
+                                }
+                            }
                     }
                 }
 
                 if !finished.isEmpty {
                     sectionHeader("History", icon: "clock", count: finished.count)
+                        .cardListRow()
                     // HERO STAT: the app's headline number lived only in the
                     // sidebar — invisible on compact widths. One card at the
                     // top of History carries it on the main screen.
                     HistoryHeroCard()
                         .padding(.horizontal)
+                        .cardListRow()
                     ForEach(finished) { job in
                         JobRowView(job: job, coordinator: coordinator)
                             .equatable()
                             .padding(.horizontal)
+                            .padding(.vertical, 7)
+                            .cardListRow()
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode {
+                                    Button(role: .destructive) {
+                                        coordinator.requestDelete(jobID: job.id)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode,
+                                   [.failed, .cancelled].contains(job.state) {
+                                    // retry() itself guards a surviving source.
+                                    Button {
+                                        coordinator.retry(jobID: job.id)
+                                    } label: {
+                                        Label("Retry", systemImage: "arrow.clockwise")
+                                    }
+                                    .tint(.accentColor)
+                                }
+                            }
                     }
                 }
 
                 StorageFooter()
                     .padding(.top, 6)
+                    .cardListRow()
             }
-            .padding(.vertical)
         }
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 1)
         // TRUE black in dark mode on every screen-level container (see
         // Color.appScreen) — fullscreen, Split View and Stage Manager all
         // show the same AMOLED-black canvas; light mode is unchanged.
+        .scrollContentBackground(.hidden)
         .background(Color.appScreen)
+        // EMPTY STATE overlay (NOT a row: ContentUnavailableView's layout
+        // collapses and its bordered action buttons don't tap reliably
+        // inside rows on iPadOS 26 — the v1.7.1 lesson, kept).
+        .overlay {
+            if coordinator.jobs.isEmpty {
+                VStack(spacing: 16) {
+                    if let step = importStep {
+                        ImportStatusCard(step: step)
+                            .padding(.horizontal)
+                    }
+                    if StorageFallback.inMemoryOnly {
+                        storageFallbackBanner
+                            .padding(.horizontal)
+                    }
+                    EmptyState(photoItems: $photoItems,
+                               onFiles: { showFiles = true })
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.appScreen)
+            }
+        }
     }
 
     /// Card-era section header: tinted icon + headline + count capsule.
@@ -534,7 +599,17 @@ struct RootView: View {
                 .foregroundStyle(.tint)
         }
         .padding(.horizontal)
-        .padding(.top, 6)
+        .padding(.top, 14)
+    }
+
+    /// COMPACT: while the drawer is open, the main page's toolbar chrome is
+    /// hidden. iPadOS 26 hosts toolbars in a floating system layer ABOVE
+    /// the drawer's ZStack — the selection-mode bottom bar (Select all /
+    /// Save / Delete) and the import buttons would otherwise stay visible
+    /// and clash with the drawer (device report: the select-all button
+    /// “fell behind the side menu”). They return when the drawer closes.
+    private var mainChromeHiddenByDrawer: Bool {
+        hSizeClass == .compact && sidebarOpen
     }
 
     /// HERO STAT — “Saved 4.2 GB” on the MAIN screen. Same source of truth
@@ -577,6 +652,7 @@ private struct HistoryHeroCard: View {
         // Single Group + explicit return: the two-group builder form
         // defeated ToolbarContentBuilder inference (CI type-check error).
         return Group {
+            if !mainChromeHiddenByDrawer {
             ToolbarItemGroup(placement: .topBarLeading) {
                 // COMPACT DRAWER: the main page owns an explicit opener in
                 // addition to the leading-edge swipe.
@@ -625,6 +701,7 @@ private struct HistoryHeroCard: View {
                     }
                     .accessibilityLabel("Import from Files")
                 }
+            }
             }
         }
     }
@@ -1265,5 +1342,15 @@ enum Thumbnails {
         let at = CMTime(seconds: time ?? (dur > 2 ? dur * 0.15 : 0.1), preferredTimescale: 600)
         guard let (img, _) = try? await gen.image(at: at) else { return nil }
         return UIImage(cgImage: img)
+    }
+}
+
+/// List-row chrome for card content: full-bleed, no separator, no row
+/// surface — the card paints its own; the appScreen shows between cards.
+private extension View {
+    func cardListRow() -> some View {
+        listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 }
