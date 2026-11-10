@@ -13,6 +13,7 @@ struct JobRowView: View, Equatable {
     /// environment reads (size class) bypass == and still update.
     let coordinator: JobCoordinator
     @Environment(\.horizontalSizeClass) private var hSizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showingReport = false
     @State private var showingPlayer = false
@@ -199,6 +200,18 @@ struct JobRowView: View, Equatable {
         // actions against a path that no longer exists).
         .onChange(of: job.outputURL) { _, _ in
             refreshExistence()
+        }
+        // RETURNING FROM FILES (Split View / windowed multitasking): the
+        // app folder is user-visible in Files, so deleting an output there
+        // does NOT touch this row — no .appear, no state change, no URL
+        // change — and Rename/Share/Save stayed enabled against a deleted
+        // file (Rename's move then failed silently: the coordinator leaves
+        // the file untouched on a throw, by design). Scene ACTIVATION is
+        // the one moment "something below us may have changed": re-check.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshExistence()
+            }
         }
     }
 
