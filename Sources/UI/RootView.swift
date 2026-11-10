@@ -1013,6 +1013,63 @@ extension JobCoordinator {
         }
         return "Preparing…"
     }
+
+    /// BATCH REMAINING-TIME estimate over the whole ACTIVE queue, in
+    /// seconds — the status bar's "about N min left" clause. Built only
+    /// from honest signals:
+    /// • the RUNNING job extrapolates its remaining time from REAL
+    ///   elapsed vs progress (the same math the row's ETA line shows),
+    ///   falling back to its remaining plan duration at 1× realtime
+    ///   while progress is too small to extrapolate from;
+    /// • every QUEUED job's plan duration is scaled by the running
+    ///   job's OBSERVED realtime multiplier — a clip encoding at 6×
+    ///   finishes in a sixth of its runtime, so quoting raw durations
+    ///   would inflate the total by the same factor. The estimate
+    ///   self-corrects every second as the observed speed refines.
+    /// nil when nothing is measurable (idle, or only analyzing) — the
+    /// caption then simply omits the clause. Analyzing/verifying passes
+    /// are seconds-scale and add nothing.
+    var queueRemainingEstimate: TimeInterval? {
+        guard let running = activeJobs.first(where: { $0.state == .compressing }),
+              let started = running.startedAt,
+              let plan = running.plan
+        else { return nil }
+        let elapsed = Date().timeIntervalSince(started)
+        let p = min(max(running.progress, 0), 1)
+        // Demonstrated encode speed as a realtime multiplier (1× = the
+        // encode takes as long as the video runs). Only meaningful once
+        // some progress and a little elapsed time exist.
+        let speed: Double? = (p > 0.02 && elapsed > 0.5)
+            ? (p * plan.duration) / elapsed
+            : nil
+        // Running job: extrapolate from real elapsed vs progress; before
+        // that is possible, assume the remaining clip runs at 1×.
+        var total = p > 0.02 ? elapsed / p * (1 - p) : (1 - p) * plan.duration
+        for job in activeJobs where job.state == .queued {
+            guard let d = job.plan?.duration, d > 0 else { continue }
+            // Scale by the machine's demonstrated throughput when known.
+            total += d / max(speed ?? 1, 0.2)
+        }
+        return max(total, 0)
+    }
+
+    /// The formatted "about … left" clause for the status bar, or nil
+    /// when there is nothing worth showing — no estimate, or under the
+    /// 5 s floor the row-level ETA also uses (avoids "about 0 s left").
+    /// Same phrasing family as the row ETA ("about 4 min 30 s left").
+    var queueRemainingLabel: String? {
+        guard let t = queueRemainingEstimate, t >= 5 else { return nil }
+        let s = Int(t.rounded())
+        if s < 60 { return "about \(s) s left" }
+        let m = s / 60
+        if m < 60 {
+            let sec = s % 60
+            return sec > 0 ? "about \(m) min \(sec) s left" : "about \(m) min left"
+        }
+        let h = m / 60
+        let rem = m % 60
+        return rem > 0 ? "about \(h) h \(rem) min left" : "about \(h) h left"
+    }
 }
 
 /// LIFETIME STATS — the running tally of what the app has actually saved,
@@ -1082,6 +1139,19 @@ private struct QueueStatusBar: View {
     private var fraction: Double { coordinator.queueProgress }
     private var headline: String { coordinator.queueHeadline }
 
+    /// Caption line: "Queue 42% · 3 jobs left · about 12 min left". The
+    /// remaining-time clause only appears while an estimate exists (a job
+    /// is actually encoding — see queueRemainingEstimate). monospacedDigit
+    /// keeps the ticking seconds from jittering the line width.
+    private var caption: String {
+        var parts = ["Queue \(Int((fraction * 100).rounded()))%",
+                     "\(active.count) job\(active.count == 1 ? "" : "s") left"]
+        if let remaining = coordinator.queueRemainingLabel {
+            parts.append(remaining)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
@@ -1092,9 +1162,15 @@ private struct QueueStatusBar: View {
                     Text(headline)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text("Queue \(Int((fraction * 100).rounded()))% · \(active.count) job\(active.count == 1 ? "" : "s") left")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    // Ticks EVERY SECOND (TimelineView, same pattern as the
+                    // row ETA): progress callbacks alone could leave the
+                    // remaining-time clause frozen between them.
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        Text(caption)
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
             }
