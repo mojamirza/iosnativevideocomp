@@ -225,8 +225,18 @@ struct SetupFlowView: View {
                     }
 
                     presetSection
+
+                    // BOTTOM BREATHING ROOM: the pinned estimate/Compress bar
+                    // is a safeAreaInset, but the scrolled content still ran
+                    // FLUSH against it — the collapsed preset's "Change…"
+                    // button sat half behind the bar's material edge on
+                    // device. Extra padding keeps the last control clearly
+                    // above the bar (and gives the sheet a taller, calmer
+                    // bottom).
+                    Spacer().frame(height: 28)
                 }
                 .padding()
+                .padding(.bottom, 8)
             }
             .background(Color.appScreen)
             // Estimate + Compress live in a PINNED bottom bar: the primary
@@ -244,16 +254,21 @@ struct SetupFlowView: View {
                     Button("New preset…") { showEditor = true }
                 }
             }
-            .sheet(isPresented: $showEditor) {
+            .navigationDestination(isPresented: $showEditor) {
+                // PUSHED inside this stack — the editor sheet-over-sheet let
+                // the setup sheet's material show through underneath (two
+                // stacked cards); a push reads as one continuous flow.
                 // Target mode needs NO probe to save (the target is solved
                 // per video when each job starts) — only the solved-bitrate
                 // readout needs one, and it hides in batch setup.
-                PresetEditorView(contextProbe: isBatch ? nil : singleProbe) { newPreset in
+                PresetEditorView(embeddedInHostStack: true,
+                                 contextProbe: isBatch ? nil : singleProbe) { newPreset in
                     savePreset(newPreset)
                 }
             }
-            .sheet(item: $editingPreset) { preset in
-                PresetEditorView(existing: preset,
+            .navigationDestination(item: $editingPreset) { preset in
+                PresetEditorView(embeddedInHostStack: true,
+                                 existing: preset,
                                  contextProbe: isBatch ? nil : singleProbe) { updated in
                     savePreset(updated)
                 }
@@ -348,15 +363,18 @@ struct SetupFlowView: View {
                     .foregroundStyle(.red)
             }
 
-            // BEFORE → AFTER story with a proportional bar. The delta uses
-            // THE one shared label: growth reads “+8%” (the old max(0, pct)
-            // hid it behind “−0%”) and sub-percent savings say “−<1%”.
+            // BEFORE → AFTER story. The delta uses THE one shared label:
+            // growth reads “+8%” (the old max(0, pct) hid it behind “−0%”)
+            // and sub-percent savings say “−<1%”.
             if let out = estimateBytes, selectedPreset != nil {
                 let input = isBatch ? totalInBytes : (singleProbe.map { trimmed($0).fileSize } ?? 0)
                 let inText = ByteCountFormatter.string(fromByteCount: input, countStyle: .file)
                 let outText = ByteCountFormatter.string(fromByteCount: out, countStyle: .file)
-                let ratio = input > 0 ? Double(out) / Double(input) : 0
                 let delta = SizeMath.deltaLabel(inBytes: input, outBytes: out)
+                // The proportional bar is GONE: an unlabeled tinted fill read
+                // as encode PROGRESS ("is it 55% done?"). The before → after
+                // line above already says exactly what the share was — the
+                // delta label in it IS the explanation.
                 VStack(alignment: .leading, spacing: 7) {
                     if isBatch {
                         Text("\(videos.count) files · \(inText) → ≈ \(outText) (\(delta))")
@@ -385,15 +403,6 @@ struct SetupFlowView: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    // Proportional bar: tinted portion = output size share.
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color(.systemFill))
-                            Capsule().fill(ratio <= 1 ? Color.accentColor : Color(.systemOrange))
-                                .frame(width: max(4, min(1, ratio) * geo.size.width))
-                        }
-                    }
-                    .frame(height: 6)
                     if littleToGain {
                         Label("Little to gain — the source is already leaner than this preset targets.",
                               systemImage: "exclamationmark.circle")
@@ -454,11 +463,14 @@ struct SetupFlowView: View {
 
     // MARK: adjust (single video)
 
-    /// HIG GROUPED-LIST HEADER: footnote-weight, small caps, secondary — the
-    /// section header style Apple uses across Settings/Files (custom scroll
-    /// views must opt in explicitly).
+    /// GROUPED-LIST HEADER: footnote-weight, secondary — matching the
+    /// FORM headers ("Name & codec", "Built-in") in sentence case, so the
+    /// custom scroll view and every Form in the app speak the same
+    /// typography. (The old .uppercased() small-caps read as a different
+    /// app — HIG uses small caps only inside Forms, which already carry
+    /// it natively.)
     private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
+        Text(title)
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
     }
@@ -809,7 +821,7 @@ struct SetupFlowView: View {
                             .overlay { Image(systemName: "film").font(.caption).foregroundStyle(.secondary) }
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(videos[i].url.lastPathComponent)
+                    Text((videos[i].url.lastPathComponent as NSString).deletingPathExtension)
                             .font(.caption.weight(.semibold))
                             .lineLimit(1)
                         HStack(spacing: 4) {
@@ -876,7 +888,7 @@ struct SetupFlowView: View {
                     }
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(videos.first?.url.lastPathComponent ?? "")
+                Text(((videos.first?.url.lastPathComponent ?? "") as NSString).deletingPathExtension)
                     .font(.callout.weight(.semibold))
                     .lineLimit(2)
                 Text(ByteCountFormatter.string(fromByteCount: singleProbe?.fileSize ?? 0, countStyle: .file))
@@ -930,13 +942,7 @@ struct SetupFlowView: View {
 
     private var presetSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionHeader("Preset")
-                Spacer()
-                Text("detailed · output size · bitrate")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            sectionHeader("Preset")
 
             if showingAllPresets || selectedPreset == nil {
                 ForEach(availablePresets, id: \.id) { preset in

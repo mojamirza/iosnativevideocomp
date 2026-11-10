@@ -227,8 +227,10 @@ struct RootView: View {
 
     private var versionFooter: String {
         let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
-        return "VidCompress \(v) (\(b)) · outputs and history live in the queue"
+        // VERSION ONLY: the build number and the "outputs and history live
+        // in the queue" pointer read as a status line from Settings, not a
+        // footer — the sidebar already SHOWS what it lives on.
+        return "VidCompress \(v)"
     }
 
     /// The root list with its INTERACTION layer: drop handling, toolbar and
@@ -241,11 +243,13 @@ struct RootView: View {
                     perform: handleDrop)
             .overlay { dropTargetOverlay }
             .navigationTitle(
-                // SELECTION MODE shows the count like Photos does; the
-                // shelf title returns on exit.
+                // SELECTION MODE shows the count like Photos does. Empty or
+                // not, the detail pane says QUEUE: "VidCompress" already
+                // lives in the menu bar and the sidebar title — the large
+                // title is the pane's NAME, and the pane IS the queue.
                 coordinator.selectionMode && !coordinator.selectedIDs.isEmpty
                     ? "\(coordinator.selectedIDs.count) selected"
-                    : "VidCompress")
+                    : "Queue")
             // LARGE title on the split-view detail (the Files/Notes pattern);
             // the compact shell overrides this with .inline below.
             .navigationBarTitleDisplayMode(.large)
@@ -555,12 +559,6 @@ struct RootView: View {
                 if !finished.isEmpty {
                     sectionHeader("History", icon: "clock", count: finished.count)
                         .cardListRow()
-                    // HERO STAT: the app's headline number lived only in the
-                    // sidebar — invisible on compact widths. One card at the
-                    // top of History carries it on the main screen.
-                    HistoryHeroCard()
-                        .padding(.horizontal)
-                        .cardListRow()
                     ForEach(finished) { job in
                         JobRowView(job: job, coordinator: coordinator)
                             .equatable()
@@ -656,37 +654,6 @@ struct RootView: View {
     private var mainChromeHiddenByDrawer: Bool {
         hSizeClass == .compact && sidebarOpen
     }
-
-    /// HERO STAT — “Saved 4.2 GB” on the MAIN screen. Same source of truth
-    /// as the sidebar card (LifetimeStats over the done records); hidden
-    /// entirely until there is something to show.
-private struct HistoryHeroCard: View {
-    @Query(filter: #Predicate<JobRecord> { $0.stateRaw == "done" })
-    private var records: [JobRecord]
-
-    var body: some View {
-        let s = LifetimeStats.summarize(records)
-        if s.videos > 0, s.saved > 0 {
-            HStack(spacing: 10) {
-                Image(systemName: "leaf.fill")
-                    .font(.title3)
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Saved \(ByteCountFormatter.string(fromByteCount: s.saved, countStyle: .file))")
-                        .font(.headline)
-                    Text("Across \(s.videos) finished compression\(s.videos == 1 ? "" : "s")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding(14)
-            .background(Color.appCard,
-                        in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
-            .accessibilityElement(children: .combine)
-        }
-    }
-}
 
     // MARK: body parts — extracted from `body` so the total expression stays
     // inside the type-checker's complexity budget (CI hit "unable to
@@ -1289,7 +1256,9 @@ private struct EmptyState: View {
 
             Text("Or drag & drop videos here from Files or Photos while in Split View.")
                 .font(.footnote)
-                .foregroundStyle(.tertiary)
+                // .tertiary vanished on the black canvas — .secondary is the
+                // lowest contrast that is still actually readable.
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -1410,16 +1379,41 @@ private struct ImportedVideo: Transferable {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let ext = received.file.pathExtension
             let ext2 = ext.isEmpty ? "mov" : ext
-            // HUMAN-READABLE import names: “Video 2026-11-08 14.32.10” —
-            // IMG-<UUID> made history rows and output files unreadable
-            // (IMG-8F3A…_high-quality-hevc.mp4). POSIX locale pins the
-            // format; the '.' separator keeps it filename-safe. The
-            // existing -1 collision loop covers same-second imports.
-            let base = Self.nameFormatter.string(from: Date())
+            // HUMAN-READABLE import names: the video's own RECORDING date,
+            // not the import moment — "Video 2026-11-10 10.56.43" used to
+            // match the status-bar clock because `Date()` stamped the
+            // import. The true date lives in two places, tried in order:
+            // the movie's QuickTime metadata (the camera writes it there)
+            // and then the temp file's filesystem creation date (some
+            // handoff providers preserve it). Both misses fall back to
+            // now. The metadata read is the synchronous commonMetadata
+            // (cheap: container-header bytes) — the async load(.…)
+            // pipeline can't help here because the NAME is needed inside
+            // this synchronous closure, BEFORE analyze() ever runs.
+            let asset = AVURLAsset(url: received.file)
+            let created: Date = {
+                if let meta = AVMetadataItem.metadataItems(
+                    from: asset.commonMetadata,
+                    filteredByIdentifier: .commonIdentifierCreationDate).first,
+                   let d = meta.dateValue {
+                    return d
+                }
+                if let fs = try? FileManager.default.attributesOfItem(
+                    atPath: received.file.path)[.creationDate] as? Date {
+                    return fs
+                }
+                return Date()
+            }()
+            // POSIX locale pins the format on every device/region; the '.'
+            // separator keeps it filename-safe.
+            let base = Self.nameFormatter.string(from: created)
             var dest = dir.appendingPathComponent("\(base).\(ext2)")
+            // COLLISION SUFFIX "(n)": the native Files/Rename shape (same
+            // format renameOutput appends). The old "-1" looked like a
+            // typo in the middle of a readable name.
             var n = 1
             while FileManager.default.fileExists(atPath: dest.path) {
-                dest = dir.appendingPathComponent("\(base)-\(n).\(ext2)")
+                dest = dir.appendingPathComponent("\(base) (\(n)).\(ext2)")
                 n += 1
             }
             // FileRepresentation always delivers a real file on disk — copy it
@@ -1448,7 +1442,9 @@ struct SecurityScoped {
         var dest = dir.appendingPathComponent("\(base).\(ext)")
         var n = 1
         while FileManager.default.fileExists(atPath: dest.path) {
-            dest = dir.appendingPathComponent("\(base)-\(n).\(ext)")
+            // "(n)" matches the native duplicate shape (and renameOutput) —
+            // "-1" read like a typo inside the name.
+            dest = dir.appendingPathComponent("\(base) (\(n)).\(ext)")
             n += 1
         }
         // Coordinated copy: iCloud Drive placeholders get downloaded by the

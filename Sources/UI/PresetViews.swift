@@ -48,6 +48,12 @@ enum PresetStore {
 /// Pass `existing:` to edit (or duplicate) a preset instead of creating one.
 struct PresetEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    /// TRUE when pushed INSIDE a host NavigationStack (preset manager,
+    /// setup flow): the editor then renders bare content and borrows the
+    /// host's nav bar. FALSE (default) when presented as a sheet (menu-bar
+    /// "New preset") — it wraps itself in its own NavigationStack so the
+    /// title and toolbar exist at all.
+    let embeddedInHostStack: Bool
     let existing: Preset?
     /// The video currently being set up (nil elsewhere): powers the live
     /// estimate, the quality hint and the "fit under X MB" helper.
@@ -68,6 +74,9 @@ struct PresetEditorView: View {
         var id: String { rawValue }
     }
     @State private var rateMode: RateMode
+    /// The template section's applied confirmation (transient — a fresh
+    /// editor is a fresh draft).
+    @State private var lectureTemplateApplied = false
     /// Forced mono voice track (lecture mode recipe).
     @State private var monoAudio: Bool
     /// REAL HDR→SDR conversion (opt-in). Only offered/shown when the video
@@ -87,7 +96,9 @@ struct PresetEditorView: View {
     @FocusState private var fitMBFocused: Bool
     @FocusState private var bitrateFocused: Bool
 
-    init(existing: Preset? = nil, contextProbe: ProbeResult? = nil, onSaved: @escaping (Preset) -> Void) {
+    init(embeddedInHostStack: Bool = false, existing: Preset? = nil,
+         contextProbe: ProbeResult? = nil, onSaved: @escaping (Preset) -> Void) {
+        self.embeddedInHostStack = embeddedInHostStack
         self.existing = existing
         self.contextProbe = contextProbe
         self.onSaved = onSaved
@@ -211,11 +222,55 @@ struct PresetEditorView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // SHEET: wrapped in its own NavigationStack (nav bar lives there).
+        // PUSHED (embeddedInHostStack): bare content — the host stack's bar
+        // carries the title and the Save/Cancel toolbar.
+        if embeddedInHostStack {
+            editorContent
+        } else {
+            NavigationStack { editorContent }
+        }
+    }
+
+    private var editorContent: some View {
             Form {
-                Section("Name & codec") {
-                    TextField("Preset name", text: $name)
+                // START FROM A TEMPLATE: the one-tap recipes lead the form —
+                // they used to hide as a toggle inside "Frame rate", where
+                // nothing confirmed they had touched bitrate AND audio too.
+                // The checkmark + the live readouts below ARE the
+                // confirmation; nothing saves until Save.
+                Section("Start from a template") {
+                    Button {
+                        applyLectureRecipe()
+                        lectureTemplateApplied = true
+                    } label: {
+                        HStack {
+                            Label("Lecture recording", systemImage: "graduationcap")
+                            Spacer()
+                            if lectureTemplateApplied {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .accessibilityLabel("Template applied")
+                            }
+                        }
+                    }
+                    .listRowBackground(Color.appCard)
+                    Text("Sets 15 fps, a mono 48 kbps voice track and a lean ≤ 0.9 Mbps bitrate on the draft below — every control stays editable, and nothing is saved until Save.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                         .listRowBackground(Color.appCard)
+                }
+
+                Section("Name & codec") {
+                    // LABELED name row: the bare placeholder ("Custom") read
+                    // as a label rather than a value — every other row here
+                    // has a leading label (Codec, Resolution), so this one
+                    // matches.
+                    LabeledContent("Name") {
+                        TextField("Preset name", text: $name)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .listRowBackground(Color.appCard)
                     Picker("Codec", selection: $codec) {
                         ForEach(VideoCodec.allCases) { c in Text(c.displayName).tag(c) }
                     }
@@ -311,6 +366,17 @@ struct PresetEditorView: View {
                                     .foregroundStyle(.secondary)
                                     .fixedSize()
                             }
+                            // SCALE END LABELS: the log slider otherwise gave
+                            // the thumb no meaning — these pin the range so
+                            // "left edge ≈ 0.15, right edge = 40" is visible.
+                            HStack {
+                                Text(String(format: "%.2f", Preset.bitrateRange.lowerBound))
+                                Spacer()
+                                Text(String(format: "%.0f", Preset.bitrateRange.upperBound))
+                            }
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                             // Invalid edit feedback: while the text can't parse
                             // (or is out of range), the readout shows nothing but
                             // the LAST good value still drives Save — say so here.
@@ -414,15 +480,6 @@ struct PresetEditorView: View {
                         }
                         .listRowBackground(Color.appCard)
                     }
-                    // LECTURE MODE: one tap onto the draft (15 fps · mono ·
-                    // lean bitrate) — moved here from the compress bottom bar.
-                    Button {
-                        applyLectureRecipe()
-                    } label: {
-                        Label("Lecture mode (15 fps · mono · lean bitrate)",
-                              systemImage: "lightbulb")
-                    }
-                    .listRowBackground(Color.appCard)
                 }
 
                 Section("Audio") {
@@ -533,7 +590,6 @@ struct PresetEditorView: View {
                     }
                 }
             }
-        }
     }
 }
 
@@ -617,11 +673,16 @@ struct PresetManagerSheet: View {
                     }
                 }
             }
-            .sheet(isPresented: $creatingNew) {
-                PresetEditorView { p in saved(p) }
+            // PUSHED (not .sheet): the editor over this sheet showed BOTH
+            // sheets' bottoms stacked — one continuous push inside this
+            // NavigationStack reads as a single flow. The editor is
+            // embedded (no internal NavigationStack) so its title/toolbar
+            // use THIS stack's bar.
+            .navigationDestination(isPresented: $creatingNew) {
+                PresetEditorView(embeddedInHostStack: true) { p in saved(p) }
             }
-            .sheet(item: $editingPreset) { preset in
-                PresetEditorView(existing: preset) { p in saved(p) }
+            .navigationDestination(item: $editingPreset) { preset in
+                PresetEditorView(embeddedInHostStack: true, existing: preset) { p in saved(p) }
             }
             // ALERT (not a confirmationDialog): destructive prompts from
             // anchored dialogs failed on device; alerts need no anchor.
@@ -640,7 +701,10 @@ struct PresetManagerSheet: View {
 
     private func row(_ preset: Preset, custom: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: preset.isUserDefined ? "slider.horizontal.3" : "checkmark.seal")
+            // LOCK says "built-in / not editable in place" — the seal was the
+            // VERIFIED-INTEGRITY badge's shape (green seal in history), and
+            // two unrelated meanings sharing one glyph reads as "verified".
+            Image(systemName: preset.isUserDefined ? "slider.horizontal.3" : "lock")
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(preset.name)

@@ -64,10 +64,24 @@ struct JobRowView: View, Equatable {
     }
 
     private var displayName: String {
+        // FINISHED rows show the OUTPUT (renames reflected); everything
+        // else the source. The extension is a FILE detail — display-only
+        // stripping keeps rows (and rename prefill) clean.
+        let base: String
         if job.state == .done, let out = job.outputURL {
-            return (out.lastPathComponent as NSString).deletingPathExtension
+            base = (out.lastPathComponent as NSString).deletingPathExtension
+        } else {
+            base = (job.sourceName as NSString).deletingPathExtension
         }
-        return job.sourceName
+        // The machine STAMP the engine appends (`_custom-h264`,
+        // `_high-quality-hevc`) is filename disambiguation, not a title the
+        // user chose — drop everything from the last "_…codec" chunk in
+        // DISPLAY only (the file on disk keeps its collision-proof name).
+        if let stampRange = base.range(of: "_[^_]*?-(?:h264|hevc)$",
+                                       options: .regularExpression) {
+            return String(base[..<stampRange.lowerBound])
+        }
+        return base
     }
 
     var body: some View {
@@ -226,12 +240,29 @@ struct JobRowView: View, Equatable {
                 Text(job.preset.name)
                     .font(.footnote)
                     .lineLimit(1)
-                Text("·").font(.footnote)
-                Text(stateLabel)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(stateColor)
+                // ACTIVE states drop the status word here: the detail line
+                // right below the title already says it ("Encoding… 5%",
+                // "Queued — #2 in line") — "Custom · Queued" + "Queued · #2
+                // in line" read the same fact twice. Done/failed/cancelled
+                // keep it: those rows have nothing below.
+                if ![.queued, .analyzing, .compressing, .verifying].contains(job.state) {
+                    Text("·").font(.footnote)
+                    Text(stateLabel)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(stateColor)
+                }
             }
             .foregroundStyle(.secondary)
+            // HISTORY meta line: thin rows gave no date/resolution/codec —
+            // the three things "what did I make, when, how" wants. Date is
+            // the job's start.
+            if job.state == .done {
+                Text("\(job.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(job.preset.resolution.displayName) · \(job.preset.codec.displayName)")
+                    .font(.caption2.monospacedDigit())
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Compressed \(job.createdAt.formatted(date: .abbreviated, time: .shortened)), output \(job.preset.resolution.displayName), \(job.preset.codec.displayName)")
+            }
         }
     }
 
