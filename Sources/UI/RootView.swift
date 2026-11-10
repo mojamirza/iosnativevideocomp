@@ -560,7 +560,9 @@ struct RootView: View {
                         .padding(.horizontal)
                         .cardListRow()
                     ForEach(active) { job in
-                        JobRowView(job: job, coordinator: coordinator)
+                        JobRowView(job: job, coordinator: coordinator,
+                                   selectionActive: coordinator.selectionMode,
+                                   isSelected: coordinator.selectedIDs.contains(job.id))
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
@@ -581,7 +583,9 @@ struct RootView: View {
                     sectionHeader("History", icon: "clock", count: finished.count)
                         .cardListRow()
                     ForEach(finished) { job in
-                        JobRowView(job: job, coordinator: coordinator)
+                        JobRowView(job: job, coordinator: coordinator,
+                                   selectionActive: coordinator.selectionMode,
+                                   isSelected: coordinator.selectedIDs.contains(job.id))
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
@@ -709,14 +713,22 @@ struct RootView: View {
                 if !coordinator.jobs.isEmpty {
                     Button(coordinator.selectionMode ? "Cancel" : "Select") {
                         if coordinator.selectionMode {
-                            coordinator.exitSelectionMode()
+                            // Animate the mode so the circles spring in /
+                            // out instead of popping (device report).
+                            withAnimation(.spring(response: 0.25,
+                                                  dampingFraction: 0.85)) {
+                                coordinator.exitSelectionMode()
+                            }
                             if hSizeClass != .compact {
                                 withAnimation {
                                     regularColumns = .automatic
                                 }
                             }
                         } else {
-                            coordinator.enterSelectionMode()
+                            withAnimation(.spring(response: 0.25,
+                                                  dampingFraction: 0.85)) {
+                                coordinator.enterSelectionMode()
+                            }
                             if hSizeClass != .compact {
                                 withAnimation {
                                     regularColumns = .detailOnly
@@ -732,7 +744,11 @@ struct RootView: View {
                     // native Mail pattern) — the leading slot of a bottom
                     // bar is exactly where iPadOS 26's floating sidebar
                     // overlays landed on it (device report).
-                    Button("Select all") { coordinator.selectAll() }
+                    Button("Select all") {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                            coordinator.selectAll()
+                        }
+                    }
                 } else {
                     // DIRECT toolbar buttons: a PhotosPicker nested inside a
                     // Menu is unreliable on device (the sheet can be swallowed

@@ -12,6 +12,16 @@ struct JobRowView: View, Equatable {
     /// “tick” on iPadOS 26. `==` compares everything the row renders —
     /// environment reads (size class) bypass == and still update.
     let coordinator: JobCoordinator
+    /// EXPLICIT selection inputs (not row-internal reads of the
+    /// coordinator): the render-skip compares the row's VALUES, and the
+    /// previous read-inside-the-row version could render a card in its
+    /// normal-mode layout while the shell was already in selection —
+    /// device report: no circles, card taps falling through to the
+    /// row's ordinary controls (share/player/report sheets). The values
+    /// arrive per row from the RootView render, so the skip can never
+    /// miss them.
+    let selectionActive: Bool
+    let isSelected: Bool
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -35,16 +45,27 @@ struct JobRowView: View, Equatable {
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
     }
 
-    /// Batch-selection state: selection mode makes EVERY row tappable —
-    /// finished rows for batch save/delete, ACTIVE ones for batch cancel
-    /// (stopping a queued line previously meant one Cancel confirm per
-    /// row). While selecting, a row's action buttons give way to the
-    /// checkmark circle (baseCard hides them in this mode).
+    /// Batch-selection state arrives EXPLICITLY (see the field docs):
+    /// selection mode makes EVERY row tappable — finished rows for batch
+    /// save/delete, ACTIVE ones for batch cancel (stopping a queued line
+    /// previously meant one Cancel confirm per row). While selecting, a
+    /// row's action buttons give way to the checkmark circle (baseCard
+    /// hides them in this mode) and the whole card becomes one tap
+    /// control.
     private var inSelectionMode: Bool {
-        coordinator.selectionMode
+        selectionActive
     }
     private var isSelectedRow: Bool {
-        coordinator.selectedIDs.contains(job.id)
+        isSelected
+    }
+
+    /// The toggling sites run inside withAnimation so the circle appears
+    /// and re-checks with an actual spring (device report: the change was
+    /// instant-jarring and read as broken).
+    private func toggleSelectionAnimated() {
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            coordinator.toggleSelection(job.id)
+        }
     }
 
     /// RENDER-SKIP (see the Job == docs): everything the row renders is
@@ -55,9 +76,11 @@ struct JobRowView: View, Equatable {
     static func == (l: Self, r: Self) -> Bool {
         l.job == r.job
             && l.coordinator === r.coordinator
-            && l.coordinator.selectionMode == r.coordinator.selectionMode
-            && l.coordinator.selectedIDs.contains(l.job.id)
-                == r.coordinator.selectedIDs.contains(r.job.id)
+            // EXPLICIT selection inputs (see the field docs): part of the
+            // compared value, so the skip cannot collide with a mode or
+            // selection change.
+            && l.selectionActive == r.selectionActive
+            && l.isSelected == r.isSelected
             // Queue-rank shifts (the “next up”/“#N in line” label) always
             // involve a job entering or leaving the queued set.
             && l.coordinator.jobs.filter { $0.state == .queued }.count
@@ -102,7 +125,7 @@ struct JobRowView: View, Equatable {
             HStack(spacing: 12) {
                 if inSelectionMode {
                     Button {
-                        coordinator.toggleSelection(job.id)
+                        toggleSelectionAnimated()
                     } label: {
                         Image(systemName: isSelectedRow ? "checkmark.circle.fill" : "circle")
                             .font(.title3)
@@ -110,6 +133,9 @@ struct JobRowView: View, Equatable {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(isSelectedRow ? "Deselect" : "Select")
+                    // The circle enters/exits WITH the mode change instead
+                    // of popping (device report: "no circles showed up").
+                    .transition(.scale.combined(with: .opacity))
                 }
                 thumbnail
                 titleBlock
@@ -153,7 +179,7 @@ struct JobRowView: View, Equatable {
         // mode is on. The card background makes the whole card hit-testable
         // otherwise. See SelectionTapModifier below.
         .modifier(SelectionTapModifier(active: inSelectionMode) {
-            coordinator.toggleSelection(job.id)
+            toggleSelectionAnimated()
         })
         // VoiceOver container: composed summary first, controls stay
         // individually reachable.
@@ -1154,20 +1180,29 @@ private struct OutputPlayerSheet: View {
     }
 }
 
-/// Full-row tap target for BATCH SELECTION, active only while selection
-/// mode is on: .contentShape(Rectangle()) + tap make the whole row
-/// (trailing spacer included) toggle the checkmark — the pre-List bug this
-/// first fixed. Permanent row-wide shapes/gestures interfere with the
-/// List's native swipe gestures, so normal-mode rows get NONE of this.
+/// Whole-card tap for BATCH SELECTION, active only while selection mode
+/// is on. A CONTROL, not a gesture: the entire card becomes one Button
+/// (the Photos model), so the tap can never lose hit-testing to another
+/// control or route through to the row's normal-mode actions — the
+/// device report recorded card taps opening the share/player sheets
+/// instead of toggling the checkmark. The leading circle Button stays an
+/// inner child and wins the hit-test; everything interactive in the
+/// card is removed while selecting. Normal-mode rows get NONE of this
+/// (a permanent row-wide control would kill List's native swipe).
 private struct SelectionTapModifier: ViewModifier {
     let active: Bool
     let action: () -> Void
 
+    @ViewBuilder
     func body(content: Content) -> some View {
         if active {
-            content
-                .contentShape(Rectangle())
-                .onTapGesture(perform: action)
+            Button {
+                action()
+            } label: {
+                content
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         } else {
             content
         }
