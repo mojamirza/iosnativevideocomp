@@ -561,9 +561,9 @@ struct RootView: View {
                         .cardListRow()
                     ForEach(Array(active.enumerated()), id: \.element.id) { rowIndex, job in
                         JobRowView(job: job, coordinator: coordinator,
-                                   rowIndex: rowIndex,
                                    selectionActive: coordinator.selectionMode,
-                                   isSelected: coordinator.selectedIDs.contains(job.id))
+                                   isSelected: coordinator.selectedIDs.contains(job.id),
+                                   rowIndex: rowIndex)
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
@@ -585,9 +585,9 @@ struct RootView: View {
                         .cardListRow()
                     ForEach(Array(finished.enumerated()), id: \.element.id) { rowIndex, job in
                         JobRowView(job: job, coordinator: coordinator,
-                                   rowIndex: rowIndex,
                                    selectionActive: coordinator.selectionMode,
-                                   isSelected: coordinator.selectedIDs.contains(job.id))
+                                   isSelected: coordinator.selectedIDs.contains(job.id),
+                                   rowIndex: rowIndex)
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
