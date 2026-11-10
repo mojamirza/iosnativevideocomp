@@ -559,8 +559,9 @@ struct RootView: View {
                     QueueStatusBar()
                         .padding(.horizontal)
                         .cardListRow()
-                    ForEach(active) { job in
+                    ForEach(Array(active.enumerated()), id: \.element.id) { rowIndex, job in
                         JobRowView(job: job, coordinator: coordinator,
+                                   rowIndex: rowIndex,
                                    selectionActive: coordinator.selectionMode,
                                    isSelected: coordinator.selectedIDs.contains(job.id))
                             .equatable()
@@ -582,8 +583,9 @@ struct RootView: View {
                 if !finished.isEmpty {
                     sectionHeader("History", icon: "clock", count: finished.count)
                         .cardListRow()
-                    ForEach(finished) { job in
+                    ForEach(Array(finished.enumerated()), id: \.element.id) { rowIndex, job in
                         JobRowView(job: job, coordinator: coordinator,
+                                   rowIndex: rowIndex,
                                    selectionActive: coordinator.selectionMode,
                                    isSelected: coordinator.selectedIDs.contains(job.id))
                             .equatable()

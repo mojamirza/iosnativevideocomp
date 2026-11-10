@@ -761,10 +761,14 @@ final class JobCoordinator: ObservableObject {
         if jobs[idx].state == .queued {
             // Never started — just drop it. The source import copy leaves
             // TOO: removing only the row leaked the multi-GB copy in
-            // Caches/Imports until the next sweep.
+            // Caches/Imports until the next sweep. NOT animated: an
+            // animated removal lets List's diff recycle the removed cell's
+            // layout onto the shifted sibling mid-flight (device bug: the
+            // survivor card carried the cancelled job's progress bar until
+            // a scroll) — List diffs instantly on a plain removal.
             deleteSourceImport(jobs[idx])
             removeRecord(jobID: jobID)
-            withAnimation { jobs.remove(at: idx) }
+            jobs.remove(at: idx)
             refreshMenuState()
         } else if let flags = cancelFlags[jobID] {
             // Active job: the engine's cancel hooks abort the encode at once;
@@ -808,7 +812,9 @@ final class JobCoordinator: ObservableObject {
         deleteSourceImport(jobs[idx])
         if let flags = cancelFlags[jobID] { flags.cancel() }
         removeRecord(jobID: jobID)
-        withAnimation { jobs.remove(at: idx) }
+        // Instant removal (see cancel's note): animated diffs made List
+        // recycle the removed cell's layout onto a shifted sibling card.
+        jobs.remove(at: idx)
         cancelFlags.removeValue(forKey: jobID)
         // A removed row must not survive as a phantom selection entry (see
         // pruneSelection) — single deletes from the ⋯ menu can hit rows
@@ -1048,7 +1054,9 @@ final class JobCoordinator: ObservableObject {
                 try? FileManager.default.removeItem(at: url)
             }
             deleteSourceImport(jobs[idx])
-            withAnimation { jobs.remove(at: idx) }
+            // Instant removal (see cancel's note) — no animated diff to
+            // recycle a removed cell's layout onto the shifted sibling.
+            jobs.remove(at: idx)
         }
         refreshMenuState()
         // Cancel/watchdog removals must not leave a phantom selection entry

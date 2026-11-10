@@ -22,6 +22,14 @@ struct JobRowView: View, Equatable {
     /// miss them.
     let selectionActive: Bool
     let isSelected: Bool
+    /// STRUCTURAL POSITION of the row in its section. The render-skip must
+    /// break on a neighbor's removal even when this row's own values are
+    /// unchanged: cancelling the RUNNING job left the queued survivor's
+    /// value untouched (same job, same queued-count), the skip held, and
+    /// the List's animated diff carried the removed cell's progress-bar
+    /// layout onto the shifted card until a scroll recycled it (device
+    /// report). A changed index forces a fresh render.
+    let rowIndex: Int
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -81,6 +89,10 @@ struct JobRowView: View, Equatable {
             // selection change.
             && l.selectionActive == r.selectionActive
             && l.isSelected == r.isSelected
+            // Structural position: a neighbor's removal/insert shifts this
+            // row even though its values are unchanged — the skip must not
+            // leave a recycled cell with a neighbor's layout (device bug).
+            && l.rowIndex == r.rowIndex
             // Queue-rank shifts (the “next up”/“#N in line” label) always
             // involve a job entering or leaving the queued set.
             && l.coordinator.jobs.filter { $0.state == .queued }.count
