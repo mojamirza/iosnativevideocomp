@@ -816,10 +816,12 @@ final class JobCoordinator: ObservableObject {
         pruneSelection()
     }
 
-    // MARK: Batch selection (history)
+    // MARK: Batch selection
 
-    /// Multi-select mode over finished rows (batch save to Photos / batch
-    /// delete). Entering clears any prior selection.
+    /// Multi-select mode over ALL rows: finished rows carry batch Save /
+    /// batch Delete; active rows carry batch Cancel (cancelling a warm
+    /// queue one-by-one meant N taps + N confirms). Entering clears any
+    /// prior selection.
     @Published var selectionMode = false
     @Published var selectedIDs: Set<UUID> = []
     /// Result notice for batch actions (surfaced as an alert by RootView).
@@ -865,22 +867,21 @@ final class JobCoordinator: ObservableObject {
         selectedIDs = []
     }
 
-    /// SELECTION HYGIENE: selected IDs that no longer sit on a selectable
-    /// (finished) row are PHANTOMS — the navigation title would advertise
-    /// "N selected" for rows that don't exist, the batch-delete alert would
-    /// name N items of which some are gone, and batch Save would quietly
-    /// skip them (inert). Removable paths (⋯ delete, cancel's removeRow,
-    /// watchdog purges, Clear Finished — reachable from the menu bar
-    /// WHILE selecting) can take a selected row away, so every REMOVAL
-    /// path prunes through here. When NOTHING selectable remains while
-    /// the mode is on, the mode EXITS: the toolbar's Cancel control is
-    /// gated on !jobs.isEmpty and would otherwise vanish (687–688), leaving
-    /// "Select all" + a bottom bar whose actions target nothing — a
-    /// lying, stuck-looking state.
+    /// SELECTION HYGIENE: selected IDs that no longer sit on a row are
+    /// PHANTOMS — the navigation title would advertise "N selected" for
+    /// rows that don't exist, the batch-delete alert would name N items of
+    /// which some are gone, and batch Save would quietly skip them
+    /// (inert). Every row is selectable now (finished → save/delete,
+    /// active → cancel), so intersection is with ALL current IDs.
+    /// Removable paths (⋯ delete, cancel's removeRow, watchdog purges,
+    /// Clear Finished — reachable from the menu bar WHILE selecting) can
+    /// take a selected row away, so every REMOVAL path prunes through
+    /// here. When NOTHING selectable remains while the mode is on, the
+    /// mode EXITS: the toolbar's Cancel control is gated on !jobs.isEmpty
+    /// and would otherwise vanish, leaving "Select all" + a bottom bar
+    /// whose actions target nothing — a lying, stuck-looking state.
     private func pruneSelection() {
-        let selectable = Set(jobs
-            .filter { [.done, .failed, .cancelled].contains($0.state) }
-            .map(\.id))
+        let selectable = Set(jobs.map(\.id))
         selectedIDs.formIntersection(selectable)
         if selectionMode && selectable.isEmpty {
             exitSelectionMode()
@@ -895,19 +896,54 @@ final class JobCoordinator: ObservableObject {
         }
     }
 
-    /// Select all finished rows (done/failed/cancelled).
-    func selectAllFinished() {
-        selectedIDs = Set(jobs
-            .filter { [.done, .failed, .cancelled].contains($0.state) }
-            .map(\.id))
+    /// Select ALL rows: finished rows carry batch save/delete, active ones
+    /// carry batch cancel.
+    func selectAll() {
+        selectedIDs = Set(jobs.map(\.id))
         // Re-selecting is also pruning: a stale selection (phantom IDs that
         // lost their rows through another removal path) cannot survive a
         // fresh select-all.
         pruneSelection()
     }
 
-    /// Batch delete: every selected finished row (record + output + import
-    /// leftovers) goes through the same per-row delete as the ⋯ menu.
+    // MARK: per-action selection counts (bottom-bar enable/disable)
+
+    /// Selected rows that batch Save WOULD write to Photos: done + a
+    /// surviving output. The Save button gates on this — a failed or
+    /// cancelled-only selection used to enable the button and then do
+    /// nothing silently.
+    var saveableSelectedCount: Int {
+        jobs.filter {
+            selectedIDs.contains($0.id)
+                && $0.state == .done
+                && $0.outputURL != nil
+        }.count
+    }
+
+    /// Selected rows that batch Cancel WOULD stop: queued or in flight
+    /// (analyzing/compressing/verifying). The Cancel button gates on this
+    /// so tapping it always speaks to real work.
+    var cancelableSelectedCount: Int {
+        jobs.filter {
+            selectedIDs.contains($0.id)
+                && [.queued, .analyzing, .compressing, .verifying].contains($0.state)
+        }.count
+    }
+
+    /// Batch cancel: stops every selected ACTIVE job — queued rows are
+    /// dropped at once (import copy removed), a running encode aborts
+    /// through the same per-row flags the single Cancel uses; the run()
+    /// cleanup then removes its row. Done/failed rows in the selection are
+    /// intentionally untouched: Cancel speaks to the queue, not history.
+    func cancelSelected() {
+        for id in selectedIDs {
+            cancel(jobID: id)
+        }
+    }
+
+    /// Batch delete: every selected row (record + output + import
+    /// leftovers; an ACTIVE row is stopped on the way out, its flags
+    /// cancelled) goes through the same per-row delete as the ⋯ menu.
     func deleteSelected() {
         let ids = selectedIDs
         for id in ids {
@@ -917,12 +953,18 @@ final class JobCoordinator: ObservableObject {
     }
 
     /// Batch save: every selected DONE row with a surviving output is
-    /// written to the photo library in ONE Photos change request.
+    /// written to the photo library in ONE Photos change request. An empty
+    /// target set (failed/cancelled-only selection that slipped past the
+    /// disabled button) answers with an HONEST notice — silence read as a
+    /// no-op bug.
     func saveSelectedToPhotos() async {
         let targets = jobs.filter {
             selectedIDs.contains($0.id) && $0.state == .done && $0.outputURL != nil
         }
-        guard !targets.isEmpty else { return }
+        guard !targets.isEmpty else {
+            batchNotice = "Nothing to save — the selection has no finished compression with a surviving output."
+            return
+        }
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             batchNotice = "Photos access was denied. Allow it in Settings → Privacy → Photos → Add Photos Only."

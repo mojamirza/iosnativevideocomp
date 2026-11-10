@@ -35,12 +35,13 @@ struct JobRowView: View, Equatable {
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
     }
 
-    /// The row's title: for finished jobs, the OUTPUT's name (so renames
-    /// are reflected); otherwise the source name.
-    /// Batch-selection state (finished rows only — active jobs are transient
-    /// and never selectable).
+    /// Batch-selection state: selection mode makes EVERY row tappable —
+    /// finished rows for batch save/delete, ACTIVE ones for batch cancel
+    /// (stopping a queued line previously meant one Cancel confirm per
+    /// row). While selecting, a row's action buttons give way to the
+    /// checkmark circle (baseCard hides them in this mode).
     private var inSelectionMode: Bool {
-        coordinator.selectionMode && [.done, .failed, .cancelled].contains(job.state)
+        coordinator.selectionMode
     }
     private var isSelectedRow: Bool {
         coordinator.selectedIDs.contains(job.id)

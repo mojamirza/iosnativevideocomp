@@ -21,6 +21,7 @@ struct RootView: View {
     @State private var importStep: ImportStep?
     @State private var dropActive = false
     @State private var confirmingBatchDelete = false
+    @State private var confirmingBatchCancel = false
     @State private var showPresetEditor = false
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
@@ -261,16 +262,26 @@ struct RootView: View {
             // lives in the TOP bar while selecting (the native Mail
             // pattern), never behind anything. Hidden while the compact
             // drawer is open (it floats in the system-toolbar layer).
+            // EACH action gates on what its tap WILL actually do: Save
+            // counts selected rows that really have an output to write
+            // (a failed/cancelled-only selection used to sit enabled and
+            // do nothing), Cancel counts selected ACTIVE jobs.
             .toolbar {
                 if coordinator.selectionMode && !mainChromeHiddenByDrawer {
                     ToolbarItemGroup(placement: .bottomBar) {
                         Spacer()
+                        Button(role: .destructive) {
+                            confirmingBatchCancel = true
+                        } label: {
+                            Label("Cancel", systemImage: "stop.fill")
+                        }
+                        .disabled(coordinator.cancelableSelectedCount == 0)
                         Button {
                             Task { await coordinator.saveSelectedToPhotos() }
                         } label: {
                             Label("Save", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(coordinator.selectedIDs.isEmpty)
+                        .disabled(coordinator.saveableSelectedCount == 0)
                         Button(role: .destructive) {
                             confirmingBatchDelete = true
                         } label: {
@@ -365,6 +376,16 @@ struct RootView: View {
                 Button("Keep", role: .cancel) { }
             } message: {
                 Text("The selected videos and their history entries will be removed. This cannot be undone.")
+            }
+            // Fat-finger protection for the batch cancel (same alert shape
+            // as the batch delete). Active rows are removed ENTIRELY by a
+            // cancel (no cancelled-headache history entries), so say so.
+            .alert("Cancel \(coordinator.cancelableSelectedCount) selected jobs?",
+                   isPresented: $confirmingBatchCancel) {
+                Button("Cancel jobs", role: .destructive) { coordinator.cancelSelected() }
+                Button("Don't cancel", role: .cancel) { }
+            } message: {
+                Text("The running job stops and queued jobs are removed — cancelled jobs leave no history entry. Finished rows in the selection are not affected.")
             }
             // SINGLE-ROW DELETE confirmation — presented HERE (list level),
             // not in the row: destructive prompts from inside rows silently
@@ -711,7 +732,7 @@ struct RootView: View {
                     // native Mail pattern) — the leading slot of a bottom
                     // bar is exactly where iPadOS 26's floating sidebar
                     // overlays landed on it (device report).
-                    Button("Select all") { coordinator.selectAllFinished() }
+                    Button("Select all") { coordinator.selectAll() }
                 } else {
                     // DIRECT toolbar buttons: a PhotosPicker nested inside a
                     // Menu is unreliable on device (the sheet can be swallowed
