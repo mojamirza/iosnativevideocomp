@@ -1721,12 +1721,28 @@ final class JobCoordinator: ObservableObject {
         let fm = FileManager.default
         let outDir = Self.outputsDirectory()
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
-        // NAME_MAX safety: a long source name can push the base+stamp file
-        // name past the 255-byte path-component limit and make the move
-        // fail; trim the base so the full name always fits.
-        let base = String((sourceName as NSString).deletingPathExtension.prefix(100))
+        let stamp = presetStamp(preset, codec: codec)
+        // NAME_MAX safety (255 BYTES per path component), counted in BYTES
+        // not characters: the old character-count cap (prefix(100)) let a
+        // 100-character CJK or Arabic base (~200–300 UTF-8 bytes) sail
+        // through — the move then failed and the row blamed storage for a
+        // name-length problem. Trim the base BYTE-wise so
+        // base + "_" + stamp + worst-case bump + extension always fit.
+        // The stamp itself is clamped byte-wise too: a long custom preset
+        // name feeds it directly.
+        var clampedStamp = stamp
+        while clampedStamp.utf8.count > 64 && clampedStamp.count > 1 {
+            clampedStamp = String(clampedStamp.dropLast())
+        }
+        // "_"+stamp + bump " (9999)" + ".mp4" are the base's fixed costs.
+        let baseBudget = max(1, 255 - (1 + clampedStamp.utf8.count + 7 + 4))
+        var base = String((sourceName as NSString).deletingPathExtension)
+        while base.utf8.count > baseBudget && !base.isEmpty {
+            base = String(base.dropLast())
+        }
+        if base.isEmpty { base = "Video" }
         let final = Self.uniqueOutputURL(
-            in: outDir, base: base, stamp: presetStamp(preset, codec: codec))
+            in: outDir, base: base, stamp: clampedStamp)
         do {
             try fm.moveItem(at: work, to: final)
             Self.excludedFromBackup(final)
@@ -1790,19 +1806,44 @@ final class JobCoordinator: ObservableObject {
         cachesDirectory().appendingPathComponent("Working", isDirectory: true)
     }
 
+    /// First path in `dir` carrying `fileName` that is FREE: the plain
+    /// name, then " (2)", " (3)", … before the extension — the native
+    /// Files duplicate shape (and the same rule renameOutput follows).
+    /// Migrations move EXISTING files here instead of deleting whatever
+    /// sits in the way: "never overwrite user files" applies to a move
+    /// exactly as much as to an encode.
+    static func uniqueNameURL(for fileName: String, in dir: URL) -> URL {
+        let fm = FileManager.default
+        var dst = dir.appendingPathComponent(fileName)
+        let stem = (fileName as NSString).deletingPathExtension
+        let ext = (fileName as NSString).pathExtension
+        let extDot = ext.isEmpty ? "" : ".\(ext)"
+        var n = 1
+        while fm.fileExists(atPath: dst.path) {
+            dst = dir.appendingPathComponent("\(stem) (\(n))\(extDot)")
+            n += 1
+        }
+        return dst
+    }
+
     /// One-time move from the old layout (Documents/Compressed + Documents/Imports)
     /// to the new one (outputs at Documents root, imports in Application
     /// Support/Imports — previously Caches/Imports, which iOS may purge).
     /// MUST run before loadHistory() builds rows — paths are derived from the
     /// directory getters, so files must be in their new homes first.
+    /// COLLISIONS bump, never delete: the old `removeItem(dst)` erased a
+    /// file that may be the product of a NEW-layout job (or the user's own
+    /// file) just because a legacy file shared its name — a migration that
+    /// deletes data to make room for more data. Records resolve by file
+    /// NAME, so in the rare same-name collision the bumped copy is one
+    /// rename away from repair, while a deleted bytes are gone for good.
     static func migrateLegacyStorage() {
         let fm = FileManager.default
 
         let legacyOutputs = documentsDirectory().appendingPathComponent("Compressed", isDirectory: true)
         if fm.fileExists(atPath: legacyOutputs.path) {
             for file in (try? fm.contentsOfDirectory(at: legacyOutputs, includingPropertiesForKeys: nil)) ?? [] {
-                let dst = documentsDirectory().appendingPathComponent(file.lastPathComponent)
-                if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
+                let dst = Self.uniqueNameURL(for: file.lastPathComponent, in: documentsDirectory())
                 try? fm.moveItem(at: file, to: dst)
             }
             try? fm.removeItem(at: legacyOutputs)
@@ -1820,8 +1861,9 @@ final class JobCoordinator: ObservableObject {
         for src in [legacyImports, cacheImports] {
             guard fm.fileExists(atPath: src.path) else { continue }
             for file in (try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil)) ?? [] {
-                let dst = target.appendingPathComponent(file.lastPathComponent)
-                if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
+                // Same rule: bump to "(2)" instead of removing the file
+                // already sitting in the target.
+                let dst = Self.uniqueNameURL(for: file.lastPathComponent, in: target)
                 try? fm.moveItem(at: file, to: dst)
             }
             try? fm.removeItem(at: src)
