@@ -21,7 +21,6 @@ struct RootView: View {
     @State private var importStep: ImportStep?
     @State private var dropActive = false
     @State private var confirmingBatchDelete = false
-    @State private var confirmingBatchCancel = false
     @State private var showPresetEditor = false
     @State private var showAboutSettings = false
     @State private var showPresetManager = false
@@ -265,17 +264,15 @@ struct RootView: View {
             // EACH action gates on what its tap WILL actually do: Save
             // counts selected rows that really have an output to write
             // (a failed/cancelled-only selection used to sit enabled and
-            // do nothing), Cancel counts selected ACTIVE jobs.
+            // do nothing). Delete is the ONE stop-everything action: it
+            // cancels selected active jobs on the way out (deleteSelected
+            // → delete → per-row flags), so a separate Cancel button was
+            // the same gesture with an extra confirmation — removed per
+            // device report. Save + Delete only.
             .toolbar {
                 if coordinator.selectionMode && !mainChromeHiddenByDrawer {
                     ToolbarItemGroup(placement: .bottomBar) {
                         Spacer()
-                        Button(role: .destructive) {
-                            confirmingBatchCancel = true
-                        } label: {
-                            Label("Cancel", systemImage: "stop.fill")
-                        }
-                        .disabled(coordinator.cancelableSelectedCount == 0)
                         Button {
                             Task { await coordinator.saveSelectedToPhotos() }
                         } label: {
@@ -376,16 +373,6 @@ struct RootView: View {
                 Button("Keep", role: .cancel) { }
             } message: {
                 Text("The selected videos and their history entries will be removed. This cannot be undone.")
-            }
-            // Fat-finger protection for the batch cancel (same alert shape
-            // as the batch delete). Active rows are removed ENTIRELY by a
-            // cancel (no cancelled-headache history entries), so say so.
-            .alert("Cancel \(coordinator.cancelableSelectedCount) selected jobs?",
-                   isPresented: $confirmingBatchCancel) {
-                Button("Cancel jobs", role: .destructive) { coordinator.cancelSelected() }
-                Button("Don't cancel", role: .cancel) { }
-            } message: {
-                Text("The running job stops and queued jobs are removed — cancelled jobs leave no history entry. Finished rows in the selection are not affected.")
             }
             // SINGLE-ROW DELETE confirmation — presented HERE (list level),
             // not in the row: destructive prompts from inside rows silently
@@ -670,6 +657,11 @@ struct RootView: View {
         }
         .padding(.horizontal)
         .padding(.top, 14)
+        // BOTTOM BREATHING ROOM: with no bottom padding the headline sat
+        // flush against the status card / first job card below it — device
+        // report: the section read as one stacked blob. The card rows carry
+        // their own .vertical(7), so this is the only seam that needed it.
+        .padding(.bottom, 8)
     }
 
     /// COMPACT: while the drawer is open, the main page's toolbar chrome is

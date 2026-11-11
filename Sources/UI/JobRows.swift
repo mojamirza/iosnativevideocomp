@@ -93,8 +93,8 @@ struct JobRowView: View, Equatable {
             // row even though its values are unchanged — the skip must not
             // leave a recycled cell with a neighbor's layout (device bug).
             && l.rowIndex == r.rowIndex
-            // Queue-rank shifts (the “next up”/“#N in line” label) always
-            // involve a job entering or leaving the queued set.
+            // Queue-rank shifts (the queued "#N" ordinal) always involve a
+            // job entering or leaving the queued set.
             && l.coordinator.jobs.filter { $0.state == .queued }.count
                 == r.coordinator.jobs.filter { $0.state == .queued }.count
     }
@@ -524,8 +524,11 @@ struct JobRowView: View, Equatable {
         }
     }
 
-    /// "Queued · next up" / "Queued · #3 in line" — workers pick the OLDEST
-    /// queued job first, so the position ranks by creation date.
+    /// Plain ORDINAL for a queued row — "#1" is next up, "#2" behind it —
+    /// per device feedback: the wordy "Queued · next up / Queued · #N in
+    /// line" read the same fact twice (the timer icon already says queued)
+    /// and shouted next to the running row's "Encoding… N%". Workers pick
+    /// the OLDEST queued job first, so the position ranks by creation date.
     private var queuePositionLabel: String {
         guard job.state == .queued else { return "Queued" }
         let queued = coordinator.jobs.filter { $0.state == .queued }
@@ -533,7 +536,7 @@ struct JobRowView: View, Equatable {
         guard let rank = queued.firstIndex(where: { $0.id == job.id }) else {
             return "Queued"
         }
-        return rank == 0 ? "Queued · next up" : "Queued · #\(rank + 1) in line"
+        return "#\(rank + 1)"
     }
 
     /// Container label for VoiceOver: a composed summary is announced before
@@ -544,7 +547,7 @@ struct JobRowView: View, Equatable {
         case .compressing:
             return "Compressing \(job.sourceName), \(Int(job.progress * 100)) percent, \(job.preset.name) preset"
         case .queued:
-            return "\(job.sourceName), \(queuePositionLabel)"
+            return "\(job.sourceName), queued \(queuePositionLabel)"
         case .verifying:
             return "\(job.sourceName), verifying output integrity"
         case .done:
@@ -630,6 +633,12 @@ struct JobRowView: View, Equatable {
                     iconButton("square.and.arrow.down", tint: .accentColor,
                                a11y: "Save to Photos") { saveToPhotos(out) }
 
+                    // BUTTON STYLE IS LOAD-BEARING here: without an explicit
+                    // style the ShareLink inherits the List row's tap
+                    // routing, and a tap ANYWHERE on the card opened the
+                    // share sheet (device report — redundant with this very
+                    // button). Borderless confines the hit area to the
+                    // 44×44 label like its .plain neighbors.
                     ShareLink(item: out) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.body)
@@ -637,6 +646,7 @@ struct JobRowView: View, Equatable {
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
+                    .buttonStyle(.borderless)
                     .accessibilityLabel("Share")
                 }
                 ellipsisMenu

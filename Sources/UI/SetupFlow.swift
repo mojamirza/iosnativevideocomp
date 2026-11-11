@@ -428,11 +428,13 @@ struct SetupFlowView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            // STANDARD size, no custom vertical padding: .large + a 14 pt
-            // padding + headline font stacked into an oversized button that
-            // broke the bar's harmony (the bar's other actions are
-            // regular-size bordered buttons).
-            .controlSize(.regular)
+            // LARGE, but nothing stacked on top of it: the previous
+            // harmonization went .regular + no padding + no font and the
+            // device report called it narrow and thin. .large alone is the
+            // standard iOS primary-action height (the old ~50+ pt monster
+            // was .large PLUS a 14 pt vertical padding PLUS a headline
+            // font) — visible presence without breaking the bar's rhythm.
+            .controlSize(.large)
             // singleInfeasible / batchNothingStartable: an unreachable
             // target is not a starting signal — the full encode could only
             // end in the verification failure the row already predicted

@@ -998,27 +998,6 @@ final class JobCoordinator: ObservableObject {
         }.count
     }
 
-    /// Selected rows that batch Cancel WOULD stop: queued or in flight
-    /// (analyzing/compressing/verifying). The Cancel button gates on this
-    /// so tapping it always speaks to real work.
-    var cancelableSelectedCount: Int {
-        jobs.filter {
-            selectedIDs.contains($0.id)
-                && [.queued, .analyzing, .compressing, .verifying].contains($0.state)
-        }.count
-    }
-
-    /// Batch cancel: stops every selected ACTIVE job — queued rows are
-    /// dropped at once (import copy removed), a running encode aborts
-    /// through the same per-row flags the single Cancel uses; the run()
-    /// cleanup then removes its row. Done/failed rows in the selection are
-    /// intentionally untouched: Cancel speaks to the queue, not history.
-    func cancelSelected() {
-        for id in selectedIDs {
-            cancel(jobID: id)
-        }
-    }
-
     /// Batch delete: every selected row (record + output + import
     /// leftovers; an ACTIVE row is stopped on the way out, its flags
     /// cancelled) goes through the same per-row delete as the ⋯ menu.
