@@ -77,11 +77,29 @@ final class TrimMathTests: XCTestCase {
                        Double(ten.fileSize) * 5.0, accuracy: Double(ten.fileSize) * 0.001)
     }
 
-    func testZeroDurationSourceCannotDivide() {
-        // Degenerate probe: the max(·, 0.1) guard must keep this finite.
+    func testZeroDurationSourcePassesThroughUntouched() {
+        // Degenerate probe: isTrimmed is false for ANY window here (a 0.5 s
+        // window cannot cut real content from a zero-length video), so
+        // apply() returns the probe AS-IS — the file-size math is never
+        // reached and must not divide.
         let p = probe(dur: 0, bytes: 100)
         let out = TrimMath.apply(p, start: 0, end: 0)
         XCTAssertEqual(out.duration, 0)
         XCTAssertEqual(out.fileSize, 100)
+        XCTAssertEqual(out.duration, p.duration)
+        XCTAssertEqual(out.fileSize, p.fileSize)
+    }
+
+    func testSubTenthSecondSourceReachesTheGuard() {
+        // The max(·, 0.1) guard only bites when a trim window is VALID on a
+        // probe shorter than 0.1 s — start > 0.05 with an end past the
+        // (degenerate) duration satisfies isTrimmed. Without the guard the
+        // scale would divide by 0.05 and INFLATE the size; with it the
+        // divisor floors at 0.1.
+        let p = probe(dur: 0.05, bytes: 100)
+        XCTAssertTrue(TrimMath.isTrimmed(start: 0.06, end: 0.6, duration: 0.05))
+        let out = TrimMath.apply(p, start: 0.06, end: 0.6)
+        XCTAssertEqual(out.duration, 0.54, accuracy: 1e-9)
+        XCTAssertEqual(Double(out.fileSize), 540, accuracy: 1)
     }
 }

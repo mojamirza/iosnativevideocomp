@@ -100,4 +100,31 @@ final class PlanTests: XCTestCase {
         // The rationale must still read cleanly (no "inf"/nan garble).
         XCTAssertFalse(plan.rationale.contains("inf"))
     }
+
+    // DOWNSCALE CEILING: with areaRatio < 1 the source's own rate scales by
+    //    the pixel-area ratio with 1.25× encoder-variance headroom — lower
+    //    resolutions always plan fewer bits (480p < 720p), even for lean
+    //    sources. (Previously untested: the only covered cap paths were
+    //    keep-resolution 0.95× and the codec-aware 0.65× variant.)
+    func testDownscaleCeilingUsesAreaRatioWithHeadroom() {
+        let src = probe(size: CGSize(width: 1920, height: 1080),
+                        videoDataRate: 4_000_000)
+        let hd = QualitySizeOptimizer.plan(
+            preset: preset(fixedMbps: 8.0, resolution: .hd), probe: src)
+        // ceiling = source rate × (outArea/srcArea) × 1.25 (same codec →
+        // gain 1.0); the ratio derives from the PLAN's output size so the
+        // assertion tracks the real downscale math.
+        let ratio = Double(hd.outputSize.width * hd.outputSize.height)
+            / Double(src.sourceSize.width * src.sourceSize.height)
+        XCTAssertEqual(Double(hd.videoBitrate),
+                       4_000_000 * ratio * 1.25, accuracy: 1,
+                       "downscale ceiling = source rate × area ratio × 1.25")
+        XCTAssertTrue(hd.bitrateCapped)
+        XCTAssertEqual(hd.requestedVideoBitrate, 8_000_000)
+        // The branch's promise, verbatim: 480p plans FEWER bits than 720p
+        // from the same source.
+        let sd = QualitySizeOptimizer.plan(
+            preset: preset(fixedMbps: 8.0, resolution: .sd), probe: src)
+        XCTAssertLessThan(Double(sd.videoBitrate), Double(hd.videoBitrate))
+    }
 }
