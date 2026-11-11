@@ -492,9 +492,23 @@ final class JobCoordinator: ObservableObject {
                     }
                     next.audioBitrate = audioApplied
                     // Swap the scratch files; downstream (verify/promote)
-                    // keeps using the ONE primary path.
-                    try? fm.removeItem(at: output)
-                    try fm.moveItem(at: extra, to: output)
+                    // keeps using the ONE primary path. NEVER destroy the
+                    // old file first: removeItem-then-move lost the last
+                    // good encode when the move failed (the throw landed in
+                    // run()'s error path with the primary already deleted).
+                    // Shift the old file aside, move the replacement in,
+                    // drop the old — and if the replacement move fails,
+                    // shift the old file BACK before rethrowing.
+                    let aside = workDir.appendingPathComponent("\(jobID.uuidString).r\(pass).old.mp4")
+                    try? fm.removeItem(at: aside)
+                    try? fm.moveItem(at: output, to: aside)
+                    do {
+                        try fm.moveItem(at: extra, to: output)
+                    } catch {
+                        try? fm.moveItem(at: aside, to: output)
+                        throw error
+                    }
+                    try? fm.removeItem(at: aside)
                     plan = next
                 }
             }
@@ -854,6 +868,11 @@ final class JobCoordinator: ObservableObject {
         jobs[idx].errorMessage = nil
         jobs[idx].report = nil
         jobs[idx].passLabel = nil
+        // QUEUE PERSISTENCE: a retry must survive a kill before the job
+        // starts, exactly like enqueue does — without this the record still
+        // says "failed" (with the old error/report), and a relaunch restores
+        // a row the user ALREADY retried: every retry cycle lost to a crash.
+        saveRecord(jobID: jobID, outputName: nil, report: nil, state: "queued")
         runQueueIfNeeded()
     }
 
