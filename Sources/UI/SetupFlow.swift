@@ -419,15 +419,20 @@ struct SetupFlowView: View {
                     if !analysisDone {
                         ProgressView().tint(.white)
                     }
-                    Image(systemName: isBatch ? "square.stack.3d.up.badge.plus" : "arrow.down.forward.circle.fill")
+                    // ONE icon for both modes — the batch icon previously
+                    // swapped per mode and read as a different button; the
+                    // count in the title already says what's queued.
+                    Image(systemName: "arrow.down.forward.circle.fill")
                     Text(buttonTitle)
-                        .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            // STANDARD size, no custom vertical padding: .large + a 14 pt
+            // padding + headline font stacked into an oversized button that
+            // broke the bar's harmony (the bar's other actions are
+            // regular-size bordered buttons).
+            .controlSize(.regular)
             // singleInfeasible / batchNothingStartable: an unreachable
             // target is not a starting signal — the full encode could only
             // end in the verification failure the row already predicted
