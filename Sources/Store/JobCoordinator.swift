@@ -622,6 +622,16 @@ final class JobCoordinator: ObservableObject {
                         systemInterrupted.remove(jobID)
                     } else {
                         removeRow(jobID: jobID)
+                        // The row may ALREADY be gone — the prompt
+                        // verify-phase cancel removed it while run() was
+                        // between the late-wake guard and here, after the
+                        // file was promoted to Documents. removeRow no-ops
+                        // on a missing row and could not know the path:
+                        // delete the promoted file or it strands as an
+                        // orphan no row points at.
+                        if !jobs.contains(where: { $0.id == jobID }) {
+                            try? fm.removeItem(at: promoted)
+                        }
                         try? await Task.sleep(nanoseconds: 200_000_000)
                         return
                     }
@@ -770,10 +780,32 @@ final class JobCoordinator: ObservableObject {
             removeRecord(jobID: jobID)
             jobs.remove(at: idx)
             refreshMenuState()
+        } else if jobs[idx].state == .verifying {
+            // VERIFY-PHASE CANCEL, PROMPT: during verification nobody
+            // polls the engine flags (the encode loop is done) and the
+            // verifier never sees Task cancellation — waiting for run()
+            // to notice flags.cancelled AFTER verify returned stalled the
+            // row removal for up to the 60 s verify cap + promotion (the
+            // row sat on "Verifying…" with Stop apparently dead). Remove
+            // the row NOW instead: the verify keeps running in the
+            // background, but its result is discarded by run()'s
+            // late-wake guard (state no longer .verifying → scratch
+            // removed, no promotion, no record, nothing resurrects).
+            // The watchdog must not fire into a removed row; flags.cancel()
+            // keeps any pre-verify await honest; systemInterrupted is
+            // cleared so run()'s post-verify branch can never turn this
+            // into a kept "failed" row or strand a promoted file against
+            // the user's explicit cancel.
+            verifyWatchdogs[jobID]?.cancel()
+            verifyWatchdogs[jobID] = nil
+            systemInterrupted.remove(jobID)
+            cancelFlags[jobID]?.cancel()
+            removeRow(jobID: jobID)
         } else if let flags = cancelFlags[jobID] {
-            // Active job: the engine's cancel hooks abort the encode at once;
-            // run() then removes the row entirely (cancelled jobs leave no
-            // record and no list entry).
+            // Encode-phase job: the engine's cancel hooks abort the encode
+            // at once (the encode loop polls the flags); run() then removes
+            // the row entirely (cancelled jobs leave no record and no list
+            // entry).
             verifyWatchdogs[jobID]?.cancel()
             verifyWatchdogs[jobID] = nil
             flags.cancel()
