@@ -90,6 +90,45 @@ final class AppThemeTests: XCTestCase {
                     equals: (242 / 255, 242 / 255, 247 / 255))
     }
 
+    // MARK: SwiftUI wrappers — the properties the views ACTUALLY consume
+
+    /// Every view consumes the SwiftUI Color.appScreen/.appCard/.appTile
+    /// wrappers; the UIKit tokens pinned above are only their SOURCE. A
+    /// wrapper re-pointed at another token — or back at a dynamic system
+    /// color, which is the elevation bug's exact shape — previously stayed
+    /// green. Color equality compares the underlying provider, so a system
+    /// dynamic color can never compare equal to a pinned one.
+    func testSwiftUIWrappersMapToTheirPinnedTokens() {
+        XCTAssertEqual(Color.appScreen, Color(AppTheme.screenColor))
+        XCTAssertEqual(Color.appCard, Color(AppTheme.cardColor))
+        XCTAssertEqual(Color.appTile, Color(AppTheme.tileColor))
+    }
+
+    /// And through the bridge the views actually render with: round-trip
+    /// each wrapper into UIColor and resolve it at BOTH trait levels — the
+    /// same component pins the UIKit tokens assert (dark screen stays pure
+    /// black when elevated, cards never drift to #2C2C2E, …). A wrapper
+    /// that still points at the right token but with a broken provider
+    /// (e.g. re-wrapped through a flattening intermediary) fails here.
+    func testSwiftUIWrappersResolveToThePinnedComponents() {
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            for level in [UIUserInterfaceLevel.base, .elevated] {
+                assertColor(rgb(UIColor(Color.appScreen), style: style, level: level),
+                            equals: style == .dark
+                                ? (0, 0, 0)
+                                : (242 / 255, 242 / 255, 247 / 255))
+                assertColor(rgb(UIColor(Color.appCard), style: style, level: level),
+                            equals: style == .dark
+                                ? (28 / 255, 28 / 255, 30 / 255)
+                                : (1, 1, 1))
+                assertColor(rgb(UIColor(Color.appTile), style: style, level: level),
+                            equals: style == .dark
+                                ? (44 / 255, 44 / 255, 46 / 255)
+                                : (242 / 255, 242 / 255, 247 / 255))
+            }
+        }
+    }
+
     // MARK: brand accent
 
     func testBrandAccentAssetExists() {
