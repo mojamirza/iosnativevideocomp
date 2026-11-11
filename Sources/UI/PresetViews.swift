@@ -479,10 +479,14 @@ struct PresetEditorView: View {
                                 .frame(width: 80, alignment: .trailing)
                         }
                         .listRowBackground(Color.appCard)
+                        // Separator starts at the row's leading edge;
+                        // otherwise it aligns to the first Text (the value
+                        // label) and draws a short stub under the slider.
+                        .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
                     }
                 }
 
-                Section("Audio") {
+                Section {
                     HStack {
                         Slider(value: $audioKbps, in: 32...320, step: 16)
                         Text("\(Int(audioKbps)) kbps")
@@ -490,16 +494,23 @@ struct PresetEditorView: View {
                             .frame(width: 90, alignment: .trailing)
                     }
                     .listRowBackground(Color.appCard)
+                    // Separator starts at the row's leading edge; otherwise
+                    // it aligns to the first Text (the value label) and
+                    // draws a short stub under the slider.
+                    .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
                     // Forced mono: the lecture/screen-recording recipe. The
                     // engine caps the encode so the budget's audio share
                     // can't be broken (the encode never EXCEEDS the planned
                     // audio rate).
                     Toggle("Mono voice track", isOn: $monoAudio)
                         .listRowBackground(Color.appCard)
+                } header: {
+                    Text("Audio")
+                } footer: {
+                    // A footer sits under the card with no divider and no
+                    // row background (the caption was a ROW before — it drew
+                    // a separator stub above it and carried the card tint).
                     Text("AAC is encoded by AVFoundation at this budget. Tracks are kept when present.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .listRowBackground(Color.appCard)
                 }
 
                 // REAL HDR → SDR, a deliberate conversion (BT.2100 tone-map
@@ -508,29 +519,17 @@ struct PresetEditorView: View {
                 // Main10 HEVC). Shown WITHOUT a probe too (batch setup): the
                 // flag is applied PER SOURCE at encode time — HDR sources
                 // convert, SDR sources pass through unchanged.
-                Section("HDR output") {
+                Section {
                     Picker("Color space", selection: $hdrConvert) {
                         Text("Keep HDR").tag(false)
                         Text("Convert to SDR").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.appCard)
-                    if hdrConvert {
-                        Text("Tone-maps HDR video (HLG/PQ) into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. SDR sources pass through unchanged. Report shows: \"SDR conversion verified\".")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .listRowBackground(Color.appCard)
-                    } else if let probe = contextProbe {
-                        Text("Output stays \(probe.tags.humanLabel): fewer devices can show its true colors, but nothing is altered.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .listRowBackground(Color.appCard)
-                    } else {
-                        Text("Each source keeps its own colors untouched.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .listRowBackground(Color.appCard)
-                    }
+                } header: {
+                    Text("HDR output")
+                } footer: {
+                    Text(hdrCaption)
                 }
             }
             // Same screen-level token as every other screen (Color.appScreen)
@@ -590,6 +589,19 @@ struct PresetEditorView: View {
                     }
                 }
             }
+    }
+
+    /// The HDR section's footer text — the caption was a ROW before (it
+    /// drew a divider stub above it and carried the card tint); as a
+    /// footer it sits under the card with no divider.
+    private var hdrCaption: String {
+        if hdrConvert {
+            return "Tone-maps HDR video (HLG/PQ) into standard dynamic range (Rec.709, 8-bit) so it looks right on any older display. Highlights above SDR white clip — typical for every SDR conversion. SDR sources pass through unchanged. Report shows: \"SDR conversion verified\"."
+        }
+        if let probe = contextProbe {
+            return "Output stays \(probe.tags.humanLabel): fewer devices can show its true colors, but nothing is altered."
+        }
+        return "Each source keeps its own colors untouched."
     }
 }
 
@@ -742,6 +754,16 @@ struct PresetManagerSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
+        // CUSTOM presets only: the whole row is the edit target, not just
+        // the ⋯ menu (the Menu keeps its own tap) — a tap on the name/summary
+        // previously did nothing and read as a dead row. Built-ins stay
+        // inert (locked, duplicate-only).
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if custom { editingPreset = preset }
+        }
+        .accessibilityAddTraits(custom ? .isButton : [])
+        .accessibilityHint(custom ? "Opens the preset editor" : "")
     }
 
     private func summary(_ p: Preset) -> String {
