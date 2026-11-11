@@ -216,7 +216,7 @@ final class JobCoordinator: ObservableObject {
         // user-initiated work.
         guard !suppressBackgroundSubmission else { return }
         if #available(iOS 26.0, *) {
-            if BackgroundCompress.isRegistered, !BackgroundCompress.isRunning {
+            if !BackgroundCompress.isRunning {
                 let hasWork = jobs.contains {
                     [.queued, .analyzing, .compressing, .verifying].contains($0.state)
                 }
@@ -229,7 +229,18 @@ final class JobCoordinator: ObservableObject {
                     // pick — same rule as the workers), not the newest row.
                     ?? jobs.last(where: { $0.state == .queued })?.sourceName
                     ?? "videos"
-                if !BackgroundCompress.submit(subtitle: subtitle), !submitDenialNoticed {
+                if !BackgroundCompress.isRegistered {
+                    // Registration was REFUSED at launch (recorded honestly
+                    // by register() now): a submit attempt would throw for
+                    // certain. Surface the SAME one-time notice a refused
+                    // submit produces instead of silently dropping the
+                    // lifeline — the old isRegistered-always-true gate
+                    // papered over the refusal and then submitted anyway.
+                    if !submitDenialNoticed {
+                        submitDenialNoticed = true
+                        backgroundSubmissionDenied = true
+                    }
+                } else if !BackgroundCompress.submit(subtitle: subtitle), !submitDenialNoticed {
                     // The refusal previously vanished: background
                     // continuation silently lost for the whole session
                     // (bundle-ID/task-identifier mismatch after a re-sign

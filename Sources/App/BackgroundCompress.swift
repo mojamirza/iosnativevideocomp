@@ -43,8 +43,16 @@ enum BackgroundCompress {
     static var isRunning: Bool { currentTask != nil }
 
     /// Called once at launch, before any submission can happen.
+    /// `BGTaskScheduler.register` returns a Bool — false when the
+    /// identifier is missing from BGTaskSchedulerPermittedIdentifiers
+    /// (the classic re-sign cause) or it was called twice. A refused
+    /// registration previously still set isRegistered = true, so the
+    /// launch-resume gate submitted a task that could only throw.
+    /// isRegistered now records the truth; JobCoordinator surfaces the
+    /// same one-time "background unavailable" notice a refused submit
+    /// would have produced.
     static func register() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
+        let ok = BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
             guard let continued = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
@@ -60,7 +68,11 @@ enum BackgroundCompress {
                 BackgroundCompress.drive(continued, expiry: expiry)
             }
         }
-        isRegistered = true
+        if ok {
+            isRegistered = true
+        } else {
+            NSLog("VidCompress: BGTaskScheduler refused registration for \(taskID) — background continuation is unavailable this session.")
+        }
     }
 
     /// Called once the UI has created its coordinator.
