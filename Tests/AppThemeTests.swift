@@ -110,21 +110,29 @@ final class AppThemeTests: XCTestCase {
     /// black when elevated, cards never drift to #2C2C2E, …). A wrapper
     /// that still points at the right token but with a broken provider
     /// (e.g. re-wrapped through a flattening intermediary) fails here.
+    /// (Each step is broken into a distinct sub-expression: the combined
+    /// form was too heavy for the type-checker.)
     func testSwiftUIWrappersResolveToThePinnedComponents() {
         for style in [UIUserInterfaceStyle.light, .dark] {
             for level in [UIUserInterfaceLevel.base, .elevated] {
-                assertColor(rgb(UIColor(Color.appScreen), style: style, level: level),
-                            equals: style == .dark
-                                ? (0, 0, 0)
-                                : (242 / 255, 242 / 255, 247 / 255))
-                assertColor(rgb(UIColor(Color.appCard), style: style, level: level),
-                            equals: style == .dark
-                                ? (28 / 255, 28 / 255, 30 / 255)
-                                : (1, 1, 1))
-                assertColor(rgb(UIColor(Color.appTile), style: style, level: level),
-                            equals: style == .dark
-                                ? (44 / 255, 44 / 255, 46 / 255)
-                                : (242 / 255, 242 / 255, 247 / 255))
+                let dark = style == .dark
+                let screen = rgb(UIColor(Color.appScreen), style: style, level: level)
+                let screenExpected: (CGFloat, CGFloat, CGFloat) = dark
+                    ? (0, 0, 0)
+                    : (242 / 255, 242 / 255, 247 / 255)
+                assertColor(screen, equals: screenExpected)
+
+                let card = rgb(UIColor(Color.appCard), style: style, level: level)
+                let cardExpected: (CGFloat, CGFloat, CGFloat) = dark
+                    ? (28 / 255, 28 / 255, 30 / 255)
+                    : (1, 1, 1)
+                assertColor(card, equals: cardExpected)
+
+                let tile = rgb(UIColor(Color.appTile), style: style, level: level)
+                let tileExpected: (CGFloat, CGFloat, CGFloat) = dark
+                    ? (44 / 255, 44 / 255, 46 / 255)
+                    : (242 / 255, 242 / 255, 247 / 255)
+                assertColor(tile, equals: tileExpected)
             }
         }
     }
