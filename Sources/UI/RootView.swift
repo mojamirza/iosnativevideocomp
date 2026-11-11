@@ -1220,7 +1220,21 @@ private struct SidebarSavingsSection: View {
 /// Cleanup itself is automatic (sources deleted after success, orphan sweep
 /// at launch) — this just shows the current footprint.
 private struct StorageFooter: View {
+    @EnvironmentObject private var coordinator: JobCoordinator
+    @Environment(\.scenePhase) private var scenePhase
     @State private var usageText: String?
+    @State private var appeared = false
+
+    /// Recompute trigger: any row added/removed or state change — exactly
+    /// the events that move the footprint (output promoted into Documents,
+    /// import copy deleted, row deleted). Progress ticks are deliberately
+    /// EXCLUDED so an encoding batch doesn't re-walk the directories twice
+    /// a second. (The old version computed once per view lifetime and the
+    /// number went stale the moment the first job finished.)
+    private var footprintKey: String {
+        let states = coordinator.jobs.map { $0.state.rawValue }.joined(separator: ",")
+        return "\(coordinator.jobs.count)|\(states)"
+    }
 
     var body: some View {
         Group {
@@ -1237,11 +1251,25 @@ private struct StorageFooter: View {
                 .padding(.horizontal)
             }
         }
-        .task {
-            // Directory sizing is disk I/O — keep it off the main actor.
-            let text = await Task.detached { Self.describe() }.value
-            usageText = text
+        .task(id: footprintKey) {
+            await refresh()
         }
+        // External changes (Files-app deletions, the orphan sweep after a
+        // background return) never touch the jobs array — re-measure when
+        // the user comes back to the app. The appeared flag skips the
+        // initial fire: the footprint task already covers first appearance.
+        .task(id: scenePhase) {
+            if appeared, scenePhase == .active { await refresh() }
+            appeared = true
+        }
+    }
+
+    private func refresh() async {
+        // Directory sizing is disk I/O — keep it off the main actor. The
+        // cancelled check discards a stale measurement when a newer trigger
+        // already replaced this task.
+        let text = await Task.detached { Self.describe() }.value
+        if !Task.isCancelled { usageText = text }
     }
 
     static func describe() -> String? {
@@ -1254,14 +1282,22 @@ private struct StorageFooter: View {
         return "App storage: \(fmt(outputs + imports)) · \(fmt(outputs)) compressed videos kept for sharing — source copies are cleaned up automatically"
     }
 
+    /// RECURSIVE: the footprint must count subdirectories too — a plain
+    /// contentsOfDirectory sees a folder only as a tiny stub entry, so any
+    /// nested content under Outputs/Imports was silently dropped from the
+    /// reported total.
     static func dirSize(_ url: URL) -> Int64 {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(
-            at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+            options: [],
+            errorHandler: { _, _ in true }) else { return 0 }
         var total: Int64 = 0
-        for f in files {
-            let size = (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            total += Int64(size)
+        for case let f as URL in enumerator {
+            let values = try? f.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if values?.isDirectory == true { continue }
+            total += Int64(values?.fileSize ?? 0)
         }
         return total
     }
