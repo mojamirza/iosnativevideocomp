@@ -743,6 +743,16 @@ final class JobCoordinator: ObservableObject {
             noteTerminalTick(.done, name: jobs[idx].sourceName, error: nil)
             saveRecord(jobID: jobID, outputName: final.lastPathComponent,
                        report: try? JSONEncoder().encode(report), state: "done")
+            // SAME CLEANUP AS THE NORMAL SUCCESS PATH (run()): a done job
+            // doesn't need the app's copy of the source anymore. This path
+            // was skipping it, so a wedged-verify job — typically the
+            // LONGEST-running, biggest file in the batch — held its
+            // multi-GB import copy for the whole session: the launch
+            // sweep's keep-set only covers failed/active rows, so nothing
+            // else reclaimed it until the NEXT launch (and the sweep skips
+            // entirely when history is unreliable). Retry is not offered
+            // on a done row, so the copy serves nothing.
+            deleteSourceImport(jobs[idx])
         } else {
             // Same rule as run(): a promotion failure must NOT fall back to
             // rescuing a scratch path — the record would point at a file the
