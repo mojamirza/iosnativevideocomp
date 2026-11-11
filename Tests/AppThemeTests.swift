@@ -104,34 +104,42 @@ final class AppThemeTests: XCTestCase {
         XCTAssertEqual(Color.appTile, Color(AppTheme.tileColor))
     }
 
+    /// Expected component values for the wrapper test — isolated static
+    /// constants so the loop body only references names (the combined
+    /// rgb()+division ternary expressions exceeded the type-checker's
+    /// budget twice).
+    private static let screenDark: (CGFloat, CGFloat, CGFloat) = (0, 0, 0)
+    private static let screenLight: (CGFloat, CGFloat, CGFloat)
+        = (242.0 / 255.0, 242.0 / 255.0, 247.0 / 255.0)
+    private static let cardDark: (CGFloat, CGFloat, CGFloat)
+        = (28.0 / 255.0, 28.0 / 255.0, 30.0 / 255.0)
+    private static let cardLight: (CGFloat, CGFloat, CGFloat) = (1, 1, 1)
+    private static let tileDark: (CGFloat, CGFloat, CGFloat)
+        = (44.0 / 255.0, 44.0 / 255.0, 46.0 / 255.0)
+    private static let tileLight: (CGFloat, CGFloat, CGFloat)
+        = (242.0 / 255.0, 242.0 / 255.0, 247.0 / 255.0)
+
     /// And through the bridge the views actually render with: round-trip
     /// each wrapper into UIColor and resolve it at BOTH trait levels — the
     /// same component pins the UIKit tokens assert (dark screen stays pure
     /// black when elevated, cards never drift to #2C2C2E, …). A wrapper
     /// that still points at the right token but with a broken provider
     /// (e.g. re-wrapped through a flattening intermediary) fails here.
-    /// (Each step is broken into a distinct sub-expression: the combined
-    /// form was too heavy for the type-checker.)
     func testSwiftUIWrappersResolveToThePinnedComponents() {
         for style in [UIUserInterfaceStyle.light, .dark] {
             for level in [UIUserInterfaceLevel.base, .elevated] {
                 let dark = style == .dark
+
                 let screen = rgb(UIColor(Color.appScreen), style: style, level: level)
-                let screenExpected: (CGFloat, CGFloat, CGFloat) = dark
-                    ? (0, 0, 0)
-                    : (242 / 255, 242 / 255, 247 / 255)
+                let screenExpected = dark ? Self.screenDark : Self.screenLight
                 assertColor(screen, equals: screenExpected)
 
                 let card = rgb(UIColor(Color.appCard), style: style, level: level)
-                let cardExpected: (CGFloat, CGFloat, CGFloat) = dark
-                    ? (28 / 255, 28 / 255, 30 / 255)
-                    : (1, 1, 1)
+                let cardExpected = dark ? Self.cardDark : Self.cardLight
                 assertColor(card, equals: cardExpected)
 
                 let tile = rgb(UIColor(Color.appTile), style: style, level: level)
-                let tileExpected: (CGFloat, CGFloat, CGFloat) = dark
-                    ? (44 / 255, 44 / 255, 46 / 255)
-                    : (242 / 255, 242 / 255, 247 / 255)
+                let tileExpected = dark ? Self.tileDark : Self.tileLight
                 assertColor(tile, equals: tileExpected)
             }
         }
