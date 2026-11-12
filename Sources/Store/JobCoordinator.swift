@@ -200,7 +200,9 @@ final class JobCoordinator: ObservableObject {
     /// the in-app worker, sweeps the rest of the queue, and keeps the app
     /// unsuspended mid-encode. If the submission is refused, everything
     /// still works in the foreground exactly like before.
-    private func runQueueIfNeeded(suppressBackgroundSubmission: Bool = false) {
+    /// Internal (not private): the BG driver's exit block hands a
+    /// foreground-revoked queue back through this call (BackgroundCompress).
+    func runQueueIfNeeded(suppressBackgroundSubmission: Bool = false) {
         // New work lifts a background-revocation pause when the app is
         // active again (the pause only makes sense while backgrounded).
         if bgPaused, UIApplication.shared.applicationState == .active {
