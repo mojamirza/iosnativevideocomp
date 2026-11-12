@@ -532,6 +532,14 @@ enum CompressionEngine {
         var audioTrack: AVAssetTrack?
         var audioSampleRate = 48000.0
         var audioChannels = 2
+        /// The SOURCE's channel-layout TAG for >stereo layouts (5.1 etc.).
+        /// Apple's documented writer rule: AVNumberOfChannelsKey > 2
+        /// REQUIRES AVChannelLayoutKey — a bare channel count is not a
+        /// valid >stereo configuration (canApply may reject it wholesale
+        /// or accept a dict that later fails at startWriting/append).
+        /// Mirrored into the writer candidates AND the reader's PCM
+        /// settings so the pipe agrees on the layout end to end.
+        var audioLayoutTag: AudioChannelLayoutTag? = nil
         if let aTracks = try? await asset.loadTracks(withMediaType: .audio),
            let aTrack = aTracks.first {
             audioTrack = aTrack
@@ -540,14 +548,36 @@ enum CompressionEngine {
                 if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(aFmt)?.pointee {
                     audioSampleRate = asbd.mSampleRate > 0 ? asbd.mSampleRate : 48_000
                     // Channel count: the PRESET may force mono (lecture /
-                    // screen-recording mode); otherwise the source's own
-                    // layout is kept (mono/stereo/5.1; AAC supports it).
+                    // screen-recording mode); a ≤stereo source keeps its
+                    // own count. ABOVE stereo the count is kept only when
+                    // the source's channel layout is a known TAG (mirrored
+                    // into AVChannelLayoutKey, which the writer requires
+                    // for >2 channels); tag-less multichannel layouts
+                    // (bitmap-based) collapse to stereo by construction
+                    // below — the old "the source's own layout is kept
+                    // (mono/stereo/5.1; AAC supports it)" comment
+                    // overstated what the settings actually carried.
                     audioChannels = max(1, Int(asbd.mChannelsPerFrame))
+                }
+                // Layout tag straight from the source's format description.
+                // Tag 0 means a bitmap-based layout (no tag to mirror) —
+                // those fall into the stereo collapse.
+                if audioChannels > 2,
+                   let layout = CMAudioFormatDescriptionGetChannelLayout(aFmt, nil)?.pointee,
+                   layout.mChannelLayoutTag != 0 {
+                    audioLayoutTag = layout.mChannelLayoutTag
                 }
             }
         }
         if let forced = preset.audioChannels {
             audioChannels = forced
+        }
+        // >stereo WITHOUT a usable layout tag cannot legally be written
+        // (AVChannelLayoutKey is mandatory above 2 channels) — downmix to
+        // stereo BY CONSTRUCTION instead of feeding canApply a dict Apple
+        // documents as invalid.
+        if audioChannels > 2, audioLayoutTag == nil {
+            audioChannels = 2
         }
 
         // ------------------------------------------------------------------
@@ -564,6 +594,17 @@ enum CompressionEngine {
         // 96 kbps — a mono speech track can't use more.
         // ------------------------------------------------------------------
         let encoderChannels = audioChannels
+        // Wire-format layout data for >stereo encodes (see the detection
+        // block): the SAME Data goes into the writer candidates and the
+        // reader's PCM settings. By construction encoderChannels > 2
+        // implies a tag exists.
+        var audioLayoutData: Data? = nil
+        if let tag = audioLayoutTag {
+            var layout = AudioChannelLayout()
+            layout.mChannelLayoutTag = tag
+            audioLayoutData = Data(
+                bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+        }
         let requestedAudioRate = encoderChannels == 1
             ? min(plan.audioBitrate, 96_000)
             : plan.audioBitrate
@@ -580,12 +621,17 @@ enum CompressionEngine {
             + steps.filter { $0 < requestedAudioRate }
         var audioSettings: [String: Any]? = nil
         for rate in audioRateCandidates {
-            let candidate = [
+            var candidate: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: audioSampleRate,
                 AVNumberOfChannelsKey: encoderChannels,
                 AVEncoderBitRateKey: max(32_000, rate),
-            ] as [String: Any]
+            ]
+            // >2 channels: the layout is REQUIRED (Apple's writer rule),
+            // never a bare channel count.
+            if encoderChannels > 2, let layoutData = audioLayoutData {
+                candidate[AVChannelLayoutKey] = layoutData
+            }
             if writer.canApply(outputSettings: candidate, forMediaType: .audio) {
                 audioSettings = candidate
                 break
@@ -620,12 +666,17 @@ enum CompressionEngine {
             for channels in [encoderChannels, 2] {
                 guard channels == encoderChannels || encoderChannels != 2 else { continue }
                 for rate in audioRateCandidates {
-                    let candidate = [
+                    var candidate: [String: Any] = [
                         AVFormatIDKey: kAudioFormatMPEG4AAC,
                         AVSampleRateKey: 48_000.0,
                         AVNumberOfChannelsKey: channels,
                         AVEncoderBitRateKey: max(32_000, rate),
-                    ] as [String: Any]
+                    ]
+                    // Same >stereo rule as the primary ladder: the layout
+                    // rides along whenever the candidate claims >2 channels.
+                    if channels > 2, let layoutData = audioLayoutData {
+                        candidate[AVChannelLayoutKey] = layoutData
+                    }
                     if writer.canApply(outputSettings: candidate, forMediaType: .audio) {
                         audioSettings = candidate
                         audioSampleRate = 48_000.0
@@ -775,6 +826,12 @@ enum CompressionEngine {
                 layout.mChannelLayoutTag = kAudioChannelLayoutTag_Mono
                 readerSettings[AVChannelLayoutKey] = Data(
                     bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+            } else if readerChannels > 2, let layoutData = audioLayoutData {
+                // MULTICHANNEL: mirror the writer's layout EXACTLY — the
+                // reader's PCM must present the same channel layout the
+                // writer input was configured with, or the writer sees a
+                // stream it never agreed to (stall/fail at append).
+                readerSettings[AVChannelLayoutKey] = layoutData
             }
             if resampledAudio {
                 // The 48 kHz fallback: the WRITER resamples to 48 kHz — the
