@@ -121,64 +121,17 @@ struct JobRowView: View, Equatable {
     }
 
     var body: some View {
-        // Swipe-to-delete comes from the HOSTING LIST now (native
-        // swipeActions attached per row) — platform-grade scroll/swipe
+        // Swipe-to-delete comes from the HOSTING LIST (native swipeActions
+        // attached per row in RootView) — platform-grade scroll/swipe
         // resolution instead of a DragGesture bolted onto scroll content,
         // which kept fighting the scroll recognizer. Destructive intents
-        // arm the root-level confirmation. The row chrome (paddings,
-        // list-row insets, swipe actions) lives INSIDE this view, behind
-        // the render-skip: re-creating the swipe-action closures on every
-        // coordinator publish reconfigured the finished cells twice a
-        // second during encodes, and iPadOS 26 visibly re-animated their
-        // ⋯ menus (device report — the tick survived the body-level skip
-        // precisely because these modifiers sat outside it).
-        rowList
-    }
-
-    /// The row WITH its list chrome — the expression RootView mounts
-    /// behind `.equatable()`. When nothing the row renders has changed,
-    /// the whole subtree (chrome included) keeps its previous render
-    /// output and the hosting cell is not reconfigured at all.
-    private var rowList: some View {
+        // arm the root-level confirmation. NOTE: the list-row chrome
+        // (insets/background/separator) and the swipe actions MUST live at
+        // the RootView call sites — applying them INSIDE the row body
+        // (behind the render-skip) never reached the hosting row on
+        // iPadOS 26: cards came back with default insets and visible
+        // separators between them (device report).
         rowBody
-            .padding(.horizontal)
-            .padding(.vertical, 7)
-            .cardListRow()
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                if !inSelectionMode {
-                    // TERMINAL rows (done/failed/cancelled) delete
-                    // (list-level destructive confirmation); ACTIVE rows
-                    // stop (same root-level confirm). The state lives on
-                    // the compared job, so the skip can never hold a
-                    // stale action set.
-                    if [.queued, .analyzing, .compressing, .verifying]
-                        .contains(job.state) {
-                        Button(role: .destructive) {
-                            coordinator.requestCancel(jobID: job.id)
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                        }
-                    } else {
-                        Button(role: .destructive) {
-                            coordinator.requestDelete(jobID: job.id)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                if !inSelectionMode,
-                   [.failed, .cancelled].contains(job.state) {
-                    // retry() itself guards a surviving source.
-                    Button {
-                        coordinator.retry(jobID: job.id)
-                    } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                    }
-                    .tint(.accentColor)
-                }
-            }
     }
 
     /// The row WITHOUT its modifier chain — kept a separate expression so the

@@ -547,16 +547,27 @@ struct RootView: View {
                         .padding(.horizontal)
                         .cardListRow()
                     ForEach(Array(active.enumerated()), id: \.element.id) { rowIndex, job in
-                        // ALL row chrome (paddings, list-row insets, swipe
-                        // actions) lives INSIDE JobRowView behind the
-                        // render-skip — re-evaluating it per coordinator
-                        // publish reconfigured the finished cells during
-                        // encodes and ticked their ⋯ menus on iPadOS 26.
+                        // Row chrome lives OUTSIDE the render-skip (the
+                        // b0bcec0 attempt to freeze it inside JobRowView
+                        // never reached the hosting List row on iPadOS 26 —
+                        // cards got default insets and visible separators).
                         JobRowView(job: job, coordinator: coordinator,
                                    selectionActive: coordinator.selectionMode,
                                    isSelected: coordinator.selectedIDs.contains(job.id),
                                    rowIndex: rowIndex)
                             .equatable()
+                            .padding(.horizontal)
+                            .padding(.vertical, 7)
+                            .cardListRow()
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode {
+                                    Button(role: .destructive) {
+                                        coordinator.requestCancel(jobID: job.id)
+                                    } label: {
+                                        Label("Stop", systemImage: "stop.fill")
+                                    }
+                                }
+                            }
                     }
                 }
 
@@ -564,7 +575,7 @@ struct RootView: View {
                     sectionHeader("History", icon: "clock", count: finished.count)
                         .cardListRow()
                     ForEach(Array(finished.enumerated()), id: \.element.id) { rowIndex, job in
-                        // Row chrome inside the render-skip (see the active
+                        // Row chrome outside the render-skip (see the active
                         // rows above) — trailing Delete, leading Retry for
                         // failed/cancelled.
                         JobRowView(job: job, coordinator: coordinator,
@@ -572,6 +583,30 @@ struct RootView: View {
                                    isSelected: coordinator.selectedIDs.contains(job.id),
                                    rowIndex: rowIndex)
                             .equatable()
+                            .padding(.horizontal)
+                            .padding(.vertical, 7)
+                            .cardListRow()
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode {
+                                    Button(role: .destructive) {
+                                        coordinator.requestDelete(jobID: job.id)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                if !coordinator.selectionMode,
+                                   [.failed, .cancelled].contains(job.state) {
+                                    // retry() itself guards a surviving source.
+                                    Button {
+                                        coordinator.retry(jobID: job.id)
+                                    } label: {
+                                        Label("Retry", systemImage: "arrow.clockwise")
+                                    }
+                                    .tint(.accentColor)
+                                }
+                            }
                     }
                 }
 
@@ -1586,9 +1621,7 @@ enum Thumbnails {
 
 /// List-row chrome for card content: full-bleed, no separator, no row
 /// surface — the card paints its own; the appScreen shows between cards.
-/// Internal (not private): JobRowView applies it too — its row chrome
-/// sits behind the render-skip (see JobRows.swift).
-extension View {
+private extension View {
     func cardListRow() -> some View {
         listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)

@@ -224,7 +224,8 @@ struct PresetEditorView: View {
     var body: some View {
         // SHEET: wrapped in its own NavigationStack (nav bar lives there).
         // PUSHED (embeddedInHostStack): bare content — the host stack's bar
-        // carries the title and the Save/Cancel toolbar.
+        // carries the title, the system Back (dismiss unsaved) and the Save
+        // toolbar item.
         if embeddedInHostStack {
             editorContent
         } else {
@@ -542,7 +543,10 @@ struct PresetEditorView: View {
             // number pads — they linger otherwise and eat taps below.
             .scrollDismissesKeyboard(.immediately)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                // NO explicit Cancel: the editor is PUSHED, so the system
+                // Back button already dismisses without saving — a custom
+                // Cancel rendered BESIDE it (both leading, both doing the
+                // same job — device report) and just crowded the bar.
                 ToolbarItem(placement: .primaryAction) {
                     Button("Save") {
                         var preset = Preset(
