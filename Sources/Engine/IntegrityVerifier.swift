@@ -140,6 +140,16 @@ enum IntegrityVerifier {
                 // alone is usually preferable to a broken report). Warn.
                 items.append(ReportItem("audio", "Output has no audio track",
                     "The source had audio but it was omitted: the audio pipeline (channel-layout request or AAC encoder settings) rejected the configuration for this file. The video itself is complete.", .warn))
+            } else if probe.audioTrackCount > 1 && outAudio.count < probe.audioTrackCount {
+                // MULTI-TRACK SOURCE: the engine encodes only the FIRST
+                // audio track. A green "preserved" here would assert a
+                // fidelity the file does not have — a 1-track output from a
+                // 2-track source lost a language/commentary stream. Warn so
+                // the count mismatch is visible; the output itself is
+                // complete and playable.
+                items.append(ReportItem("audio", "Extra audio tracks not carried",
+                    String(format: "%d audio tracks in source; only the first was re-encoded — %d of %d are in the output (extra language/commentary tracks are dropped). The first track is complete.",
+                           probe.audioTrackCount, outAudio.count, probe.audioTrackCount), .warn))
             } else {
                 items.append(ReportItem("audio", "Audio track preserved",
                     // Double division — the old Int/1000 passed to %.0f

@@ -230,6 +230,14 @@ struct ProbeResult: Hashable {
     var isRotated: Bool
     var tags: ColorTags
     var hasAudio: Bool
+    /// How many AUDIO tracks the source carries (1 for ordinary camera
+    /// clips, N for multi-language/commentary rips). The engine encodes
+    /// only the FIRST track (the AAC pipeline is single-track by design —
+    /// attaching extras passthrough would also add their native bitrate
+    /// on top of the size budget), so the integrity report must know the
+    /// real count: a 1-track output from a 2-track source may never be
+    /// announced as "Audio track preserved".
+    var audioTrackCount: Int = 1
     var videoDataRate: Double       // bits/second
     var audioDataRate: Double       // bits/second
     var fileSize: Int64
@@ -337,6 +345,7 @@ struct ProbeResult: Hashable {
             isRotated: !preferredTransform.isIdentity,
             tags: tags,
             hasAudio: !(audioTracks.isEmpty),
+            audioTrackCount: audioTracks.count,
             videoDataRate: dataRate,
             audioDataRate: audioRate,
             fileSize: size,
