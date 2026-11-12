@@ -563,7 +563,7 @@ enum CompressionEngine {
                 // Tag 0 means a bitmap-based layout (no tag to mirror) —
                 // those fall into the stereo collapse.
                 if audioChannels > 2,
-                   let layout = CMAudioFormatDescriptionGetChannelLayout(aFmt, nil)?.pointee,
+                   let layout = CMAudioFormatDescriptionGetChannelLayout(aFmt, sizeOut: nil)?.pointee,
                    layout.mChannelLayoutTag != 0 {
                     audioLayoutTag = layout.mChannelLayoutTag
                 }
