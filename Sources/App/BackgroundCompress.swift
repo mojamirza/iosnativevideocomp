@@ -156,9 +156,20 @@ enum BackgroundCompress {
                 let id = coordinator.jobs[idx].id
                 await coordinator.run(jobID: id)
             }
-            // No awaits from here to completion — the enqueue path can't
-            // interleave on the main actor, so no queued job is stranded.
+            // A FOREGROUND revocation strands the queue: the driver exits on
+            // expiry while bgPaused stays false (the pause path only covers
+            // a BACKGROUNDED revocation, whose recovery is the scenePhase
+            // .active transition — a transition that never comes while the
+            // app is already active). Hand the queue back to the foreground
+            // worker: currentTask must clear FIRST so startForegroundWorker
+            // is not refused by the isRunning gate. The backgrounded exit
+            // keeps its existing recovery (bgPaused guards the worker) and
+            // does not submit while suspended.
             currentTask = nil
+            if let coordinator, !coordinator.bgPaused,
+               coordinator.jobs.contains(where: { $0.state == .queued }) {
+                coordinator.runQueueIfNeeded()
+            }
             task.setTaskCompleted(success: !expiry.isExpired)
         }
     }
