@@ -101,11 +101,16 @@ struct RootView: View {
                 .offset(x: progress * drawerWidth * 0.25)
                 .simultaneousGesture(openEdgeGesture(width: drawerWidth))
 
-                // Backdrop: dims with progress, tap closes.
+                // Backdrop: dims with progress, tap closes. VO: an offset
+                // never removes a view from the accessibility tree — with
+                // the drawer closed this invisible layer stayed focusable
+                // (U2 device report), so it is hidden whenever it isn't
+                // actually open (focusable as the close affordance then).
                 Color.black.opacity(0.35 * Double(progress))
                     .ignoresSafeArea()
                     .allowsHitTesting(progress > 0.02)
                     .onTapGesture { closeDrawer() }
+                    .accessibilityHidden(!sidebarOpen)
 
                 // SIDEBAR drawer panel.
                 VStack(spacing: 0) {
@@ -118,6 +123,10 @@ struct RootView: View {
                 .offset(x: drawerWidth * (progress - 1))
                 .shadow(color: .black.opacity(0.25 * Double(progress)), radius: 18, x: 4)
                 .gesture(closeGesture(width: drawerWidth))
+                // VO: same U2 rule — while closed the panel's rows
+                // ("Manage presets…", "About & Settings"), header button
+                // and all were focusable while visually absent.
+                .accessibilityHidden(!sidebarOpen)
             }
         }
     }
@@ -182,6 +191,13 @@ struct RootView: View {
     /// Leading-edge swipe (first 16pt, horizontal-dominant) opens the
     /// drawer — the main page's vertical scroll and the rows' swipe-to-
     /// delete are untouched (they start further in / dominate vertically).
+    /// ACTIVATION IS LATCHED in onChanged: dragProgress is only ever set
+    /// after the edge + horizontal-dominance guard passes, so onEnded can
+    /// tell a real drawer drag from any other gesture that merely passed
+    /// minimumDistance — a fast vertical scroll fling starting inside the
+    /// edge strip never latches and must never snap the drawer (device
+    /// report: a slightly-diagonal fling's velocity.width > 320 opened the
+    /// drawer mid-scroll through the old nil-fallback).
     private func openEdgeGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { v in
@@ -191,12 +207,17 @@ struct RootView: View {
                 dragProgress = (dragAnchor ?? 0) + v.translation.width / width
             }
             .onEnded { v in
-                snapDrawer(finalProgress: dragProgress ?? (sidebarOpen ? 1 : 0),
+                // Non-activated drags (never latched) are IGNORED — no
+                // fallback value, no velocity read.
+                guard dragProgress != nil else { return }
+                snapDrawer(finalProgress: dragProgress ?? 0,
                            velocity: v.velocity.width)
             }
     }
 
     /// Horizontal swipe on the drawer panel closes it (flick-aware).
+    /// Same latch as the opener: only a drag that dominated horizontally
+    /// in onChanged may snap in onEnded.
     private func closeGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { v in
@@ -205,7 +226,8 @@ struct RootView: View {
                 dragProgress = (dragAnchor ?? 1) + v.translation.width / width
             }
             .onEnded { v in
-                snapDrawer(finalProgress: dragProgress ?? (sidebarOpen ? 1 : 0),
+                guard dragProgress != nil else { return }
+                snapDrawer(finalProgress: dragProgress ?? 1,
                            velocity: v.velocity.width)
             }
     }
