@@ -272,10 +272,21 @@ final class JobCoordinator: ObservableObject {
             last = anchors[i]
         }
 
+        // SNAPSHOT the queued rows BEFORE any write: the loop assigns into
+        // slots that later iterations still need to READ — the original
+        // in-place firstIndex-then-write clobbered any row sitting in a
+        // slot an earlier iteration had already claimed (device report: a
+        // reorder duplicated one card over another and dropped the
+        // overwritten row entirely; its still-queued DB record resurrected
+        // at relaunch, and a same-id twin kept a row stuck in "Analyzing…"
+        // forever — the worker claimed the twin, run() bailed on the first
+        // copy's terminal state, and the pick loop circled).
+        var snapshot: [UUID: Job] = [:]
+        for row in jobs where row.state == .queued { snapshot[row.id] = row }
+
         var retimed: [UUID] = []
         for (k, id) in executionOrder.enumerated() {
-            guard let idx = jobs.firstIndex(where: { $0.id == id }) else { continue }
-            var job = jobs[idx]
+            guard var job = snapshot[id] else { continue }
             let oldAnchor = job.createdAt
             job.createdAt = anchors[k]
             jobs[slots[k]] = job

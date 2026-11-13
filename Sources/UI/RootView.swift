@@ -661,6 +661,11 @@ struct RootView: View {
         .overlay {
             if coordinator.jobs.isEmpty {
                 VStack(spacing: 16) {
+                    // The import card sits at the TOP of the page in BOTH
+                    // states — with history it is the first list row; empty,
+                    // it must not sink to the middle together with the
+                    // empty state (device report). EmptyState absorbs the
+                    // remaining height, so only IT centers.
                     if let step = importStep {
                         ImportStatusCard(step: step)
                             .padding(.horizontal)
@@ -672,6 +677,7 @@ struct RootView: View {
                     EmptyState(photoItems: $photoItems,
                                onFiles: { showFiles = true },
                                disabled: importBusy)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.appScreen)

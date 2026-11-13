@@ -38,6 +38,12 @@ struct JobRowView: View, Equatable {
     @State private var showingRename = false
     @State private var renameText = ""
     @State private var saveNotice: String?
+    /// Measured on-screen size of this card — the long-press context menu
+    /// preview re-renders the card at exactly this frame so the preview
+    /// shows ONLY the card (the default capture took the whole hosting
+    /// cell, card plus the transparent list-row margins around it — device
+    /// report: it read as a screenshot with a background rectangle).
+    @State private var cardSize: CGSize = .zero
     // Existence cache: `FileManager.fileExists` ran inside body (render
     // paths) — synchronous disk I/O on EVERY frame the LazyVStack re-rendered
     // the row. Refreshed on appear and on state change instead.
@@ -206,9 +212,20 @@ struct JobRowView: View, Equatable {
         // actions (like Files / Photos rows) — SUPPRESSED during selection
         // (native multi-select behavior; the menu also routed destructive
         // actions exactly when the rows are acting as checkmarks).
-        .modifier(SelectionContextMenuModifier(active: inSelectionMode) {
+        .modifier(SelectionContextMenuModifier(active: inSelectionMode,
+                                               previewSize: cardSize) {
             contextMenuItems
         })
+        // Card-size measurement for the preview above: a background
+        // GeometryReader sees exactly the card's laid-out bounds (including
+        // its padding + rounded background, excluding the hosting row's
+        // outer margins).
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: CardSizeKey.self, value: proxy.size)
+            }
+        )
+        .onPreferenceChange(CardSizeKey.self) { cardSize = $0 }
     }
 
     private var rowBody: some View {
@@ -532,16 +549,21 @@ struct JobRowView: View, Equatable {
     /// Plain ORDINAL for a queued row — "#1" is next up, "#2" behind it —
     /// per device feedback: the wordy "Queued · next up / Queued · #N in
     /// line" read the same fact twice (the timer icon already says queued)
-    /// and shouted next to the running row's "Encoding… N%". Workers pick
-    /// the OLDEST queued job first, so the position ranks by creation date.
+    /// and shouted next to the running row's "Encoding… N%".
+    /// RANK FROM ARRAY POSITION (device report: the old createdAt sort made
+    /// the label a SECOND ordering that had to be kept in sync with the
+    /// array, and ranks duplicated/scrambled after a reorder). The array IS
+    /// the single source of truth — display order (activeJobs = reversed
+    /// filtered array) and the workers' pick (last queued index) both
+    /// derive from it — so the label reads the same array: the last queued
+    /// row is #1, the one above it #2, in exact display order.
     private var queuePositionLabel: String {
         guard job.state == .queued else { return "Queued" }
         let queued = coordinator.jobs.filter { $0.state == .queued }
-            .sorted { $0.createdAt < $1.createdAt }
-        guard let rank = queued.firstIndex(where: { $0.id == job.id }) else {
+        guard let pos = queued.lastIndex(where: { $0.id == job.id }) else {
             return "Queued"
         }
-        return "#\(rank + 1)"
+        return "#\(queued.count - pos)"
     }
 
     /// Container label for VoiceOver: a composed summary is announced before
@@ -684,17 +706,20 @@ struct JobRowView: View, Equatable {
         // Move Up, the last queued row no Move Down. Hidden during batch
         // selection; the coordinator re-guards both calls anyway.
         if job.state == .queued, !inSelectionMode {
+            // Availability from the SAME array-derived rank the #N label
+            // shows (see queuePositionLabel): #1 has no Move Up, the last
+            // queued row no Move Down.
             let queued = coordinator.jobs.filter { $0.state == .queued }
-                .sorted { $0.createdAt < $1.createdAt }
-            if let rank = queued.firstIndex(where: { $0.id == job.id }) {
-                if rank > 0 {
+            if let pos = queued.lastIndex(where: { $0.id == job.id }) {
+                let rank = queued.count - pos
+                if rank > 1 {
                     Button {
                         coordinator.moveQueuedRow(jobID: job.id, steps: -1)
                     } label: {
                         Label("Move Up", systemImage: "arrow.up")
                     }
                 }
-                if rank < queued.count - 1 {
+                if rank < queued.count {
                     Button {
                         coordinator.moveQueuedRow(jobID: job.id, steps: 1)
                     } label: {
@@ -1268,14 +1293,40 @@ private struct SelectionTapModifier: ViewModifier {
 /// blocking factor for the menu's destructive items firing mid-selection.
 private struct SelectionContextMenuModifier<Items: View>: ViewModifier {
     let active: Bool
+    /// Measured card size (zero until the first layout pass).
+    let previewSize: CGSize
     let items: () -> Items
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if active {
             content
-        } else {
+        } else if previewSize == .zero {
+            // Not measured yet (first pass): plain menu, system preview.
             content.contextMenu { items() }
+        } else {
+            content
+                .contextMenu {
+                    items()
+                } preview: {
+                    // CARD-ONLY PREVIEW (device report: the default capture
+                    // took the whole hosting cell — card PLUS the
+                    // transparent list-row margins around it, reading like
+                    // a screenshot with a background rectangle). Re-render
+                    // the card content at its measured on-screen frame.
+                    content
+                        .frame(width: previewSize.width,
+                               height: previewSize.height)
+                        .fixedSize()
+                }
         }
+    }
+}
+
+/// Measured on-screen size of a job card (see JobRowView.cardSize).
+private struct CardSizeKey: PreferenceKey {
+    static var defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
     }
 }
