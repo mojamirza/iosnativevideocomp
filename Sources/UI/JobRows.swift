@@ -676,6 +676,33 @@ struct JobRowView: View, Equatable {
     /// long-press context menu (HIG: both should mirror each other).
     @ViewBuilder
     private var contextMenuItems: some View {
+        // QUEUED REORDER fallback (⋯ menu + context menu mirror): Move
+        // Up/Down beside the List's drag-reorder — if long-press-drag and
+        // the context menu fight on device, the menu is the deterministic
+        // path. Availability = the row's rank among the queued rows
+        // (createdAt order, the same ranks the #N label shows): #1 has no
+        // Move Up, the last queued row no Move Down. Hidden during batch
+        // selection; the coordinator re-guards both calls anyway.
+        if job.state == .queued, !inSelectionMode {
+            let queued = coordinator.jobs.filter { $0.state == .queued }
+                .sorted { $0.createdAt < $1.createdAt }
+            if let rank = queued.firstIndex(where: { $0.id == job.id }) {
+                if rank > 0 {
+                    Button {
+                        coordinator.moveQueuedRow(jobID: job.id, steps: -1)
+                    } label: {
+                        Label("Move Up", systemImage: "arrow.up")
+                    }
+                }
+                if rank < queued.count - 1 {
+                    Button {
+                        coordinator.moveQueuedRow(jobID: job.id, steps: 1)
+                    } label: {
+                        Label("Move Down", systemImage: "arrow.down")
+                    }
+                }
+            }
+        }
         if job.report != nil {
             Button {
                 showingReport = true

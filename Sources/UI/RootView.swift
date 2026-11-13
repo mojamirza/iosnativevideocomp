@@ -591,6 +591,17 @@ struct RootView: View {
                                 }
                             }
                     }
+                    // DRAG-REORDER for queued rows (List-native long-press
+                    // drag, iOS 16+): the coordinator translates the
+                    // display-space move and pins running rows (a source
+                    // touching them no-ops, destinations above them clamp
+                    // to the queue top). The ⋯-menu Move Up/Down items are
+                    // the deterministic fallback in case long-press-drag
+                    // and the context menu fight on device.
+                    .onMove { source, destination in
+                        coordinator.moveQueuedRows(source: source,
+                                                   destination: destination)
+                    }
                 }
 
                 if !finished.isEmpty {

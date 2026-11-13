@@ -188,6 +188,112 @@ final class JobCoordinator: ObservableObject {
         runQueueIfNeeded()
     }
 
+    // MARK: Queue reordering
+
+    /// Reorders QUEUED rows from the List's drag-reorder (`.onMove` on the
+    /// "In progress" section). The display list is the REVERSE of the jobs
+    /// array's active rows — running row first, then the queue in execution
+    /// order — so the display-space source/destination are translated into
+    /// positions within the queued segment before the underlying array is
+    /// rewritten. RUNNING ROWS ARE PINNED: a source touching the running
+    /// row is a no-op, destinations above it clamp to the queue top — the
+    /// encoder cannot be rearranged mid-encode.
+    func moveQueuedRows(source: IndexSet, destination: Int) {
+        guard !selectionMode, !source.isEmpty else { return }
+        let display = Array(jobs
+            .filter { [.queued, .analyzing, .compressing, .verifying].contains($0.state) }
+            .reversed())
+        let queuedCount = jobs.filter { $0.state == .queued }.count
+        guard queuedCount > 0 else { return }
+        let firstQueued = display.count - queuedCount
+        // Dragging a running row (or any impossible index) changes nothing.
+        guard source.allSatisfy({ $0 >= firstQueued && $0 < display.count }) else { return }
+        let dest = min(max(destination, firstQueued), display.count)
+
+        // Execution order of the queued rows (#1 first).
+        var order = Array(jobs.filter { $0.state == .queued }.reversed().map(\.id))
+        let moving = source.sorted().map { order[$0 - firstQueued] }
+        for i in source.sorted(by: >) { order.remove(at: i - firstQueued) }
+        // onMove's destination counts pre-move display rows: subtract the
+        // removed rows that sat before it to get the post-removal slot.
+        let insertAt = dest - firstQueued - source.filter { $0 < dest }.count
+        order.insert(contentsOf: moving, at: max(0, min(insertAt, order.count)))
+        reorderQueuedJobs(executionOrder: order)
+    }
+
+    /// Single-row reorder from the ⋯/context menu ("Move Up"/"Move Down"):
+    /// steps > 0 move the row LATER in execution order (down the display
+    /// list), steps < 0 earlier (up). Availability is the row's rank among
+    /// the queued rows — #1 has no Move Up, the last no Move Down.
+    func moveQueuedRow(jobID: UUID, steps: Int) {
+        guard !selectionMode, steps != 0 else { return }
+        var order = Array(jobs.filter { $0.state == .queued }.reversed().map(\.id))
+        guard let pos = order.firstIndex(of: jobID) else { return }
+        let target = pos + steps
+        guard order.indices.contains(target) else { return }
+        order.swapAt(pos, target)
+        reorderQueuedJobs(executionOrder: order)
+    }
+
+    /// Rewrites the queued cluster into a new execution order — array
+    /// positions AND createdAt anchors move together, so the three
+    /// orderings in this app agree:
+    ///   1. jobs-array order = execution order (workers pick the last
+    ///      queued index),
+    ///   2. rank labels (#N sort by createdAt),
+    ///   3. relaunch restore (records fetch newest-first; the rebuilt
+    ///      array must again place #1 last).
+    private func reorderQueuedJobs(executionOrder: [UUID]) {
+        let queuedIDs = jobs.filter { $0.state == .queued }.map(\.id)
+        // Validate: exactly the current queued set, no duplicates — a
+        // stale caller (row deleted mid-gesture) must not corrupt the
+        // array. A same-order result is a no-op (drop-in-place drag).
+        guard executionOrder.count == queuedIDs.count,
+              Set(executionOrder) == Set(queuedIDs),
+              executionOrder != Array(queuedIDs.reversed()) else { return }
+
+        // Queued rows occupy the filtered array's indices in REVERSE (the
+        // last queued index runs first). Assigning the new order into
+        // those slots — instead of moving rows around — leaves finished
+        // rows' positions untouched.
+        let slots = Array(jobs.indices.filter { jobs[$0].state == .queued }.reversed())
+
+        // Timestamp anchors: the queued cluster's own createdAt values,
+        // sorted ascending and reassigned along the new order. Duplicates
+        // (a back-to-back enqueue can land two rows on the same Date()
+        // tick) get perturbed +1 ms apart so the restore fetch's
+        // newest-first sort and the rank labels can never see a tie.
+        // Queued rows never DISPLAY their timestamp (only done rows do),
+        // so the re-timing changes nothing user-visible but order.
+        var anchors = jobs.filter { $0.state == .queued }.map(\.createdAt).sorted()
+        var last = Date.distantPast
+        for i in anchors.indices {
+            if anchors[i] <= last { anchors[i] = last.addingTimeInterval(0.001) }
+            last = anchors[i]
+        }
+
+        var retimed: [UUID] = []
+        for (k, id) in executionOrder.enumerated() {
+            guard let idx = jobs.firstIndex(where: { $0.id == id }) else { continue }
+            var job = jobs[idx]
+            let oldAnchor = job.createdAt
+            job.createdAt = anchors[k]
+            jobs[slots[k]] = job
+            // Persist only rows whose anchor actually moved (a no-op
+            // rewrite of the record costs a remove/insert/save cycle).
+            if oldAnchor != anchors[k] {
+                retimed.append(id)
+            }
+        }
+        // Persist each re-timed row (removeRecord + insert + save per row,
+        // same shape as the enqueue save — queued rows have no output or
+        // report): the record's createdAt drives the relaunch restore
+        // order and must match the new anchors.
+        for id in retimed {
+            saveRecord(jobID: id, outputName: nil, report: nil, state: "queued")
+        }
+    }
+
     // MARK: Queue processing (one job at a time for a stable iPad experience)
 
     /// True while the in-app (foreground) worker owns the queue — the BG
