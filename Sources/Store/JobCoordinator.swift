@@ -190,36 +190,14 @@ final class JobCoordinator: ObservableObject {
 
     // MARK: Queue reordering
 
-    /// Reorders QUEUED rows from the List's drag-reorder (`.onMove` on the
-    /// "In progress" section). The display list is the REVERSE of the jobs
-    /// array's active rows — running row first, then the queue in execution
-    /// order — so the display-space source/destination are translated into
-    /// positions within the queued segment before the underlying array is
-    /// rewritten. RUNNING ROWS ARE PINNED: a source touching the running
-    /// row is a no-op, destinations above it clamp to the queue top — the
-    /// encoder cannot be rearranged mid-encode.
-    func moveQueuedRows(source: IndexSet, destination: Int) {
-        guard !selectionMode, !source.isEmpty else { return }
-        let display = Array(jobs
-            .filter { [.queued, .analyzing, .compressing, .verifying].contains($0.state) }
-            .reversed())
-        let queuedCount = jobs.filter { $0.state == .queued }.count
-        guard queuedCount > 0 else { return }
-        let firstQueued = display.count - queuedCount
-        // Dragging a running row (or any impossible index) changes nothing.
-        guard source.allSatisfy({ $0 >= firstQueued && $0 < display.count }) else { return }
-        let dest = min(max(destination, firstQueued), display.count)
-
-        // Execution order of the queued rows (#1 first).
-        var order = Array(jobs.filter { $0.state == .queued }.reversed().map(\.id))
-        let moving = source.sorted().map { order[$0 - firstQueued] }
-        for i in source.sorted(by: >) { order.remove(at: i - firstQueued) }
-        // onMove's destination counts pre-move display rows: subtract the
-        // removed rows that sat before it to get the post-removal slot.
-        let insertAt = dest - firstQueued - source.filter { $0 < dest }.count
-        order.insert(contentsOf: moving, at: max(0, min(insertAt, order.count)))
-        reorderQueuedJobs(executionOrder: order)
-    }
+    // NO List-native drag-reorder (`.onMove`): its long-press lift captures
+    // the WHOLE hosting cell — the card PLUS the transparent list-row
+    // margins around it — and SwiftUI exposes no preview customization for
+    // onMove (no View.dragPreview API), so every drag showed a
+    // screenshot-looking lift (device report). It also competed with the
+    // long-press context menu for the same gesture. Reordering lives in
+    // the ⋯/context menu (moveQueuedRow below), so every long-press opens
+    // the menu whose preview IS the card only.
 
     /// Single-row reorder from the ⋯/context menu ("Move Up"/"Move Down"):
     /// steps > 0 move the row LATER in execution order (down the display
