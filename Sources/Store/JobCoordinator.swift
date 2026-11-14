@@ -100,7 +100,29 @@ final class JobCoordinator: ObservableObject {
             // jobs[idx] writes included) - change-only assignments keep
             // it cheap during progress streams.
             refreshMenuState()
+            pruneBatch()
         }
+    }
+
+    /// The CURRENT batch: every job that entered the queue since it last
+    /// drained (enqueue, relaunch restore of queued work, retry). The
+    /// status bar's percent spans the WHOLE batch — finishing video 1 of 3
+    /// must not reset the bar to 0 the moment video 2 starts (device
+    /// report: "queue goes zero percent after a video done") — so
+    /// completions stay credited until the queue drains and the next
+    /// batch begins. Old history is never a member. NOT @Published: every
+    /// mutation rides alongside a `jobs` write that already republishes,
+    /// and consumers re-derive the percent from `jobs` + this set.
+    /// Internal: the status-bar math (RootView extension) reads it.
+    var batchIDs: Set<UUID> = []
+
+    /// Keeps batch membership honest: rows deleted or cancelled vanish
+    /// from the array, so they drop out too (the total re-normalizes over
+    /// what remains), and a drained queue ENDS the batch — the next
+    /// enqueue seeds a fresh one from 0%.
+    private func pruneBatch() {
+        batchIDs.formIntersection(Set(jobs.map(\.id)))
+        if activeJobs.isEmpty { batchIDs.removeAll() }
     }
 
     private var workerTask: Task<Void, Never>?
@@ -175,6 +197,10 @@ final class JobCoordinator: ObservableObject {
                       trimStart: plan.trimStart,
                       trimEnd: plan.trimEnd)
         jobs.insert(job, at: 0)
+        // WHOLE-BATCH percent: this job joins the current batch (or seeds
+        // one if the queue was idle) — the status bar keeps crediting it
+        // after it finishes instead of resetting on the next job.
+        batchIDs.insert(job.id)
         // QUEUE PERSISTENCE: a queued record means a crash/kill mid-batch
         // resumes the job at launch instead of losing it.
         saveRecord(jobID: job.id, outputName: nil, report: nil, state: "queued")
@@ -965,6 +991,10 @@ final class JobCoordinator: ObservableObject {
         jobs[idx].errorMessage = nil
         jobs[idx].report = nil
         jobs[idx].passLabel = nil
+        // A retry re-enters the CURRENT batch — the bar spans it from its
+        // current progress (an old failed row retried into an idle queue
+        // seeds a fresh one, like an enqueue does).
+        batchIDs.insert(jobID)
         // QUEUE PERSISTENCE: a retry must survive a kill before the job
         // starts, exactly like enqueue does — without this the record still
         // says "failed" (with the old error/report), and a relaunch restores
@@ -1686,6 +1716,13 @@ final class JobCoordinator: ObservableObject {
         }
         let existingIDs = Set(jobs.map { $0.id })
         jobs.append(contentsOf: out.filter { !existingIDs.contains($0.id) })
+        // Restored QUEUED work joins the current batch: the status bar's
+        // whole-batch percent spans it from 0. Pre-kill completions are
+        // deliberately NOT re-credited — they are finished history, and
+        // mixing them in would start a fresh session's bar near 100%.
+        for restored in out where restored.state == .queued {
+            batchIDs.insert(restored.id)
+        }
         cleanupOrphans()
         refreshMenuState()
         // Resumed queued rows (queue persistence) need the worker started.

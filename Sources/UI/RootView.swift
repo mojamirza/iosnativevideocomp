@@ -1009,15 +1009,35 @@ extension JobCoordinator {
         jobs.filter { [.done, .failed, .cancelled].contains($0.state) }
     }
 
-    /// Queue-level progress 0…1 over the ACTIVE queue (equal share per job;
-    /// verifying counts its full point, encoding/analyzing its live fraction,
-    /// queued nothing). The old duplicate computations — one in the in-list
-    /// status bar, one in the sidebar — were a drift hazard.
+    /// WHOLE-BATCH queue percent (device report: the old per-active average
+    /// reset to 0% the moment a video finished and the next one started —
+    /// the bar read as restarting every job). The batch is every job that
+    /// entered the queue since it last drained (coordinator.batchIDs):
+    /// • terminal batch jobs (done/failed) stay CREDITED as full,
+    /// • running/verifying jobs contribute their partial progress,
+    /// • the denominator is the whole batch (terminal + active) — so a
+    ///   3-video batch climbs 0 → ~33 → ~66 → 100% and never resets.
+    /// Old history is never counted (not a batch member); when the queue
+    /// drains the batch ends and the next one starts from 0. The status
+    /// bar and the sidebar read this ONE implementation (drift hazard).
     var queueProgress: Double {
         let active = activeJobs
         guard !active.isEmpty else { return 0 }
         var sum = 0.0
+        var total = 0.0
+        // Credited completions: terminal batch members (a FAILED job's
+        // processing did end — it reached a verdict — so it counts toward
+        // the batch total instead of silently deflating the percent).
+        for id in batchIDs {
+            guard let job = jobs.first(where: { $0.id == id }),
+                  [.done, .failed].contains(job.state) else { continue }
+            sum += 1
+            total += 1
+        }
+        // Live partials: verifying is a pass seconds from done; queued
+        // rows contribute 0 honestly.
         for job in active {
+            total += 1
             switch job.state {
             case .verifying: sum += 1
             case .compressing, .analyzing:
@@ -1025,7 +1045,8 @@ extension JobCoordinator {
             default: break
             }
         }
-        return min(max(sum / Double(active.count), 0), 1)
+        guard total > 0 else { return 0 }
+        return min(max(sum / total, 0), 1)
     }
 
     /// One-line "what's happening" readout for the queue.
