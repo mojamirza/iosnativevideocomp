@@ -133,8 +133,22 @@ struct RootView: View {
                         Rectangle().fill(Color.appScreen).ignoresSafeArea()
                     }
                 }
+                // DISTINCT EDGE (user report: the drawer's boundary melted
+                // into the main page): a hairline separator on the panel's
+                // only visible (trailing) edge — adaptive (light line on
+                // the dark canvas, dark on light), fading in with progress
+                // so it never flashes during the slide.
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.22))
+                        .frame(width: 1)
+                        .opacity(Double(progress))
+                }
                 .offset(x: drawerWidth * (progress - 1))
-                .shadow(color: .black.opacity(0.25 * Double(progress)), radius: 18, x: 4)
+                // Deeper shadow than the glass round (eb70e76): the drop
+                // must separate the panel from the content UNDER it, not
+                // just decorate it.
+                .shadow(color: .black.opacity(0.4 * Double(progress)), radius: 24, x: 6)
                 .gesture(closeGesture(width: drawerWidth))
                 // VO: same U2 rule — while closed the panel's rows
                 // ("Manage presets…", "About & Settings"), header button
@@ -258,7 +272,7 @@ struct RootView: View {
 
     private func snapDrawer(finalProgress: CGFloat, velocity: CGFloat) {
         let open = finalProgress > 0.5 || velocity > 320
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             sidebarOpen = open
         }
         dragAnchor = nil
@@ -266,7 +280,7 @@ struct RootView: View {
     }
 
     private func closeDrawer() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             sidebarOpen = false
         }
     }
@@ -748,7 +762,7 @@ struct RootView: View {
                 // addition to the leading-edge swipe.
                 if hSizeClass == .compact {
                     Button {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                             sidebarOpen = true
                         }
                     } label: {

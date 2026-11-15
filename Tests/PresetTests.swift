@@ -65,4 +65,28 @@ final class PresetTests: XCTestCase {
                        UUID(uuidString: "52da5dd1-46ad-440b-a35d-a36897c6de94")!)
         XCTAssertNil(Preset.defaultPreset.targetSizeMB)
     }
+
+    // The LIVE catalog applies the user's built-in customization (hides +
+    // edits, both restorable) on top of the immutable seed; the
+    // default-preset fallback must survive a removed quality tier by
+    // walking to another quality tier — never a size target.
+    func testLiveBuiltInAppliesHidesAndOverrides() {
+        PresetStore.restoreBuiltIns()   // clean slate
+        defer { PresetStore.restoreBuiltIns() }
+        XCTAssertEqual(Preset.liveBuiltIn.count, Preset.builtIn.count)
+
+        let high = Preset.builtIn.first { $0.id == Preset.defaultPreset.id }!
+        PresetStore.hideBuiltIn(high.id)
+        XCTAssertFalse(Preset.liveBuiltIn.contains { $0.id == high.id })
+        XCTAssertNil(Preset.defaultPreset.targetSizeMB)   // quality tier, still
+
+        var edited = Preset.builtIn[1]
+        edited.fixedBitrateMbps = 3
+        PresetStore.setBuiltInOverride(edited)
+        XCTAssertEqual(Preset.liveBuiltIn.first { $0.id == edited.id }?.fixedBitrateMbps, 3)
+
+        PresetStore.restoreBuiltIns()
+        XCTAssertEqual(Preset.liveBuiltIn.count, Preset.builtIn.count)
+        XCTAssertEqual(Preset.defaultPreset.id, high.id)
+    }
 }

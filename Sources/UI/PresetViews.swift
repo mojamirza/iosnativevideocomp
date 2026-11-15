@@ -41,6 +41,65 @@ enum PresetStore {
     static func setLastUsedPreset(_ id: UUID) {
         UserDefaults.standard.set(id.uuidString, forKey: "lastPresetID")
     }
+
+    // MARK: built-in catalog customization
+    // The built-in list is an immutable SEED (stableID keys, the fallback
+    // root); user customization rides ALONGSIDE it and is fully
+    // restorable: edits are stored as OVERRIDES keyed by the built-in's
+    // stable id (the editor preserves the id on edit), removals HIDE the
+    // row. Nothing is ever destroyed — "Restore built-in presets" clears
+    // both lists and the seed shines through again.
+
+    private static let hiddenBuiltInsKey = "builtInHidden.v1"
+    private static let builtInOverridesKey = "builtInOverrides.v1"
+
+    static func hiddenBuiltInIDs() -> Set<UUID> {
+        guard let data = UserDefaults.standard.data(forKey: hiddenBuiltInsKey),
+              let strings = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(strings.compactMap(UUID.init(uuidString:)))
+    }
+
+    static func hideBuiltIn(_ id: UUID) {
+        var ids = hiddenBuiltInIDs()
+        ids.insert(id)
+        if let data = try? JSONEncoder().encode(ids.map(\.uuidString)) {
+            UserDefaults.standard.set(data, forKey: hiddenBuiltInsKey)
+        }
+    }
+
+    /// Overrides decode LENIENTLY (per element, like the customs): one bad
+    /// element must not lose the other edits.
+    static func builtInOverrides() -> [UUID: Preset] {
+        guard let data = UserDefaults.standard.data(forKey: builtInOverridesKey) else { return [:] }
+        var out: [UUID: Preset] = [:]
+        if let dict = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] {
+            for element in dict {
+                guard let d = try? JSONSerialization.data(withJSONObject: element),
+                      let p = try? JSONDecoder().decode(Preset.self, from: d) else { continue }
+                out[p.id] = p
+            }
+        }
+        return out
+    }
+
+    static func setBuiltInOverride(_ preset: Preset) {
+        var list = Array(builtInOverrides().values)
+        if let idx = list.firstIndex(where: { $0.id == preset.id }) {
+            list[idx] = preset
+        } else {
+            list.append(preset)
+        }
+        if let data = try? JSONEncoder().encode(list) {
+            UserDefaults.standard.set(data, forKey: builtInOverridesKey)
+        }
+    }
+
+    /// The one-way door back: clears hides AND edits — the untouched seed
+    /// is the built-in list again.
+    static func restoreBuiltIns() {
+        UserDefaults.standard.removeObject(forKey: hiddenBuiltInsKey)
+        UserDefaults.standard.removeObject(forKey: builtInOverridesKey)
+    }
 }
 
 /// Editor for a custom preset: codec, resolution class, exact bitrate
@@ -612,12 +671,17 @@ struct PresetEditorView: View {
 /// PRESET MANAGER — the sidebar's "Manage presets…" destination: browse,
 /// create, edit, duplicate and delete presets, plus the metadata/privacy
 /// policy (moved here from the compress bottom bar, which had grown too
-/// dense). Built-ins are immutable but can be duplicated as customs. The
-/// editor opens without a context probe: numbers solve per video at encode
-/// time, exactly like batch setup.
+/// dense). Built-ins are editable in place (persisted as restorable
+/// overrides keyed by their stable ids) and can be hidden — "Restore
+/// built-in presets" returns the untouched seed. The editor opens without
+/// a context probe: numbers solve per video at encode time, exactly like
+/// batch setup.
 struct PresetManagerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
+    /// The LIVE built-in catalog (hides/edits applied) — refreshed after
+    /// every hide/edit/restore; the static seed never changes.
+    @State private var builtIns: [Preset] = PresetStore.liveBuiltIn()
     @State private var editingPreset: Preset?
     @State private var creatingNew = false
     // Fat-finger protection: the menu's destructive action only ARMS the
@@ -633,9 +697,23 @@ struct PresetManagerSheet: View {
         NavigationStack {
             List {
                 Section("Built-in") {
-                    ForEach(Preset.builtIn) { preset in
+                    ForEach(builtIns) { preset in
                         row(preset, custom: false)
                             .listRowBackground(Color.appCard)
+                    }
+                    // The restorable back door: appears once the user has
+                    // hidden or edited any built-in — one tap returns the
+                    // untouched seed (clears hides AND edits).
+                    if !PresetStore.hiddenBuiltInIDs().isEmpty
+                        || !PresetStore.builtInOverrides().isEmpty {
+                        Button {
+                            PresetStore.restoreBuiltIns()
+                            builtIns = PresetStore.liveBuiltIn()
+                        } label: {
+                            Label("Restore built-in presets",
+                                  systemImage: "arrow.counterclockwise")
+                        }
+                        .listRowBackground(Color.appCard)
                     }
                 }
                 Section {
@@ -710,17 +788,20 @@ struct PresetManagerSheet: View {
                 }
                 Button("Keep", role: .cancel) { pendingDelete = nil }
             } message: {
-                Text("The preset disappears from the setup flow. Jobs already recorded with it keep their recipe.")
+                Text(pendingDelete.map { Preset.builtIn.contains(where: { $0.id == $0.id }) } == true
+                     ? "The built-in preset disappears from the setup flow — Restore built-in presets brings it back. Jobs already recorded with it keep their recipe."
+                     : "The preset disappears from the setup flow. Jobs already recorded with it keep their recipe.")
             }
         }
     }
 
     private func row(_ preset: Preset, custom: Bool) -> some View {
         HStack(spacing: 10) {
-            // LOCK says "built-in / not editable in place" — the seal was the
-            // VERIFIED-INTEGRITY badge's shape (green seal in history), and
-            // two unrelated meanings sharing one glyph reads as "verified".
-            Image(systemName: preset.isUserDefined ? "slider.horizontal.3" : "lock")
+            // ORIGIN MARKER: the slider marks user-defined customs; the box
+            // marks a built-in catalog piece — which IS now editable in
+            // place (stored as a restorable override) and removable, so
+            // the old lock ("not editable") would read as a lie.
+            Image(systemName: preset.isUserDefined ? "slider.horizontal.3" : "shippingbox")
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(preset.name)
@@ -732,42 +813,39 @@ struct PresetManagerSheet: View {
             }
             Spacer()
             Menu {
-                if custom {
-                    Button {
-                        editingPreset = preset
-                    } label: {
-                        Label("Edit…", systemImage: "pencil")
-                    }
+                Button {
+                    editingPreset = preset
+                } label: {
+                    Label("Edit…", systemImage: "pencil")
                 }
                 Button {
                     duplicate(preset)
                 } label: {
                     Label("Duplicate…", systemImage: "plus.square.on.square")
                 }
-                if custom {
-                    Divider()
-                    Button(role: .destructive) {
-                        pendingDelete = preset
-                        confirmingDelete = true
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
+                Divider()
+                Button(role: .destructive) {
+                    pendingDelete = preset
+                    confirmingDelete = true
+                } label: {
+                    // Customs are DESTROYED; built-ins are only HIDDEN
+                    // (restorable) — the wording says which one happens.
+                    Label(custom ? "Delete" : "Remove", systemImage: "trash")
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .foregroundStyle(.secondary)
             }
         }
-        // CUSTOM presets only: the whole row is the edit target, not just
-        // the ⋯ menu (the Menu keeps its own tap) — a tap on the name/summary
-        // previously did nothing and read as a dead row. Built-ins stay
-        // inert (locked, duplicate-only).
+        // EVERY preset row is the edit target now — a tap on the name/
+        // summary opens the editor (a tap that did nothing read as a dead
+        // row; built-ins kept it that way while they were locked).
         .contentShape(Rectangle())
         .onTapGesture {
-            if custom { editingPreset = preset }
+            editingPreset = preset
         }
-        .accessibilityAddTraits(custom ? .isButton : [])
-        .accessibilityHint(custom ? "Opens the preset editor" : "")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the preset editor")
     }
 
     private func summary(_ p: Preset) -> String {
@@ -790,13 +868,32 @@ struct PresetManagerSheet: View {
     }
 
     private func delete(_ preset: Preset) {
-        customPresets.removeAll { $0.id == preset.id }
-        PresetStore.saveCustom(customPresets)
+        if Preset.builtIn.contains(where: { $0.id == preset.id }) {
+            // BUILT-IN → HIDE, never destroy: the seed is shared identity
+            // (stable ids, the default-preset root) — removing the row
+            // from the live catalog is restorable, and "Restore built-in
+            // presets" brings it back untouched.
+            PresetStore.hideBuiltIn(preset.id)
+            builtIns = PresetStore.liveBuiltIn()
+        } else {
+            customPresets.removeAll { $0.id == preset.id }
+            PresetStore.saveCustom(customPresets)
+        }
     }
 
     /// Insert-or-replace by id: edits update in place, new presets append.
+    /// An id that matches a BUILT-IN means the editor just saved an EDIT
+    /// of one (the editor preserves the existing id) — it persists as a
+    /// restorable override keyed by that stable id, keeping the row's
+    /// built-in origin (isUserDefined stays false so it never reads as a
+    /// custom).
     private func saved(_ preset: Preset) {
-        if let idx = customPresets.firstIndex(where: { $0.id == preset.id }) {
+        if Preset.builtIn.contains(where: { $0.id == preset.id }) {
+            var override = preset
+            override.isUserDefined = false
+            PresetStore.setBuiltInOverride(override)
+            builtIns = PresetStore.liveBuiltIn()
+        } else if let idx = customPresets.firstIndex(where: { $0.id == preset.id }) {
             customPresets[idx] = preset
         } else {
             customPresets.append(preset)

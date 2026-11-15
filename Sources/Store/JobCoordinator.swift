@@ -936,7 +936,7 @@ final class JobCoordinator: ObservableObject {
             // a scroll) — List diffs instantly on a plain removal.
             deleteSourceImport(jobs[idx])
             removeRecord(jobID: jobID)
-            jobs.remove(at: idx)
+            instantly { jobs.remove(at: idx) }
             refreshMenuState()
         } else if jobs[idx].state == .verifying {
             // VERIFY-PHASE CANCEL, PROMPT: during verification nobody
@@ -1013,7 +1013,9 @@ final class JobCoordinator: ObservableObject {
         removeRecord(jobID: jobID)
         // Instant removal (see cancel's note): animated diffs made List
         // recycle the removed cell's layout onto a shifted sibling card.
-        jobs.remove(at: idx)
+        // instantly() also strips the alert-dismissal transaction the
+        // delete confirm carries (see its note).
+        instantly { jobs.remove(at: idx) }
         cancelFlags.removeValue(forKey: jobID)
         // A removed row must not survive as a phantom selection entry (see
         // pruneSelection) — single deletes from the ⋯ menu can hit rows
@@ -1049,6 +1051,20 @@ final class JobCoordinator: ObservableObject {
     /// Arms the destructive actions (see the pending-ID docs above).
     func requestDelete(jobID: UUID) { pendingDeleteID = jobID }
     func requestCancel(jobID: UUID) { pendingCancelID = jobID }
+
+    /// STRUCTURAL ARRAY CHANGES WITHOUT AN ANIMATED DIFF: the destructive
+    /// confirms are presented from ROOT-LEVEL ALERTS, and an alert button's
+    /// action runs inside the ALERT'S DISMISSAL TRANSACTION — List used
+    /// that transaction to animate the removal + sibling shift, sending
+    /// the removed card's ghost up behind the pinned top cards (import
+    /// card / queue status bar) on device (user report: "jumps up behind
+    /// top cards"). A disabled transaction forces the documented instant
+    /// diff regardless of the animation context the caller carries.
+    private func instantly(_ changes: () -> Void) {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t, changes)
+    }
 
     func confirmPendingDelete() {
         guard let id = pendingDeleteID else { return }
@@ -1234,7 +1250,9 @@ final class JobCoordinator: ObservableObject {
             deleteSourceImport(jobs[idx])
             // Instant removal (see cancel's note) — no animated diff to
             // recycle a removed cell's layout onto the shifted sibling.
-            jobs.remove(at: idx)
+            // The disabled transaction also strips the alert-dismissal
+            // animation context (see instantly's note).
+            instantly { jobs.remove(at: idx) }
         }
         refreshMenuState()
         // Cancel/watchdog removals must not leave a phantom selection entry

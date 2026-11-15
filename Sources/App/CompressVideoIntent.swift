@@ -223,9 +223,10 @@ enum VideoInbox {
                     // Respect the user's habitual choice: the last preset
                     // actually run from setup (SetupFlow persists it on every
                     // commit), falling back to the quality-tier default when
-                    // the stored id no longer resolves (deleted custom).
+                    // the stored id no longer resolves (deleted custom,
+                    // removed built-in — the LIVE catalog is what resolves).
                     let lastID = PresetStore.lastUsedPresetID()
-                    let preset = Preset.builtIn.first { $0.id == lastID }
+                    let preset = Preset.liveBuiltIn.first { $0.id == lastID }
                         ?? PresetStore.loadCustom().first { $0.id == lastID }
                         ?? Preset.defaultPreset
                     let plan = QualitySizeOptimizer.plan(preset: preset, probe: probe)

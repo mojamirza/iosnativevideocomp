@@ -165,7 +165,7 @@ struct SetupFlowView: View {
     /// Transient by design: a fresh sheet is a fresh instance.
     @State private var didEnqueue = false
 
-    var availablePresets: [Preset] { Preset.builtIn + customPresets }
+    var availablePresets: [Preset] { Preset.liveBuiltIn + customPresets }
 
     var isBatch: Bool { videos.count > 1 }
 

@@ -228,10 +228,33 @@ struct Preset: Identifiable, Codable, Hashable {
     /// greet a long 4K clip with the "Target too small" gate. Keyed by the
     /// FIXED stable id (never index/name — the catalog order changed when
     /// the destination presets landed at the top).
+    ///
+    /// Resolves against the LIVE catalog (user hides/edits applied): a
+    /// removed default can't greet anyone, so the fallback walks to any
+    /// remaining QUALITY tier (never a size target — same reasoning as
+    /// above), and an emptied catalog falls back to the untouched seed.
     static var defaultPreset: Preset {
-        builtIn.first { $0.id == defaultID } ?? builtIn[0]
+        let catalog = liveBuiltIn
+        guard !catalog.isEmpty else { return builtIn[0] }
+        return catalog.first { $0.id == defaultID }
+            ?? catalog.first { $0.targetSizeMB == nil }
+            ?? catalog[0]
     }
     private static let defaultID = stableID("builtin.high")
+
+    /// The LIVE built-in catalog: the immutable seed with the user's
+    /// customization applied — hidden rows removed, edits substituted
+    /// (PresetStore overrides, keyed by each preset's stable id). EVERY
+    /// consumer that shows or resolves presets reads THIS; `builtIn`
+    /// stays the untouched seed that stableID keys and this fallback
+    /// root derive from.
+    static var liveBuiltIn: [Preset] {
+        let hidden = PresetStore.hiddenBuiltInIDs()
+        let overrides = PresetStore.builtInOverrides()
+        return builtIn.compactMap { p in
+            hidden.contains(p.id) ? nil : (overrides[p.id] ?? p)
+        }
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,
