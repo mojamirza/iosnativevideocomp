@@ -30,6 +30,12 @@ struct JobRowView: View, Equatable {
     /// layout onto the shifted card until a scroll recycled it (device
     /// report). A changed index forces a fresh render.
     let rowIndex: Int
+    /// Zoom-transition lens (iOS 18): the thumbnail is the matched source,
+    /// the row's report/player sheets zoom out of it. Namespace identity
+    /// lives per row; the render-skip's `==` compares `job` + coordinator +
+    /// selection inputs only, so this stored property never breaks the
+    /// skip.
+    @Namespace private var zoomNamespace
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -237,10 +243,16 @@ struct JobRowView: View, Equatable {
         .sheet(isPresented: $showingReport) {
             if let report = job.report {
                 ReportSheet(job: job, report: report)
+                    // iOS 18 zoom out of the row thumbnail (NavigationStack
+                    // root required — ReportSheet's body is one).
+                    .zoomDestination(sourceID: job.id, in: zoomNamespace)
             }
         }
         .sheet(isPresented: $showingPlayer) {
             OutputPlayerSheet(job: job)
+                // Same lens as the report: one thumbnail, one namespace —
+                // only one sheet is ever up at a time.
+                .zoomDestination(sourceID: job.id, in: zoomNamespace)
         }
         .alert("Rename video", isPresented: $showingRename) {
             TextField("Name", text: $renameText)
@@ -480,6 +492,10 @@ struct JobRowView: View, Equatable {
                         }
                         .frame(width: 22, height: 22)
                     }
+                    // iOS 18 zoom transition: this thumbnail is the lens
+                    // the player/report sheets zoom out of (Photos-grade
+                    // presentation; identity no-op below iOS 18).
+                    .zoomSource(id: job.id, in: zoomNamespace)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Play video")
