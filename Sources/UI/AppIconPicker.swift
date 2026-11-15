@@ -2,13 +2,14 @@ import SwiftUI
 import UIKit
 
 /// APP ICON PICKER — alternate-icons plumbing plus the About & Settings
-/// section. iPadOS has no automatic per-appearance app icons for flat
-/// artwork (that needs a layered Icon Composer `.icon`, which requires a
-/// Mac): the premium-app pattern is a MANUAL picker instead — light-
-/// styled and dark-styled variants side by side, one tap, and the
-/// system-side dark/tinted Home Screen treatments adapt whichever icon
-/// is set. The system confirms every switch with its own alert —
-/// unsuppressable platform behavior the picker never tries to hide.
+/// section. Every variant ships as a LAYERED Icon Composer `.icon` (the
+/// user-authored packages, wired into the appiconsets): iPadOS 26
+/// applies the dark / tinted / clear Home Screen appearances to them
+/// AUTOMATICALLY — no per-appearance switching code exists or is needed.
+/// The picker's remaining job is choosing the COLOR variant (the
+/// system-side automatic switch can't know you'd rather look at sunset
+/// than ocean); the system still confirms every manual swap with its own
+/// unsuppressible alert, which the picker never tries to hide.
 enum AppIconCatalog {
     struct Choice: Identifiable {
         /// The asset-catalog icon set name; `nil` = the primary icon.

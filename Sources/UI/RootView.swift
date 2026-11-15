@@ -1436,18 +1436,17 @@ private struct AboutSettingsSheet: View {
         NavigationStack {
             Form {
                 // APP ICON (user request: "nowhere in settings that can
-                // user change the icon"): alternate-icons picker — light-
-                // and dark-styled variants side by side. iPadOS has no
-                // automatic per-appearance icons for flat artwork (that
-                // needs a layered Icon Composer .icon, Mac-only); the
-                // picker is the premium-app pattern (Telegram et al.).
+                // user change the icon"): alternate-icons picker over the
+                // LAYERED Icon Composer .icon sets — dark mode / tinted /
+                // clear Home Screen appearances adapt each one
+                // automatically on iPadOS 26; the picker picks the color.
                 Section {
                     AppIconPickerSection(failureText: $iconFailure)
                         .listRowBackground(Color.appCard)
                 } header: {
                     Text("App icon")
                 } footer: {
-                    Text("Tap an icon to switch — iPadOS confirms the change with its own alert. Midnight and Graphite pair with dark mode; Snow and Sky with light. Dark and tinted Home Screen treatments adapt any icon automatically.")
+                    Text("Tap an icon to switch — iPadOS confirms the change with its own alert. Every icon is layered: dark mode and tinted or clear Home Screens adapt it automatically.")
                 }
                 Section("Privacy") {
                     // Strip-all makes the date toggle inert (it overrides it)
