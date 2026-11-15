@@ -104,30 +104,4 @@ extension View {
             self.background(Color.appCard, in: shape)
         }
     }
-
-    /// iOS 18 ZOOM-TRANSITION pair (Photos-grade sheet presentation): the
-    /// row thumbnail is the SOURCE the sheet zooms out of; the DESTINATION
-    /// wraps the presented sheet's root (the API requires the presented
-    /// view to be a NavigationStack root — ReportSheet and
-    /// OutputPlayerSheet both are). Above the iOS 17.0 deployment floor,
-    /// so BOTH halves are availability-gated here and stay identity
-    /// no-ops below iOS 18: those presentations fall back to the default
-    /// slide, the testable pre-18 path.
-    @ViewBuilder
-    func zoomSource<ID: Hashable>(id: ID, in ns: Namespace.ID) -> some View {
-        if #available(iOS 18.0, *) {
-            self.matchedTransitionSource(id: id, in: ns)
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func zoomDestination<ID: Hashable>(sourceID: ID, in ns: Namespace.ID) -> some View {
-        if #available(iOS 18.0, *) {
-            self.navigationTransition(.zoom(sourceID: sourceID, in: ns))
-        } else {
-            self
-        }
-    }
 }
