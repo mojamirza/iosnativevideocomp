@@ -76,3 +76,32 @@ extension Color {
     /// explicitly; dark mode resolves a lighter shade for contrast.
     static var appAccent: Color { Color("AccentColor") }
 }
+
+extension View {
+    /// FLOATING-CHROME surface for status cards that hover over the content
+    /// canvas (queue status bar, import progress card): Liquid Glass on
+    /// iOS 26+ (WWDC25-323 — custom floating chrome adopts the new material
+    /// while the pinned AMOLED palette survives underneath as the CONTENT
+    /// canvas; the app must not read as pre-iOS-26 next to system glass
+    /// chrome), the pinned card color on iOS 17–25 — the deployment target
+    /// is iOS 17 (project.yml), so this fallback path stays testable.
+    ///
+    /// The shape is ALWAYS passed explicitly: `glassEffect`'s default shape
+    /// is a capsule, and these surfaces are rounded rectangles.
+    ///
+    /// NOT for the content cards themselves (job rows, report items — they
+    /// ARE the canvas and keep `Color.appCard`), and NOT for semantic
+    /// banners (the yellow storage-fallback wash carries meaning glass
+    /// would strip). Adjacent/separate glass surfaces deliberately get no
+    /// GlassEffectContainer: the container exists to MERGE neighboring
+    /// shapes into one continuous lens — these cards are separated rows
+    /// and must stay distinct lenses.
+    @ViewBuilder
+    func chromeSurface<S: Shape>(in shape: S) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular, in: shape)
+        } else {
+            self.background(Color.appCard, in: shape)
+        }
+    }
+}

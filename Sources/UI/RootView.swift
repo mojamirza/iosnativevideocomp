@@ -78,7 +78,7 @@ struct RootView: View {
     /// OWNED column visibility (selection mode drives it).
     private var regularShell: some View {
         NavigationSplitView(columnVisibility: $regularColumns) {
-            sidebarList
+            sidebarList()
         } detail: {
             interactiveList
         }
@@ -112,14 +112,27 @@ struct RootView: View {
                     .onTapGesture { closeDrawer() }
                     .accessibilityHidden(!sidebarOpen)
 
-                // SIDEBAR drawer panel.
+                // SIDEBAR drawer panel — FLOATING CHROME: Liquid Glass on
+                // iOS 26+ (the panel floats over the dimmed content, glass
+                // samples exactly what is behind it); the pinned screen
+                // color below. The glass rectangle ignores the safe area so
+                // the material runs edge-to-edge like the old fill, and the
+                // shape is explicit — glassEffect's default is a capsule.
                 VStack(spacing: 0) {
                     drawerHeader
-                    sidebarList
+                    sidebarList(clearCanvas: drawerUsesGlass)
                 }
                 .frame(width: drawerWidth)
                 .frame(maxHeight: .infinity)
-                .background(Color.appScreen.ignoresSafeArea())
+                .background {
+                    if #available(iOS 26.0, *) {
+                        Rectangle().fill(Color.clear)
+                            .glassEffect(.regular, in: Rectangle())
+                            .ignoresSafeArea()
+                    } else {
+                        Rectangle().fill(Color.appScreen).ignoresSafeArea()
+                    }
+                }
                 .offset(x: drawerWidth * (progress - 1))
                 .shadow(color: .black.opacity(0.25 * Double(progress)), radius: 18, x: 4)
                 .gesture(closeGesture(width: drawerWidth))
@@ -150,8 +163,13 @@ struct RootView: View {
     }
 
     /// The shared sidebar rows — the regular split-view column AND the
-    /// compact drawer panel both render this.
-    private var sidebarList: some View {
+    /// compact drawer panel both render this. The SPLIT-VIEW column keeps
+    /// the pinned screen background (the List's own grouped background is
+    /// the gray that made the app look different between fullscreen and
+    /// Split View in dark mode); the DRAWER passes `clearCanvas: true` on
+    /// iOS 26 so its Liquid Glass panel shows THROUGH the list (an opaque
+    /// canvas here would sit ON the glass and hide it completely).
+    private func sidebarList(clearCanvas: Bool = false) -> some View {
         List {
             SidebarSavingsSection()
 
@@ -174,14 +192,20 @@ struct RootView: View {
             }
         }
         .navigationTitle("VidCompress")
-        // The sidebar column must match the detail column (Color.appScreen):
-        // the List's own grouped background is the gray that made the app
-        // look different between fullscreen and Split View in dark mode.
         .scrollContentBackground(.hidden)
-        .background(Color.appScreen)
+        .background(clearCanvas ? Color.clear : Color.appScreen)
     }
 
     // MARK: compact drawer gestures
+
+    /// Whether the drawer panel renders Liquid Glass (iOS 26+) — drives the
+    /// sidebar list's canvas (an opaque canvas would sit ON the glass) and
+    /// documents the fallback once instead of scattering availability
+    /// checks. iOS 17–25 keeps the pinned opaque screen color.
+    private var drawerUsesGlass: Bool {
+        if #available(iOS 26.0, *) { return true }
+        return false
+    }
 
     private var drawerProgress: CGFloat {
         if let dragProgress { return min(max(dragProgress, 0), 1) }
@@ -1166,7 +1190,10 @@ private struct ImportStatusCard: View {
             Spacer()
         }
         .padding(12)
-        .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
+        // FLOATING CHROME → Liquid Glass on iOS 26+ (same rule as the queue
+        // status bar); the pinned card color is the iOS 17–25 fallback — the
+        // old tint wash was a third chrome style, now unified.
+        .chromeSurface(in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
     }
 }
 
@@ -1225,8 +1252,12 @@ private struct QueueStatusBar: View {
             ProgressView(value: fraction)
         }
         .padding(14)
-        .background(Color.appCard,
-                    in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
+        // FLOATING CHROME → Liquid Glass on iOS 26+ (AppTheme.chromeSurface:
+        // WWDC25-323 — custom floating status chrome adopts the new material,
+        // the pinned card color remains the iOS 17–25 fallback), pinned card
+        // color below. The shape is explicit — glassEffect's default is a
+        // capsule.
+        .chromeSurface(in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
     }
 }
 
