@@ -681,7 +681,7 @@ struct PresetManagerSheet: View {
     @State private var customPresets: [Preset] = PresetStore.loadCustom()
     /// The LIVE built-in catalog (hides/edits applied) — refreshed after
     /// every hide/edit/restore; the static seed never changes.
-    @State private var builtIns: [Preset] = PresetStore.liveBuiltIn()
+    @State private var builtIns: [Preset] = Preset.liveBuiltIn
     @State private var editingPreset: Preset?
     @State private var creatingNew = false
     // Fat-finger protection: the menu's destructive action only ARMS the
@@ -708,7 +708,7 @@ struct PresetManagerSheet: View {
                         || !PresetStore.builtInOverrides().isEmpty {
                         Button {
                             PresetStore.restoreBuiltIns()
-                            builtIns = PresetStore.liveBuiltIn()
+                            builtIns = Preset.liveBuiltIn
                         } label: {
                             Label("Restore built-in presets",
                                   systemImage: "arrow.counterclockwise")
@@ -874,7 +874,7 @@ struct PresetManagerSheet: View {
             // from the live catalog is restorable, and "Restore built-in
             // presets" brings it back untouched.
             PresetStore.hideBuiltIn(preset.id)
-            builtIns = PresetStore.liveBuiltIn()
+            builtIns = Preset.liveBuiltIn
         } else {
             customPresets.removeAll { $0.id == preset.id }
             PresetStore.saveCustom(customPresets)
@@ -892,7 +892,7 @@ struct PresetManagerSheet: View {
             var override = preset
             override.isUserDefined = false
             PresetStore.setBuiltInOverride(override)
-            builtIns = PresetStore.liveBuiltIn()
+            builtIns = Preset.liveBuiltIn
         } else if let idx = customPresets.firstIndex(where: { $0.id == preset.id }) {
             customPresets[idx] = preset
         } else {
