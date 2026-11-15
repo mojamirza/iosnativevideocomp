@@ -1427,10 +1427,28 @@ private struct AboutSettingsSheet: View {
     @AppStorage(PrivacyScrub.keepDateKey) private var keepCreationDate = true
     @AppStorage(PrivacyScrub.stripAllKey) private var stripAllMetadata = false
     @Environment(\.dismiss) private var dismiss
+    /// App-icon switch failures bubble here from the picker section and
+    /// surface as a LIST-LEVEL alert (alerts presented from inside list
+    /// content don't anchor reliably on iPadOS 26).
+    @State private var iconFailure: String?
 
     var body: some View {
         NavigationStack {
             Form {
+                // APP ICON (user request: "nowhere in settings that can
+                // user change the icon"): alternate-icons picker — light-
+                // and dark-styled variants side by side. iPadOS has no
+                // automatic per-appearance icons for flat artwork (that
+                // needs a layered Icon Composer .icon, Mac-only); the
+                // picker is the premium-app pattern (Telegram et al.).
+                Section {
+                    AppIconPickerSection(failureText: $iconFailure)
+                        .listRowBackground(Color.appCard)
+                } header: {
+                    Text("App icon")
+                } footer: {
+                    Text("Tap an icon to switch — iPadOS confirms the change with its own alert. Midnight and Graphite pair with dark mode; Snow and Sky with light. Dark and tinted Home Screen treatments adapt any icon automatically.")
+                }
                 Section("Privacy") {
                     // Strip-all makes the date toggle inert (it overrides it)
                     // — say so AND disable it instead of letting a toggle
@@ -1459,6 +1477,16 @@ private struct AboutSettingsSheet: View {
                     Link("VidCompress on GitHub", destination: URL(string: "https://github.com/mojamirza/iosnativevideocomp")!)
                         .listRowBackground(Color.appCard)
                 }
+            }
+            // Failure alert for the icon picker — anchored at the stack
+            // level so it always presents (device lesson, see above).
+            .alert("Couldn't change the icon",
+                   isPresented: Binding(
+                       get: { iconFailure != nil },
+                       set: { if !$0 { iconFailure = nil } })) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(iconFailure ?? "An unknown error occurred.")
             }
             // Same screen-level token as every other screen (Color.appScreen).
             .scrollContentBackground(.hidden)

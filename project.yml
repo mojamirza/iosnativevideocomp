@@ -52,6 +52,11 @@ targets:
         PRODUCT_NAME: VidCompress
         PRODUCT_BUNDLE_IDENTIFIER: com.example.vidcompress
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # ALTERNATE ICONS: actool compiles these icon sets and injects
+        # CFBundleAlternateIcons into the built Info.plist — the in-app
+        # picker (About & Settings) switches via
+        # UIApplication.setAlternateIconName. Space-delimited names.
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Sky AppIcon-Snow AppIcon-Sunset AppIcon-Violet AppIcon-Emerald AppIcon-Midnight AppIcon-Graphite"
         MARKETING_VERSION: "1.8.5"
         CURRENT_PROJECT_VERSION: "31"
         SWIFT_VERSION: "5.10"
