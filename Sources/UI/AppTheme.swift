@@ -79,7 +79,7 @@ extension Color {
 
 extension View {
     /// FLOATING-CHROME surface for status cards that hover over the content
-    /// canvas (queue status bar, import progress card): Liquid Glass on
+    /// canvas (import progress card): Liquid Glass on
     /// iOS 26+ (WWDC25-323 — custom floating chrome adopts the new material
     /// while the pinned AMOLED palette survives underneath as the CONTENT
     /// canvas; the app must not read as pre-iOS-26 next to system glass
@@ -90,7 +90,9 @@ extension View {
     /// is a capsule, and these surfaces are rounded rectangles.
     ///
     /// NOT for the content cards themselves (job rows, report items — they
-    /// ARE the canvas and keep `Color.appCard`), and NOT for semantic
+    /// ARE the canvas and keep `Color.appCard`), NOT for the QUEUE STATUS
+    /// BAR (its glass was tried in eb70e76 and reverted on user request —
+    /// the live percent bar stays a solid card), and NOT for semantic
     /// banners (the yellow storage-fallback wash carries meaning glass
     /// would strip). Adjacent/separate glass surfaces deliberately get no
     /// GlassEffectContainer: the container exists to MERGE neighboring

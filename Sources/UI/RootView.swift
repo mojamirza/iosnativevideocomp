@@ -1252,12 +1252,13 @@ private struct QueueStatusBar: View {
             ProgressView(value: fraction)
         }
         .padding(14)
-        // FLOATING CHROME → Liquid Glass on iOS 26+ (AppTheme.chromeSurface:
-        // WWDC25-323 — custom floating status chrome adopts the new material,
-        // the pinned card color remains the iOS 17–25 fallback), pinned card
-        // color below. The shape is explicit — glassEffect's default is a
-        // capsule.
-        .chromeSurface(in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
+        // PINNED OPAQUE CARD, deliberately NOT Liquid Glass: the glass look
+        // on this bar was tried (eb70e76) and reverted on user request —
+        // the live percent/ETA bar reads better as a solid elevated card
+        // over the AMOLED canvas, like previous versions. (The import card
+        // and the drawer keep their iOS 26 glass.)
+        .background(Color.appCard,
+                    in: RoundedRectangle(cornerRadius: AppTheme.largeCardRadius))
     }
 }
 
