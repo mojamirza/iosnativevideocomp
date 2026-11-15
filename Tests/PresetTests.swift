@@ -47,6 +47,9 @@ final class PresetTests: XCTestCase {
     // references on the first relaunch.)
     func testBuiltInIDsMatchThePinnedSystemKeys() {
         let pinned = [
+            UUID(uuidString: "74e4bc94-4181-48e4-a365-6afa4bdf8168")!,  // builtin.email-25
+            UUID(uuidString: "6e782890-7849-4bdb-913a-a1c3b9d5b4b0")!,  // builtin.chat-100
+            UUID(uuidString: "c1c80319-c3a1-4047-8ee0-4cc04273f99d")!,  // builtin.upload-500
             UUID(uuidString: "52da5dd1-46ad-440b-a35d-a36897c6de94")!,  // builtin.high
             UUID(uuidString: "c799358f-3d25-4f14-800d-9bbab2c91449")!,  // builtin.720p
             UUID(uuidString: "3644b565-468f-4a96-bb66-4ed313cb08ff")!,  // builtin.480p
@@ -54,5 +57,12 @@ final class PresetTests: XCTestCase {
             UUID(uuidString: "bd736547-35f1-450e-9ed9-b98274ec61d5")!,  // builtin.lecture-sharp
         ]
         XCTAssertEqual(Preset.builtIn.map(\.id), pinned)
+        // The FALLBACK default (fresh installs, deleted-preset reset,
+        // Shortcuts) is pinned to the QUALITY tier — never a destination
+        // size target that could greet a long 4K clip with the
+        // "Target too small" gate.
+        XCTAssertEqual(Preset.defaultPreset.id,
+                       UUID(uuidString: "52da5dd1-46ad-440b-a35d-a36897c6de94")!)
+        XCTAssertNil(Preset.defaultPreset.targetSizeMB)
     }
 }
