@@ -788,7 +788,7 @@ struct PresetManagerSheet: View {
                 }
                 Button("Keep", role: .cancel) { pendingDelete = nil }
             } message: {
-                Text(pendingDelete.map { Preset.builtIn.contains(where: { $0.id == $0.id }) } == true
+                Text(pendingDeleteIsBuiltIn
                      ? "The built-in preset disappears from the setup flow — Restore built-in presets brings it back. Jobs already recorded with it keep their recipe."
                      : "The preset disappears from the setup flow. Jobs already recorded with it keep their recipe.")
             }
@@ -865,6 +865,14 @@ struct PresetManagerSheet: View {
         copy.isUserDefined = true
         copy.name = "\(preset.name) copy"
         editingPreset = copy
+    }
+
+    /// Whether the armed destructive target is a BUILT-IN (→ hide, restorable)
+    /// or a custom (→ destroyed). Named guard instead of an inline `.map` —
+    /// nested `$0` closures shadowed each other there (CI compile error).
+    private var pendingDeleteIsBuiltIn: Bool {
+        guard let p = pendingDelete else { return false }
+        return Preset.builtIn.contains { $0.id == p.id }
     }
 
     private func delete(_ preset: Preset) {
