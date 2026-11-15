@@ -38,12 +38,16 @@ struct RootView: View {
     @StateObject private var setupSession = SetupSession()
 
     // COMPACT DRAWER (tiny windowed/Split View widths): the MAIN PAGE is the
-    // base layer and the sidebar slides OVER it — edge-swipe opens, swipe
-    // left / backdrop tap / Done closes. NavigationSplitView's compact
-    // presentations kept landing on the sidebar and offered no reliable way
-    // back (programmatic columnVisibility is ignored while presented, and a
-    // pre-set selection did not push the detail on iPadOS 26), so compact is
-    // owned by this drawer; regular widths keep the side-by-side split view.
+    // base layer and NARROWS as the sidebar opens — the panel ends up
+    // BESIDE the queue (cards reflow to the leftover width, like a real
+    // split view) instead of covering it; where the canvas is too small
+    // for both, the panel overlaps the page's leading strip like a
+    // slide-over. Edge-swipe opens, swipe left / backdrop tap / Done
+    // closes. NavigationSplitView's compact presentations kept landing on
+    // the sidebar and offered no reliable way back (programmatic
+    // columnVisibility is ignored while presented, and a pre-set selection
+    // did not push the detail on iPadOS 26), so compact is owned by this
+    // drawer; regular widths keep the side-by-side split view.
     @State private var sidebarOpen = false
     /// Live drag position 0…1 (nil while not dragging).
     @State private var dragProgress: CGFloat?
@@ -84,21 +88,39 @@ struct RootView: View {
         }
     }
 
-    /// Compact widths: main page first, sidebar as an interactive drawer.
+    /// Compact widths: main page first, sidebar as an interactive drawer
+    /// that shares the canvas.
     private var compactShell: some View {
         GeometryReader { geo in
             let drawerWidth = min(320, geo.size.width * 0.82)
             let progress = drawerProgress
+            // SIDE-BY-SIDE OPEN (user request: "when you open the side menu
+            // the card's size should change so the side menu fits alongside
+            // the main page"): the main page's width is the canvas minus
+            // the revealed drawer, floored at 45% — cards reflow to the
+            // reduced width live (no animation code here: the open/close
+            // spring flows through drawerProgress, and the interactive
+            // drag feeds it per-frame by design).
+            let mainWidth = max(geo.size.width - drawerWidth * progress,
+                                geo.size.width * 0.45)
             ZStack(alignment: .leading) {
                 // MAIN PAGE — the base layer: compact always lands here.
                 // (A NavigationStack hosts it so the toolbar — import
                 // buttons, the drawer opener — keeps rendering outside of
-                // NavigationSplitView.)
+                // NavigationSplitView.) Pinned to the TRAILING edge so its
+                // right side always stays flush with the canvas: at full
+                // width the pin is a no-op, while open the page's left
+                // edge sits exactly beside the drawer — or, once the 45%
+                // floor binds (a 320pt drawer can't fit beside 45% of a
+                // 500pt pane), the panel overlaps the page's leading strip
+                // like a slide-over instead of squeezing cards into
+                // unreadable widths.
                 NavigationStack {
                     interactiveList
                         .navigationBarTitleDisplayMode(.inline)
                 }
-                .offset(x: progress * drawerWidth * 0.25)
+                .frame(width: mainWidth)
+                .frame(maxWidth: .infinity, alignment: .trailing)
                 .simultaneousGesture(openEdgeGesture(width: drawerWidth))
 
                 // Backdrop: dims with progress, tap closes. VO: an offset
