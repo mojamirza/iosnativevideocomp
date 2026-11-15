@@ -181,6 +181,20 @@ struct Preset: Identifiable, Codable, Hashable {
 
     static let builtIn: [Preset] = {
         var list = [
+            // DESTINATION presets FIRST — the mass-market trigger is "this
+            // file won't attach/send/upload". Generic TIERS, not platform
+            // names or limits (feature-research §9.3: per-app limits churn
+            // and brand names are trademark territory): each one is a size
+            // GUARANTEE the engine already delivers (bitrate solve →
+            // measure → ≤2 corrective passes → verify), with the existing
+            // per-row solved estimate and the "Target too small" gate
+            // covering lengths no rate can fit.
+            Preset(name: "Email · 25 MB", codec: .hevc, resolution: .keep,
+                   audioBitrateKbps: 96, targetSizeMB: 25),
+            Preset(name: "Chat · 100 MB", codec: .hevc, resolution: .keep,
+                   audioBitrateKbps: 128, targetSizeMB: 100),
+            Preset(name: "Upload · 500 MB", codec: .hevc, resolution: .keep,
+                   audioBitrateKbps: 128, targetSizeMB: 500),
             Preset(name: "High quality", codec: .hevc, resolution: .keep,
                    fixedBitrateMbps: 8, fpsCap: nil, audioBitrateKbps: 128),
             Preset(name: "Medium (720p)", codec: .hevc, resolution: .hd,
@@ -196,13 +210,28 @@ struct Preset: Identifiable, Codable, Hashable {
                    fixedBitrateMbps: 0.9, fpsCap: 15, audioBitrateKbps: 48,
                    audioChannels: 1),
         ]
-        list[0].id = stableID("builtin.high")
-        list[1].id = stableID("builtin.720p")
-        list[2].id = stableID("builtin.480p")
-        list[3].id = stableID("builtin.lecture-small")
-        list[4].id = stableID("builtin.lecture-sharp")
+        list[0].id = stableID("builtin.email-25")
+        list[1].id = stableID("builtin.chat-100")
+        list[2].id = stableID("builtin.upload-500")
+        list[3].id = stableID("builtin.high")
+        list[4].id = stableID("builtin.720p")
+        list[5].id = stableID("builtin.480p")
+        list[6].id = stableID("builtin.lecture-small")
+        list[7].id = stableID("builtin.lecture-sharp")
         return list
     }()
+
+    /// FALLBACK default (no last-used selection — fresh installs, a
+    /// Shortcut without a stored choice): the quality tier, deliberately
+    /// NOT a destination preset — "Email · 25 MB" now tops the list for
+    /// the send-a-file trigger, but a first run with no context must not
+    /// greet a long 4K clip with the "Target too small" gate. Keyed by the
+    /// FIXED stable id (never index/name — the catalog order changed when
+    /// the destination presets landed at the top).
+    static var defaultPreset: Preset {
+        builtIn.first { $0.id == defaultID } ?? builtIn[0]
+    }
+    private static let defaultID = stableID("builtin.high")
 
     private enum CodingKeys: String, CodingKey {
         case id, name, codec, resolution, fixedBitrateMbps,

@@ -1215,7 +1215,7 @@ struct SetupFlowView: View {
         customPresets.removeAll { $0.id == preset.id }
         PresetStore.saveCustom(customPresets)
         if selectedPreset?.id == preset.id {
-            selectedPreset = Preset.builtIn[0]
+            selectedPreset = Preset.defaultPreset
             PresetStore.setLastUsedPreset(selectedPreset!.id)
         }
     }
@@ -1245,7 +1245,7 @@ struct SetupFlowView: View {
         }
         selectedPreset = {
             let last = PresetStore.lastUsedPresetID()
-            return availablePresets.first { $0.id == last } ?? Preset.builtIn[0]
+            return availablePresets.first { $0.id == last } ?? Preset.defaultPreset
         }()
         // PARALLEL PROBES: a batch of N videos previously probed one-by-one
         // (N × asset open + parse before the sheet became usable). A bounded
