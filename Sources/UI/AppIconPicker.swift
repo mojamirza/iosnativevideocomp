@@ -30,7 +30,7 @@ enum AppIconCatalog {
         Choice(id: "AppIcon-Snow",       name: "Snow",     thumb: "IconThumb-Snow",     dark: false),
         Choice(id: "AppIcon-Sunset",     name: "Sunset",   thumb: "IconThumb-Sunset",   dark: false),
         Choice(id: "AppIcon-Violet",     name: "Violet",   thumb: "IconThumb-Violet",   dark: false),
-        Choice(id: "AppIcon-Red",        name: "Red",      thumb: "IconThumb-Red",      dark: false),
+        Choice(id: "AppIcon-Red",        name: "Lava",     thumb: "IconThumb-Red",      dark: false),
         Choice(id: "AppIcon-Emerald",    name: "Emerald",  thumb: "IconThumb-Emerald",  dark: false),
         Choice(id: "AppIcon-Midnight",   name: "Midnight", thumb: "IconThumb-Midnight", dark: true),
         Choice(id: "AppIcon-Graphite",   name: "Graphite", thumb: "IconThumb-Graphite", dark: true),
