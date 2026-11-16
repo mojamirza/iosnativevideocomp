@@ -6,30 +6,22 @@
         {
           "glass" : false,
           "image-name" : "VidCompress-sunset.png",
+          "image-name-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "VidCompress-sunset-dark.png"
+            }
+          ],
           "name" : "VidCompress-sunset",
           "position" : {
             "scale" : 0.5,
-            "translation-in-points" : [
-              0,
-              0
-            ]
+            "translation-in-points" : [0, 0]
           }
         }
       ],
-      "shadow" : {
-        "kind" : "none",
-        "opacity" : 0
-      },
-      "translucency" : {
-        "enabled" : false,
-        "value" : 0
-      }
+      "shadow" : { "kind" : "none", "opacity" : 0 },
+      "translucency" : { "enabled" : false, "value" : 0 }
     }
   ],
-  "supported-platforms" : {
-    "circles" : [
-      "watchOS"
-    ],
-    "squares" : "shared"
-  }
+  "supported-platforms" : { "circles" : ["watchOS"], "squares" : "shared" }
 }

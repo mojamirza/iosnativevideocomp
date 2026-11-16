@@ -1625,7 +1625,7 @@ private struct AboutSettingsSheet: View {
                 } header: {
                     Text("App icon")
                 } footer: {
-                    Text("Tap an icon to switch — iPadOS confirms the change with its own alert. Every icon is layered: dark mode and tinted or clear Home Screens adapt it automatically.")
+                    Text("Tap an icon to switch — iPadOS confirms the change with its own alert. Every icon is layered with its own dark artwork: dark mode and tinted or clear Home Screens adapt it automatically, and you can pick a different color any time.")
                 }
                 Section("Privacy") {
                     // Strip-all makes the date toggle inert (it overrides it)

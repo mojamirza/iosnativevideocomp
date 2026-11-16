@@ -30,6 +30,7 @@ targets:
       - path: Icons/AppIcon-Snow.icon
       - path: Icons/AppIcon-Sunset.icon
       - path: Icons/AppIcon-Violet.icon
+      - path: Icons/AppIcon-Red.icon
       - path: Icons/AppIcon-Emerald.icon
       - path: Icons/AppIcon-Midnight.icon
       - path: Icons/AppIcon-Graphite.icon

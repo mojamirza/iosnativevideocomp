@@ -4,13 +4,14 @@ import UIKit
 /// APP ICON PICKER — alternate-icons plumbing plus the About & Settings
 /// section. Every variant ships as a LAYERED Icon Composer `.icon` (the
 /// user-authored packages, wired as target RESOURCES in Icons/ — the
-/// IceCubesApp/Meshtastic pattern; iPadOS 26
-/// applies the dark / tinted / clear Home Screen appearances to them
-/// AUTOMATICALLY — no per-appearance switching code exists or is needed.
-/// The picker's remaining job is choosing the COLOR variant (the
-/// system-side automatic switch can't know you'd rather look at sunset
-/// than ocean); the system still confirms every manual swap with its own
-/// unsuppressible alert, which the picker never tries to hide.
+/// IceCubesApp/Meshtastic pattern). Each package carries a DARK
+/// APPEARANCE layer (image-name-specializations: the user exported a
+/// dark artwork for every icon), so iPadOS swaps the artwork itself in
+/// dark mode — automatic, no code. The MANUAL picker stays fully
+/// available alongside that (user request: keep the option to choose a
+/// light-styled icon while in dark mode) — the picker selects the COLOR
+/// variant whenever the user wants, and the system still confirms every
+/// manual swap with its own unsuppressible alert.
 enum AppIconCatalog {
     struct Choice: Identifiable {
         /// The asset-catalog icon set name; `nil` = the primary icon.
@@ -29,6 +30,7 @@ enum AppIconCatalog {
         Choice(id: "AppIcon-Snow",       name: "Snow",     thumb: "IconThumb-Snow",     dark: false),
         Choice(id: "AppIcon-Sunset",     name: "Sunset",   thumb: "IconThumb-Sunset",   dark: false),
         Choice(id: "AppIcon-Violet",     name: "Violet",   thumb: "IconThumb-Violet",   dark: false),
+        Choice(id: "AppIcon-Red",        name: "Red",      thumb: "IconThumb-Red",      dark: false),
         Choice(id: "AppIcon-Emerald",    name: "Emerald",  thumb: "IconThumb-Emerald",  dark: false),
         Choice(id: "AppIcon-Midnight",   name: "Midnight", thumb: "IconThumb-Midnight", dark: true),
         Choice(id: "AppIcon-Graphite",   name: "Graphite", thumb: "IconThumb-Graphite", dark: true),

@@ -1,0 +1,27 @@
+{
+  "fill" : "automatic",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "VidCompress-red.png",
+          "image-name-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "VidCompress-red-dark.png"
+            }
+          ],
+          "name" : "VidCompress-red",
+          "position" : {
+            "scale" : 0.5,
+            "translation-in-points" : [0, 0]
+          }
+        }
+      ],
+      "shadow" : { "kind" : "none", "opacity" : 0 },
+      "translucency" : { "enabled" : false, "value" : 0 }
+    }
+  ],
+  "supported-platforms" : { "circles" : ["watchOS"], "squares" : "shared" }
+}
