@@ -197,6 +197,17 @@ struct RootView: View {
                 // there is actual overlap, dims it, closes on tap. VO: an
                 // offset never removes a view from the accessibility tree
                 // (U2 device report) — hidden whenever not settled open.
+                // N1: the ZStack slot is LEADING-aligned, but the covered
+                // region starts at the PAGE's leading edge (canvas −
+                // mainWidth) — with the 45% floor binding (narrow Split
+                // View panes, windowed mode) that offset is real and the
+                // unshifted strip sat entirely under the panel: dim
+                // invisible, tap-to-close dead, S12 drops unreachable.
+                // Shifted by exactly that offset, the strip's trailing
+                // edge lands on the drawer's trailing edge
+                // (canvas − mainWidth + overlap = drawerWidth·progress);
+                // in the pure side-by-side and Reduce Motion regimes the
+                // offset is zero, so those behaviors are unchanged.
                 if overlap > 0.5 {
                     Color.black.opacity(0.35)
                         .frame(width: overlap)
@@ -211,6 +222,11 @@ struct RootView: View {
                                 isTargeted: $dropActive,
                                 perform: handleDrop)
                         .accessibilityHidden(!sidebarOpen)
+                        // N1: the shift goes OVER the whole interactive
+                        // stack (outermost transform) — hit-testing is
+                        // inverted through it, so the tap and the drop
+                        // register exactly where the dim renders.
+                        .offset(x: canvas - mainWidth)
                 }
 
                 // SIDEBAR drawer panel — FLOATING CHROME: Liquid Glass on
