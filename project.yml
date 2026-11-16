@@ -14,6 +14,25 @@ targets:
       # resources phase automatically). A `resources:` key is silently
       # ignored — it cost us the app icon in every previous build.
       - path: Assets.xcassets
+      # LAYERED ICONS (Icon Composer .icon packages): xcodegen maps the
+      # .icon extension to the RESOURCES phase (FileType.swift, PR #1600)
+      # and Xcode 26 passes each .icon document to actool as an INPUT —
+      # the mechanism behind --app-icon AppIcon resolving them. Living
+      # INSIDE the asset catalog does NOT work on iOS (actool: "None of
+      # the input catalogs contained a matching ... icon set named
+      # AppIcon") and appiconset slots only accept rasters — both were
+      # proven by red CI. This resources-based wiring is the pattern
+      # shipping in IceCubesApp and Meshtastic-Apple (xcodegen, iOS).
+      # Document names MUST match ASSETCATALOG_COMPILER_APPICON_NAME /
+      # the picker's setAlternateIconName names below.
+      - path: Icons/AppIcon.icon
+      - path: Icons/AppIcon-Sky.icon
+      - path: Icons/AppIcon-Snow.icon
+      - path: Icons/AppIcon-Sunset.icon
+      - path: Icons/AppIcon-Violet.icon
+      - path: Icons/AppIcon-Emerald.icon
+      - path: Icons/AppIcon-Midnight.icon
+      - path: Icons/AppIcon-Graphite.icon
     info:
       path: Support/Info.plist
       properties:
@@ -52,11 +71,15 @@ targets:
         PRODUCT_NAME: VidCompress
         PRODUCT_BUNDLE_IDENTIFIER: com.example.vidcompress
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        # ALTERNATE ICONS: actool compiles these icon sets and injects
-        # CFBundleAlternateIcons into the built Info.plist — the in-app
-        # picker (About & Settings) switches via
-        # UIApplication.setAlternateIconName. Space-delimited names.
-        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-Sky AppIcon-Snow AppIcon-Sunset AppIcon-Violet AppIcon-Emerald AppIcon-Midnight AppIcon-Graphite"
+        # ALTERNATE ICONS, the IceCubesApp/Meshtastic pattern:
+        # INCLUDE_ALL_APPICON_ASSETS=YES makes actool compile every .icon
+        # document in the build (primary via APPICON_NAME, the rest as
+        # alternates) and inject CFBundleAlternateIcons into the built
+        # Info.plist for UIApplication.setAlternateIconName. Do NOT set
+        # ALTERNATE_APPICON_NAMES here: it makes actool search the
+        # CATALOGS for appiconsets with those names, which no longer
+        # exist (red CI).
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
         MARKETING_VERSION: "1.8.5"
         CURRENT_PROJECT_VERSION: "31"
         SWIFT_VERSION: "5.10"

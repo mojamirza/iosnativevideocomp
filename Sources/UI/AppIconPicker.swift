@@ -3,7 +3,8 @@ import UIKit
 
 /// APP ICON PICKER — alternate-icons plumbing plus the About & Settings
 /// section. Every variant ships as a LAYERED Icon Composer `.icon` (the
-/// user-authored packages, wired into the appiconsets): iPadOS 26
+/// user-authored packages, wired as target RESOURCES in Icons/ — the
+/// IceCubesApp/Meshtastic pattern; iPadOS 26
 /// applies the dark / tinted / clear Home Screen appearances to them
 /// AUTOMATICALLY — no per-appearance switching code exists or is needed.
 /// The picker's remaining job is choosing the COLOR variant (the
