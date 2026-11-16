@@ -12,6 +12,10 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var hSizeClass
+    /// S8: Reduce Motion — the drawer then animates FADE-ONLY (no spatial
+    /// slide, no card reflow); direct-manipulation drags still follow the
+    /// finger, but open/close settles fade in place.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var showingSetup = false
     @State private var importedVideos: [PickedVideo] = []
@@ -27,8 +31,14 @@ struct RootView: View {
     @State private var confirmingClearFinished = false
     /// OWNED split-view column visibility (regular widths): selection mode
     /// collapses to detail-only so the floating sidebar can never overlay
-    /// the selection toolbar; exiting restores the automatic layout.
+    /// the selection toolbar; exiting restores the SNAPSHOT the user had
+    /// (S2 — one @State cannot serve app-forced and user-chosen values,
+    /// so entry captures, exit restores exactly).
     @State private var regularColumns: NavigationSplitViewVisibility = .automatic
+    /// S2: the user's own column visibility, captured at selection entry
+    /// and restored verbatim at exit — a manual collapse before Select
+    /// survives the mode instead of being force-reopened.
+    @State private var preSelectionColumns: NavigationSplitViewVisibility = .automatic
     /// DURABLE SETUP SESSION: owned HERE — outside the compact/regular body
     /// branches — so the shell swap across the size-class threshold (which
     /// tears the setup sheet's subtree down and re-presents it with
@@ -49,10 +59,17 @@ struct RootView: View {
     // did not push the detail on iPadOS 26), so compact is owned by this
     // drawer; regular widths keep the side-by-side split view.
     @State private var sidebarOpen = false
-    /// Live drag position 0…1 (nil while not dragging).
+    /// Live drag position (rubber-banded slightly past 0…1 during a drag,
+    /// S12; nil while not dragging).
     @State private var dragProgress: CGFloat?
     /// Progress when the current drag began.
     @State private var dragAnchor: CGFloat?
+    /// S6/S11: the compact canvas width, observed so chrome-hiding and the
+    /// VoiceOver modality can be scoped to the regime where the drawer
+    /// panel REALLY covers the page (narrow panes) instead of every open.
+    @State private var compactCanvasWidth: CGFloat = 0
+    /// S12: one tick per GESTURE-driven snap — drives the snap haptic.
+    @State private var snapTick = 0
 
     /// IN-FLIGHT IMPORT GATE: Photos (onChange), Files (fileImporter) and
     /// drag-and-drop each run independently — with a multi-GB copy in
@@ -69,20 +86,50 @@ struct RootView: View {
     private var importBusy: Bool { importStep != nil || isImporting }
 
     var body: some View {
-        if hSizeClass == .compact {
-            compactShell
-        } else {
-            regularShell
+        Group {
+            if hSizeClass == .compact {
+                compactShell
+            } else {
+                regularShell
+            }
         }
+        // S1: NavigationSplitView installs its OWN sidebar toggle in the
+        // detail's leading toolbar on iPadOS 26 — tapping it writes through
+        // the binding and slides the floating sidebar back over the
+        // selection bottom bar (and over the leading Cancel). Fighting the
+        // user by forcing .detailOnly back would pin them in a mode they
+        // just tried to leave; the HONEST response is to auto-exit
+        // selection the moment the premise "sidebar closed while
+        // selecting" no longer holds.
+        .onChange(of: regularColumns) { _, newValue in
+            guard coordinator.selectionMode,
+                  newValue != .detailOnly,
+                  hSizeClass != .compact else { return }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                coordinator.exitSelectionMode()
+            }
+        }
+        // S3/S9: drawer state (sidebarOpen, dragProgress, dragAnchor) is a
+        // COMPACT-shell concept and regularColumns must not carry a stale
+        // .detailOnly across the threshold — exit-selection in compact used
+        // to skip the restore and regular remounted sidebar-less.
+        .onChange(of: hSizeClass) { _, _ in shellSwapReset() }
+        // S12: snap haptic — fires only on gesture-driven snaps (snapTick).
+        .sensoryFeedback(.impact(weight: .light), trigger: snapTick)
     }
 
     // MARK: shells
 
     /// Regular/fullscreen widths: the classic side-by-side split view, with
-    /// OWNED column visibility (selection mode drives it).
+    /// OWNED column visibility (selection mode drives it). S4: on iOS 26 the
+    /// sidebar column is a floating glass panel — an opaque appScreen canvas
+    /// inside it painted a hard black slab over the system material (and
+    /// rendered differently between fullscreen and Split View), so the
+    /// column gets the same clear-canvas treatment as the drawer; iOS 17–25
+    /// keeps the pinned opaque canvas (the V3 gray-canvas lesson).
     private var regularShell: some View {
         NavigationSplitView(columnVisibility: $regularColumns) {
-            sidebarList()
+            sidebarList(clearCanvas: drawerUsesGlass)
         } detail: {
             interactiveList
         }
@@ -92,8 +139,12 @@ struct RootView: View {
     /// that shares the canvas.
     private var compactShell: some View {
         GeometryReader { geo in
-            let drawerWidth = min(320, geo.size.width * 0.82)
+            let canvas = geo.size.width
+            let drawerWidth = min(320, canvas * 0.82)
             let progress = drawerProgress
+            // S8: Reduce Motion — no spatial slide and no card reflow; the
+            // panel fades in place over the full-width page (opacity-only).
+            let slideFree = reduceMotion
             // SIDE-BY-SIDE OPEN (user request: "when you open the side menu
             // the card's size should change so the side menu fits alongside
             // the main page"): the main page's width is the canvas minus
@@ -101,8 +152,23 @@ struct RootView: View {
             // reduced width live (no animation code here: the open/close
             // spring flows through drawerProgress, and the interactive
             // drag feeds it per-frame by design).
-            let mainWidth = max(geo.size.width - drawerWidth * progress,
-                                geo.size.width * 0.45)
+            let mainWidth = slideFree
+                ? canvas
+                : max(canvas - drawerWidth * progress,
+                      canvas * 0.45)
+            // S6: the OVERLAP STRIP — how much of the revealed drawer really
+            // sits ON the page. In the pure side-by-side phase the page's
+            // leading edge coincides with the drawer's trailing edge, so
+            // this is ZERO and there is no backdrop at all: both columns
+            // fully interactive and undimmed, like the system's own split
+            // view. Only where the 45% floor binds (narrow Split View panes
+            // and windowed mode) does the panel overlap the page's leading
+            // strip, and only THAT strip dims and intercepts taps.
+            let overlap = max(0, drawerWidth * progress - (canvas - mainWidth))
+            // S6/S12: the page is VoiceOver-modal only while the panel
+            // really covers it — otherwise VO could traverse the dimmed
+            // page behind the panel.
+            let covered = overlap > 24
             ZStack(alignment: .leading) {
                 // MAIN PAGE — the base layer: compact always lands here.
                 // (A NavigationStack hosts it so the toolbar — import
@@ -122,17 +188,30 @@ struct RootView: View {
                 .frame(width: mainWidth)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .simultaneousGesture(openEdgeGesture(width: drawerWidth))
+                .accessibilityHidden(covered)
 
-                // Backdrop: dims with progress, tap closes. VO: an offset
-                // never removes a view from the accessibility tree — with
-                // the drawer closed this invisible layer stayed focusable
-                // (U2 device report), so it is hidden whenever it isn't
-                // actually open (focusable as the close affordance then).
-                Color.black.opacity(0.35 * Double(progress))
-                    .ignoresSafeArea()
-                    .allowsHitTesting(progress > 0.02)
-                    .onTapGesture { closeDrawer() }
-                    .accessibilityHidden(!sidebarOpen)
+                // Backdrop — SCOPED TO THE OVERLAP STRIP (S6): the old
+                // full-canvas layer dimmed and hit-blocked the ENTIRE page
+                // whenever the drawer was open, which turned side-by-side
+                // into slide-over behavior. The strip exists only while
+                // there is actual overlap, dims it, closes on tap. VO: an
+                // offset never removes a view from the accessibility tree
+                // (U2 device report) — hidden whenever not settled open.
+                if overlap > 0.5 {
+                    Color.black.opacity(0.35)
+                        .frame(width: overlap)
+                        .frame(maxHeight: .infinity)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { closeDrawer() }
+                        // S12: a drop on the covered strip used to fail
+                        // silently (the backdrop ate it) — the strip
+                        // accepts the same movie drop as the page.
+                        .onDrop(of: [UTType.movie],
+                                isTargeted: $dropActive,
+                                perform: handleDrop)
+                        .accessibilityHidden(!sidebarOpen)
+                }
 
                 // SIDEBAR drawer panel — FLOATING CHROME: Liquid Glass on
                 // iOS 26+ (the panel floats over the dimmed content, glass
@@ -156,26 +235,40 @@ struct RootView: View {
                     }
                 }
                 // DISTINCT EDGE (user report: the drawer's boundary melted
-                // into the main page): a hairline separator on the panel's
-                // only visible (trailing) edge — adaptive (light line on
-                // the dark canvas, dark on light), fading in with progress
-                // so it never flashes during the slide.
+                // into the main page) — S13: only on the OPAQUE pre-26
+                // panel. iOS 26 glass renders its own edge/highlight; the
+                // hairline stacked on top of it read as a doubled, dirty
+                // edge on device.
                 .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.22))
-                        .frame(width: 1)
-                        .opacity(Double(progress))
+                    if !drawerUsesGlass {
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.22))
+                            .frame(width: 1)
+                            .opacity(Double(progress))
+                    }
                 }
-                .offset(x: drawerWidth * (progress - 1))
+                // S8: fade-only under Reduce Motion — the panel never
+                // translates (offset pinned at 0); opacity follows the drag
+                // or the settle animation. A fully transparent closed panel
+                // must not eat taps on the page's leading strip.
+                .offset(x: slideFree ? 0 : drawerWidth * (progress - 1))
+                .opacity(slideFree ? Double(progress) : 1)
+                .allowsHitTesting(!slideFree || progress > 0.02)
                 // Deeper shadow than the glass round (eb70e76): the drop
                 // must separate the panel from the content UNDER it, not
-                // just decorate it.
+                // just decorate it. This is now the ONE custom edge cue on
+                // glass (the hairline above is glass-only-suppressed).
                 .shadow(color: .black.opacity(0.4 * Double(progress)), radius: 24, x: 6)
                 .gesture(closeGesture(width: drawerWidth))
                 // VO: same U2 rule — while closed the panel's rows
                 // ("Manage presets…", "About & Settings"), header button
                 // and all were focusable while visually absent.
                 .accessibilityHidden(!sidebarOpen)
+            }
+            // S6/S11: observe the canvas so mainChromeHiddenByDrawer can be
+            // scoped to real overlap (initial: true seeds the first layout).
+            .onChange(of: geo.size.width, initial: true) { _, width in
+                compactCanvasWidth = width
             }
         }
     }
@@ -199,12 +292,13 @@ struct RootView: View {
     }
 
     /// The shared sidebar rows — the regular split-view column AND the
-    /// compact drawer panel both render this. The SPLIT-VIEW column keeps
-    /// the pinned screen background (the List's own grouped background is
-    /// the gray that made the app look different between fullscreen and
-    /// Split View in dark mode); the DRAWER passes `clearCanvas: true` on
-    /// iOS 26 so its Liquid Glass panel shows THROUGH the list (an opaque
-    /// canvas here would sit ON the glass and hide it completely).
+    /// compact drawer panel both render this. S4: BOTH get `clearCanvas:
+    /// true` on iOS 26 — the split-view column is a floating glass panel
+    /// there (an opaque canvas painted a hard black slab over the system
+    /// material) and the drawer's Liquid Glass panel must show through the
+    /// list. iOS 17–25 keeps the pinned opaque screen color everywhere
+    /// (the gray-canvas lesson: the List's own grouped background made the
+    /// app look different between fullscreen and Split View in dark mode).
     private func sidebarList(clearCanvas: Bool = false) -> some View {
         List {
             SidebarSavingsSection()
@@ -243,28 +337,55 @@ struct RootView: View {
         return false
     }
 
+    /// S5/S8: ONE drawer animation — the tuned spring normally; under
+    /// Reduce Motion a short non-spring fade (the drawer's slideFree layout
+    /// makes that opacity-only).
+    private var drawerAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.2)
+                     : .spring(response: 0.4, dampingFraction: 0.85)
+    }
+
+    /// S12: the live drag progress — already rubber-banded by the gestures,
+    /// so no hard re-clamp here (the old min/max ate the overshoot).
     private var drawerProgress: CGFloat {
-        if let dragProgress { return min(max(dragProgress, 0), 1) }
+        if let dragProgress { return dragProgress }
         return sidebarOpen ? 1 : 0
+    }
+
+    /// S12: soft rubber-band resistance past the ends — the fraction keeps
+    /// moving past 0/1 under the finger but with growing resistance (damped
+    /// asymptote at ±55% of a drawer-width overshoot) instead of the old
+    /// hard clamp.
+    private func banded(_ fraction: CGFloat) -> CGFloat {
+        guard fraction < 0 || fraction > 1 else { return fraction }
+        let over = fraction < 0 ? fraction : fraction - 1
+        let soft = over / (1 + abs(over)) * 0.55
+        return fraction < 0 ? soft : 1 + soft
     }
 
     /// Leading-edge swipe (first 16pt, horizontal-dominant) opens the
     /// drawer — the main page's vertical scroll and the rows' swipe-to-
     /// delete are untouched (they start further in / dominate vertically).
     /// ACTIVATION IS LATCHED in onChanged: dragProgress is only ever set
-    /// after the edge + horizontal-dominance guard passes, so onEnded can
-    /// tell a real drawer drag from any other gesture that merely passed
-    /// minimumDistance — a fast vertical scroll fling starting inside the
-    /// edge strip never latches and must never snap the drawer (device
-    /// report: a slightly-diagonal fling's velocity.width > 320 opened the
-    /// drawer mid-scroll through the old nil-fallback).
+    /// after the edge + horizontal-dominance guard passes AND the drag has
+    /// real travel (S10: a micro-swipe in the edge strip — the row-swipe
+    /// race — no longer visibly moves the drawer on its first pixels; full
+    /// disambiguation from the rows' own leading swipe actions needs
+    /// device evidence). onEnded can tell a real drawer drag from any
+    /// other gesture that merely passed minimumDistance — a fast vertical
+    /// scroll fling starting inside the edge strip never latches and must
+    /// never snap the drawer (device report: a slightly-diagonal fling's
+    /// velocity.width > 320 opened the drawer mid-scroll through the old
+    /// nil-fallback).
     private func openEdgeGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { v in
                 guard v.startLocation.x < 16,
                       abs(v.translation.width) > abs(v.translation.height) else { return }
                 if dragAnchor == nil { dragAnchor = sidebarOpen ? 1 : 0 }
-                dragProgress = (dragAnchor ?? 0) + v.translation.width / width
+                let fraction = v.translation.width / width
+                guard abs(fraction) > 0.04 else { return }
+                dragProgress = banded((dragAnchor ?? 0) + fraction)
             }
             .onEnded { v in
                 // Non-activated drags (never latched) are IGNORED — no
@@ -283,7 +404,9 @@ struct RootView: View {
             .onChanged { v in
                 guard abs(v.translation.width) > abs(v.translation.height) else { return }
                 if dragAnchor == nil { dragAnchor = sidebarOpen ? 1 : 0 }
-                dragProgress = (dragAnchor ?? 1) + v.translation.width / width
+                let fraction = v.translation.width / width
+                guard abs(fraction) > 0.04 else { return }
+                dragProgress = banded((dragAnchor ?? 1) + fraction)
             }
             .onEnded { v in
                 guard dragProgress != nil else { return }
@@ -293,17 +416,71 @@ struct RootView: View {
     }
 
     private func snapDrawer(finalProgress: CGFloat, velocity: CGFloat) {
-        let open = finalProgress > 0.5 || velocity > 320
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        // S7: flick physics in BOTH directions — the old rule
+        // (progress > 0.5 || velocity > 320) could only ever OPEN on
+        // velocity: a fast leftward flick that left the drawer at 0.55
+        // stayed open against the gesture's obvious intent.
+        let open: Bool
+        if velocity > 320 {
+            open = true
+        } else if velocity < -320 {
+            open = false
+        } else {
+            open = finalProgress > 0.5
+        }
+        // S12: velocity-aware settle — fast flicks land quickly, slow
+        // drags keep the relaxed spring. Reduce Motion: the fade.
+        let speed = abs(velocity)
+        withAnimation(reduceMotion
+            ? drawerAnimation
+            : .spring(response: speed > 900 ? 0.28 : 0.4,
+                      dampingFraction: 0.85)) {
             sidebarOpen = open
         }
+        snapTick += 1
         dragAnchor = nil
         dragProgress = nil
     }
 
     private func closeDrawer() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(drawerAnimation) {
             sidebarOpen = false
+        }
+    }
+
+    /// S1/S2/S3: selection mode's column choreography, split out of the
+    /// toolbar button so the rules live in one place.
+    private func enterSelectionColumns() {
+        guard hSizeClass != .compact else { return }
+        // S2: snapshot the USER's visibility verbatim.
+        preSelectionColumns = regularColumns
+        withAnimation(drawerAnimation) {
+            regularColumns = .detailOnly
+        }
+    }
+
+    private func restoreColumnsAfterSelection() {
+        // S3: deliberately NOT gated on the current size class — exiting
+        // while compact must still restore, or a later crossing back to
+        // regular remounts a stale .detailOnly with the sidebar gone.
+        withAnimation(drawerAnimation) {
+            regularColumns = preSelectionColumns
+        }
+    }
+
+    /// S3/S9: the shell swap across the compact↔regular threshold. Drawer
+    /// state belongs to the compact shell — drop it instantly (the shells
+    /// rebuild anyway; no animation survives the swap). And a selection
+    /// entered in compact that crosses INTO regular applies the same
+    /// collapse-to-detail-only premise as selection entry.
+    private func shellSwapReset() {
+        dragAnchor = nil
+        dragProgress = nil
+        sidebarOpen = false
+        if hSizeClass != .compact, coordinator.selectionMode,
+           regularColumns != .detailOnly {
+            preSelectionColumns = .automatic
+            regularColumns = .detailOnly
         }
     }
 
@@ -759,14 +936,24 @@ struct RootView: View {
         .padding(.bottom, 8)
     }
 
-    /// COMPACT: while the drawer is open, the main page's toolbar chrome is
-    /// hidden. iPadOS 26 hosts toolbars in a floating system layer ABOVE
-    /// the drawer's ZStack — the selection-mode bottom bar (Select all /
-    /// Save / Delete) and the import buttons would otherwise stay visible
-    /// and clash with the drawer (device report: the select-all button
-    /// “fell behind the side menu”). They return when the drawer closes.
+    /// COMPACT: the main page's toolbar chrome hides ONLY while the drawer
+    /// really covers the page's leading strip (S6/S11). In the pure
+    /// side-by-side phase the system toolbar floats above the PAGE —
+    /// trailing of the drawer panel — and nothing clashes, so chrome keeps
+    /// rendering (and the structural toolbar pop of the old
+    /// every-open hiding happens far less often; a toolbar item insertion
+    /// cannot be cross-faded on iPadOS 26, that residual pop is a platform
+    /// limit). Narrow panes, where the 45% floor binds, get the original
+    /// behavior (device report: the select-all button "fell behind the
+    /// side menu").
     private var mainChromeHiddenByDrawer: Bool {
-        hSizeClass == .compact && sidebarOpen
+        guard hSizeClass == .compact, compactCanvasWidth > 0 else { return false }
+        let drawerWidth = min(320, compactCanvasWidth * 0.82)
+        // overlap = drawerWidth·p − (canvas − mainWidth); with the floor,
+        // canvas − mainWidth caps at 0.55·canvas → this closed form.
+        let overlap = max(0, drawerWidth * drawerProgress
+                              - compactCanvasWidth * 0.55)
+        return overlap > 24
     }
 
     // MARK: body parts — extracted from `body` so the total expression stays
@@ -784,7 +971,7 @@ struct RootView: View {
                 // addition to the leading-edge swipe.
                 if hSizeClass == .compact {
                     Button {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        withAnimation(drawerAnimation) {
                             sidebarOpen = true
                         }
                     } label: {
@@ -798,7 +985,7 @@ struct RootView: View {
                 // floating sidebar slid over the selection bottom bar's
                 // leading area on device (the "Select all fell behind" bug
                 // is structurally impossible then: trailing-anchored items
-                // only, sidebar closed). Exiting selects restores it.
+                // only, sidebar closed). Exiting restores the SNAPSHOT.
                 if !coordinator.jobs.isEmpty {
                     Button(coordinator.selectionMode ? "Cancel" : "Select") {
                         if coordinator.selectionMode {
@@ -808,21 +995,13 @@ struct RootView: View {
                                                   dampingFraction: 0.85)) {
                                 coordinator.exitSelectionMode()
                             }
-                            if hSizeClass != .compact {
-                                withAnimation {
-                                    regularColumns = .automatic
-                                }
-                            }
+                            restoreColumnsAfterSelection()
                         } else {
                             withAnimation(.spring(response: 0.25,
                                                   dampingFraction: 0.85)) {
                                 coordinator.enterSelectionMode()
                             }
-                            if hSizeClass != .compact {
-                                withAnimation {
-                                    regularColumns = .detailOnly
-                                }
-                            }
+                            enterSelectionColumns()
                         }
                     }
                 }
