@@ -1753,6 +1753,29 @@ final class JobCoordinator: ObservableObject {
         guard let idx = jobs.firstIndex(where: { $0.id == jobID }) else { return }
         let job = jobs[idx]
 
+        // A rewrite REPLACES the record (remove + fresh insert below) —
+        // read the old row's auto-resume bound FIRST so it survives: the
+        // flag marks "this encode already consumed its ONE automatic
+        // relaunch resume" (set by loadHistory), and every rewrite path —
+        // reorder re-timing, retry, the run's own state writes — must
+        // carry it forward or a crashed encode earns a SECOND auto-resume
+        // per rewrite (the loop the field exists to prevent gets an extra
+        // iteration). The demote path in loadHistory is what clears it.
+        // TERMINAL predecessor clears it: a retry of a failed row is a
+        // fresh user-initiated attempt with its own resume budget (and a
+        // demoted row already had the flag reset by the demote itself) —
+        // only the live run lifecycle (queued/in-flight → in-flight or
+        // terminal) carries the bookkeeping across.
+        var priorAutoResumed = false
+        if let previous = try? context.fetch(
+            FetchDescriptor<JobRecord>(predicate: #Predicate { $0.jobID == jobID })
+        ), let old = previous.first {
+            let terminal = old.stateRaw == JobState.done.rawValue
+                || old.stateRaw == JobState.failed.rawValue
+                || old.stateRaw == JobState.cancelled.rawValue
+            priorAutoResumed = terminal ? false : old.autoResumed
+        }
+
         // Remove an older record for retries.
         removeRecord(jobID: jobID)
 
@@ -1790,7 +1813,8 @@ final class JobCoordinator: ObservableObject {
             posterData: job.posterData,
             rotationDegrees: job.rotationDegrees,
             trimStart: job.trimStart,
-            trimEnd: job.trimEnd
+            trimEnd: job.trimEnd,
+            autoResumed: priorAutoResumed
         )
         context.insert(record)
         do {
