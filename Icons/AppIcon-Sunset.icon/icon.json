@@ -5,8 +5,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "VidCompress-sunset.png",
           "image-name-specializations" : [
+              {
+                "value" : "VidCompress-sunset.png"
+              },
             {
               "appearance" : "dark",
               "value" : "VidCompress-sunset-dark.png"

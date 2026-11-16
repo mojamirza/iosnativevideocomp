@@ -5,8 +5,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "VidCompress-emerald.png",
           "image-name-specializations" : [
+              {
+                "value" : "VidCompress-emerald.png"
+              },
             {
               "appearance" : "dark",
               "value" : "VidCompress-emerald-dark.png"

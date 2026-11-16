@@ -5,8 +5,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "VidCompress-graphite.png",
           "image-name-specializations" : [
+              {
+                "value" : "VidCompress-graphite.png"
+              },
             {
               "appearance" : "dark",
               "value" : "VidCompress-graphite-dark.png"

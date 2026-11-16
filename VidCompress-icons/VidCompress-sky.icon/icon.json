@@ -5,8 +5,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "VidCompress-sky.png",
           "image-name-specializations" : [
+              {
+                "value" : "VidCompress-sky.png"
+              },
             {
               "appearance" : "dark",
               "value" : "VidCompress-sky-dark.png"

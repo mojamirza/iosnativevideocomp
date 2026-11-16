@@ -5,8 +5,10 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "VidCompress-ocean.png",
           "image-name-specializations" : [
+              {
+                "value" : "VidCompress-ocean.png"
+              },
             {
               "appearance" : "dark",
               "value" : "VidCompress-ocean-dark.png"
