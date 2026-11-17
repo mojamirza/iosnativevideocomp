@@ -309,10 +309,25 @@ enum IntegrityVerifier {
         }
         // 5c. PRIVACY SCRUB verification: no location metadata ever, and the
         //     creation date present when the scrub is keeping it.
+        //     N7: the location check inspects ALL container metadata
+        //     (.metadata, not just .commonMetadata) PLUS every track's
+        //     metadata, and matches the commonKey explicitly — the old
+        //     commonMetadata-only scan missed items whose identifier was
+        //     never populated (commonKeyLocation carried on the common key
+        //     alone) and never looked at track level: a pass by
+        //     construction. The date check below stays on commonMetadata —
+        //     commonKey items surface there by definition.
         do {
             let outMeta = (try? await outAsset.load(.commonMetadata)) ?? []
-            let hasLocation = outMeta.contains {
-                ($0.identifier?.rawValue ?? "").lowercased().contains("location")
+            var allMeta = (try? await outAsset.load(.metadata)) ?? []
+            if let tracks = try? await outAsset.load(.tracks) {
+                for t in tracks {
+                    allMeta += (try? await t.load(.commonMetadata)) ?? []
+                }
+            }
+            let hasLocation = allMeta.contains {
+                $0.commonKey == AVMetadataKey.commonKeyLocation
+                    || ($0.identifier?.rawValue ?? "").lowercased().contains("location")
             }
             if hasLocation {
                 items.append(ReportItem("privacy.location", "Location metadata present",

@@ -1175,6 +1175,13 @@ enum CompressionEngine {
             }
         }
         if pipesDone == nil {
+            // N6: a DEAD writer also lands here — its callbacks never fire
+            // and flags.error is never set, so the pipes stop making
+            // progress and the watchdog reads it as a stall. Report the
+            // writer's OWN error when it has failed, not the misleading
+            // "Encoding stalled".
+            let writerDied = writer.status == .failed
+            let writerMsg = writer.error?.localizedDescription
             // Wake the pipes through their own queues FIRST (flags.fail runs
             // every registered hook and the pipes unwind via their serial
             // queues) — tearing the writer down mid-append is undefined.
@@ -1184,6 +1191,10 @@ enum CompressionEngine {
             if writer.status == .writing { writer.cancelWriting() }
             if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
+            if writerDied {
+                throw CompressionError.writerFailed(
+                    writerMsg ?? "The writer failed during encoding.")
+            }
             throw CompressionError.writerFailed("Encoding stalled and was aborted.")
         }
 
