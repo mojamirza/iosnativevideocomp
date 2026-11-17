@@ -813,8 +813,8 @@ final class JobCoordinator: ObservableObject {
                 // multi-GB sources. Failure is silent — the compare UI
                 // just doesn't show; the encode result is unaffected.
                 let captured = await Task.detached {
-                    CompareFrames.capture(source: job.sourceURL,
-                                          output: promoted, plan: plan)
+                    await CompareFrames.capture(source: job.sourceURL,
+                                                output: promoted, plan: plan)
                 }.value
                 if let captured {
                     setJob(jobID) {

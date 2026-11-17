@@ -18,21 +18,23 @@ enum CompareFrames {
     /// sampled at 35% of the trimmed timeline: mid-scene beats t = 0
     /// (fades, black lead-ins, unstable first frames).
     /// nil when either frame fails — the compare UI simply doesn't show,
-    /// the encode result is never affected.
-    static func capture(source: URL, output: URL, plan: OptimizerPlan) -> (before: Data, after: Data)? {
+    /// the encode result is never affected. ASYNC: AVAssetImageGenerator's
+    /// `image(at:)` is the async-only replacement of the deprecated
+    /// copyCGImage — CI red on the sync call.
+    static func capture(source: URL, output: URL, plan: OptimizerPlan) async -> (before: Data, after: Data)? {
         let fraction = 0.35
         let duration = plan.duration > 0.5 ? plan.duration : plan.source.duration
         let srcTime = plan.trimStart + plan.source.startOffset + fraction * duration
         let outTime = fraction * duration
-        guard let before = frame(at: srcTime, from: source),
-              let after = frame(at: outTime, from: output) else { return nil }
+        guard let before = await frame(at: srcTime, from: source),
+              let after = await frame(at: outTime, from: output) else { return nil }
         return (before, after)
     }
 
     /// JPEG ≤1024px (the poster-normalization budget: ~200 KB, fine for
     /// external storage). appliesPreferredTrackTransform bakes rotation —
     /// the before/after pair is orientation-true like the player views.
-    private static func frame(at seconds: Double, from url: URL) -> Data? {
+    private static func frame(at seconds: Double, from url: URL) async -> Data? {
         let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 1024, height: 1024)
@@ -41,7 +43,7 @@ enum CompareFrames {
         gen.requestedTimeToleranceBefore = .zero
         gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
         let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
-        guard let (cgImage, _) = try? gen.image(at: time) else { return nil }
+        guard let (cgImage, _) = try? await gen.image(at: time) else { return nil }
         return UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.8)
     }
 }
