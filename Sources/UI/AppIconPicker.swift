@@ -82,7 +82,7 @@ struct AppIconPickerSection: View {
                         applyingIndex = nil
                     }
                 } label: {
-                    card(choice)
+                    card(choice, applying: applyingIndex, index: index)
                 }
                 .buttonStyle(.plain)
                 .disabled(applyingIndex != nil)
@@ -92,7 +92,7 @@ struct AppIconPickerSection: View {
         .onAppear { current = AppIconCatalog.currentID }
     }
 
-    private func card(_ choice: AppIconCatalog.Choice) -> some View {
+    private func card(_ choice: AppIconCatalog.Choice, applying: Int?, index: Int) -> some View {
         let selected = choice.id == current
         return VStack(spacing: 6) {
             Image(choice.thumb)
@@ -119,7 +119,7 @@ struct AppIconPickerSection: View {
                         .offset(x: 5, y: -5)
                     }
                 }
-                .opacity(applyingID != nil && applyingID != choice.id ? 0.45 : 1)
+                .opacity(applying != nil && applying != index ? 0.45 : 1)
                 .frame(width: 64, height: 64)
             Text(choice.name)
                 .font(.caption2)
