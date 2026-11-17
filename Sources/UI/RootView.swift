@@ -814,6 +814,10 @@ struct RootView: View {
 
                 let active = coordinator.activeJobs
                 let finished = coordinator.finishedJobs
+                // N9: the queued "#N" ordinal's explicit input (see
+                // JobRowView.queuedCount) — computed at the render level,
+                // where the @Published `jobs` tick guarantees freshness.
+                let queuedCount = coordinator.jobs.filter { $0.state == .queued }.count
 
                 if !active.isEmpty {
                     sectionHeader("In progress", icon: "hourglass", count: active.count)
@@ -829,7 +833,8 @@ struct RootView: View {
                         JobRowView(job: job, coordinator: coordinator,
                                    selectionActive: coordinator.selectionMode,
                                    isSelected: coordinator.selectedIDs.contains(job.id),
-                                   rowIndex: rowIndex)
+                                   rowIndex: rowIndex,
+                                   queuedCount: queuedCount)
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
@@ -856,7 +861,8 @@ struct RootView: View {
                         JobRowView(job: job, coordinator: coordinator,
                                    selectionActive: coordinator.selectionMode,
                                    isSelected: coordinator.selectedIDs.contains(job.id),
-                                   rowIndex: rowIndex)
+                                   rowIndex: rowIndex,
+                                   queuedCount: queuedCount)
                             .equatable()
                             .padding(.horizontal)
                             .padding(.vertical, 7)
@@ -1089,21 +1095,42 @@ struct RootView: View {
         Task {
             defer { isImporting = false }
             var picked: [PickedVideo] = []
+            var failed = 0
             var i = 0
             for provider in providers {
                 importStep = ImportStep(
                     total: providers.count, done: i,
                     current: provider.suggestedName ?? "dropped video")
-                guard let url = await ImportHelpers.urlFromDrop(provider) else { continue }
-                if let copy = await ImportHelpers.copyOffMain(url) {
+                // N8: a skipped provider must not skip the PROGRESS counter
+                // — the old `continue` paths left `i` behind, so the next
+                // item's card showed a stale "done" count (and a failed
+                // item was silently swallowed).
+                var copy: URL?
+                if let url = await ImportHelpers.urlFromDrop(provider) {
+                    copy = await ImportHelpers.copyOffMain(url)
+                }
+                if let copy {
                     let thumb = await Thumbnails.make(url: copy)
                     picked.append(PickedVideo(url: copy, thumbnail: thumb))
+                } else {
+                    failed += 1
                 }
                 i += 1
             }
             importStep = nil
             if picked.isEmpty {
                 importError = "The dropped videos could not be imported."
+            } else if failed > 0 {
+                importError = failed == 1
+                    ? "1 of \(providers.count) dropped videos couldn't be imported."
+                    : "\(failed) of \(providers.count) dropped videos couldn't be imported."
+                importedVideos = picked
+                // NEW import → fresh session (see the comment at the other
+                // import paths): the drop path matches pick/library, so a
+                // cancelled run of the same files also doesn't resurrect
+                // a stale session.
+                setupSession.reset(for: picked)
+                showingSetup = true
             } else {
                 importedVideos = picked
                 // NEW import → fresh session (see the comment at the other
@@ -1128,6 +1155,7 @@ struct RootView: View {
         isImporting = true
         defer { isImporting = false }
         var picked: [PickedVideo] = []
+        var failed = 0
         var i = 0
         for item in items {
             importStep = ImportStep(
@@ -1141,8 +1169,9 @@ struct RootView: View {
                 let thumb = await Thumbnails.make(url: url)
                 picked.append(PickedVideo(url: url, thumbnail: thumb))
             } catch {
-                // Unreadable/untransferable item — skipped; the
-                // batch card shows what made it through.
+                // N8: a failed item is COUNTED and reported — "3 of 5
+                // imported" used to read as full success.
+                failed += 1
             }
             i += 1
         }
@@ -1151,6 +1180,13 @@ struct RootView: View {
         if picked.isEmpty {
             importError = "The selected videos could not be imported."
         } else {
+            // N8: partial failures surface NEXT TO the success — "3 of 5"
+            // no longer reads as full success.
+            if failed > 0 {
+                importError = failed == 1
+                    ? "1 of \(items.count) videos couldn't be imported (often storage or an unreadable item)."
+                    : "\(failed) of \(items.count) videos couldn't be imported (often storage or an unreadable item)."
+            }
             importedVideos = picked
             // NEW import → fresh session: a cancelled run of the SAME
             // files must not resurrect its trim/rotation/poster (a
@@ -1170,6 +1206,7 @@ struct RootView: View {
         isImporting = true
         defer { isImporting = false }
         var picked: [PickedVideo] = []
+        var failed = 0
         var i = 0
         for url in urls {
             // IMPORT PROGRESS: per-file card while the batch copies — a
@@ -1182,6 +1219,9 @@ struct RootView: View {
             if let copy = await ImportHelpers.copyOffMain(url) {
                 let thumb = await Thumbnails.make(url: copy)
                 picked.append(PickedVideo(url: copy, thumbnail: thumb))
+            } else {
+                // N8: counted and reported, never silent.
+                failed += 1
             }
             i += 1
         }
@@ -1189,6 +1229,12 @@ struct RootView: View {
         if picked.isEmpty {
             importError = "The selected files could not be copied into the app's storage."
         } else {
+            // N8: partial failures surface next to the success.
+            if failed > 0 {
+                importError = failed == 1
+                    ? "1 of \(urls.count) files couldn't be copied into the app's storage (often storage)."
+                    : "\(failed) of \(urls.count) files couldn't be copied into the app's storage (often storage)."
+            }
             importedVideos = picked
             // NEW import → fresh session: a cancelled run of the SAME
             // files must not resurrect its trim/rotation/poster (a
@@ -1906,6 +1952,9 @@ private struct ImportedVideo: Transferable {
             // POSIX locale pins the format on every device/region; the '.'
             // separator keeps it filename-safe.
             let base = Self.nameFormatter.string(from: created)
+            // N8: the received file's size for the free-space preflight.
+            let srcSize = ((try? FileManager.default.attributesOfItem(
+                atPath: received.file.path))?[.size] as? Int64) ?? 0
             var dest = dir.appendingPathComponent("\(base).\(ext2)")
             // COLLISION SUFFIX "(n)": the native Files/Rename shape (same
             // format renameOutput appends). The old "-1" looked like a
@@ -1915,10 +1964,29 @@ private struct ImportedVideo: Transferable {
                 dest = dir.appendingPathComponent("\(base) (\(n)).\(ext2)")
                 n += 1
             }
-            // FileRepresentation always delivers a real file on disk — copy it
-            // directly (NO removeItem first: dest never exists on a fresh
-            // import and removing would throw, killing the whole transfer).
-            try FileManager.default.copyItem(at: received.file, to: dest)
+            // FileRepresentation always delivers a real file on disk.
+            // N8: MOVE first, not copy — the provider's temp file is
+            // disposable, so a same-volume move is free (the old
+            // copyItem streamed every byte twice: system export + our
+            // copy). Cross-volume or refused moves fall back to the
+            // plain copy. FREE-SPACE check before either: a copy onto a
+            // nearly-full disk dies partway, and a partial dest is
+            // cleaned before rethrowing (nothing strands until the
+            // sweep).
+            do {
+                if srcSize > 0,
+                   let free = JobCoordinator.volumeFreeBytes(at: dir),
+                   free < srcSize + 64_000_000 {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+                if ((try? FileManager.default.moveItem(
+                        at: received.file, to: dest)) == nil) {
+                    try FileManager.default.copyItem(at: received.file, to: dest)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: dest)
+                throw error
+            }
             return ImportedVideo(url: dest)
         }
     }
@@ -1938,6 +2006,18 @@ struct SecurityScoped {
         let base = url.deletingPathExtension().lastPathComponent
         let dir = JobCoordinator.importsDirectory()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // N8: FREE-SPACE PREFLIGHT before a multi-GB copy — a copy onto a
+        // nearly-full disk dies partway (leaving a partial dest, see
+        // coordinatedCopy's cleanup) and the item used to fail with no
+        // reason surfaced. The source's size is known here (scoped access
+        // is already held); demand it plus a flat working margin.
+        let srcSize = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64) ?? 0
+        if srcSize > 0,
+           let free = JobCoordinator.volumeFreeBytes(at: dir),
+           free < srcSize + 64_000_000 {
+            NSLog("VidCompress: import refused — need \(srcSize) bytes, \(free) free")
+            return nil
+        }
         var dest = dir.appendingPathComponent("\(base).\(ext)")
         var n = 1
         while FileManager.default.fileExists(atPath: dest.path) {
@@ -1948,7 +2028,12 @@ struct SecurityScoped {
         }
         // Coordinated copy: iCloud Drive placeholders get downloaded by the
         // file coordinator first; plain local files copy straight through.
-        guard ImportHelpers.coordinatedCopy(from: url, to: dest) else { return nil }
+        // N8: a FAILED copy leaves a PARTIAL dest on disk — remove it, or
+        // it strands until the next launch's sweep (multi-GB).
+        guard ImportHelpers.coordinatedCopy(from: url, to: dest) else {
+            try? FileManager.default.removeItem(at: dest)
+            return nil
+        }
         return dest
     }
 }

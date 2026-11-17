@@ -30,6 +30,13 @@ struct JobRowView: View, Equatable {
     /// layout onto the shifted card until a scroll recycled it (device
     /// report). A changed index forces a fresh render.
     let rowIndex: Int
+    /// QUEUED COUNT as a VALUE (N9): the old == clause compared
+    /// `coordinator.jobs.filter { … }.count` on both sides — but both
+    /// sides hold the SAME coordinator object, so the two reads are
+    /// always equal and the clause never broke the skip. When job #1
+    /// started encoding, the row behind it kept its stale "#2". A value
+    /// input participates in the comparison like every other field.
+    let queuedCount: Int
     @Environment(\.horizontalSizeClass) private var hSizeClass
     @Environment(\.scenePhase) private var scenePhase
 
@@ -101,8 +108,11 @@ struct JobRowView: View, Equatable {
             && l.rowIndex == r.rowIndex
             // Queue-rank shifts (the queued "#N" ordinal) always involve a
             // job entering or leaving the queued set.
-            && l.coordinator.jobs.filter { $0.state == .queued }.count
-                == r.coordinator.jobs.filter { $0.state == .queued }.count
+            // N9: via the EXPLICIT queuedCount VALUE — the old clause
+            // compared coordinator-derived counts on both sides, i.e. the
+            // same object with itself, and never broke the skip (a row
+            // kept its stale "#2" after #1 started encoding).
+            && l.queuedCount == r.queuedCount
     }
 
     private var displayName: String {
@@ -563,7 +573,10 @@ struct JobRowView: View, Equatable {
         guard let pos = queued.lastIndex(where: { $0.id == job.id }) else {
             return "Queued"
         }
-        return "#\(queued.count - pos)"
+        // N9: the COUNT comes from the explicit value input (the render-skip
+        // breaks on it) — the old row-local `queued.count` read the array
+        // only when a render actually happened, so the label went stale.
+        return "#\(queuedCount - pos)"
     }
 
     /// Container label for VoiceOver: a composed summary is announced before
