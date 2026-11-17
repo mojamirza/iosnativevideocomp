@@ -1738,12 +1738,28 @@ final class JobCoordinator: ObservableObject {
                     }
                 }
                 // Decode the REAL preset used for the job (needed for a
-                // faithful Retry). Fall back to name-only for old records.
+                // faithful Retry).
                 let realPreset: Preset
                 if let data = r.presetJSON, let p = try? JSONDecoder().decode(Preset.self, from: data) {
                     realPreset = p
+                } else if let builtin = Preset.builtIn.first(where: { $0.name == r.presetName }) {
+                    // P2: presetJSON is missing/undecodable (records from
+                    // before it existed, or a partial write). A built-in's
+                    // full recipe is RECOVERABLE by name: its stableID is
+                    // derived from a fixed system key, so the fresh match
+                    // carries the SAME identity as the original — the
+                    // "Email · 25 MB" guarantee survives the retry instead
+                    // of collapsing to a flat bitrate.
+                    realPreset = builtin
                 } else {
-                    realPreset = Preset(name: r.presetName, codec: .hevc, resolution: .keep)
+                    // P2: nothing recoverable (a renamed or user-defined
+                    // preset). Do NOT impersonate the lost preset —
+                    // `Preset(name: r.presetName, …)` made the row keep
+                    // saying "Email · 25 MB" while the retry silently ran
+                    // HEVC · original size · 4 Mbps with NO target. The
+                    // fallback name states what the retry will actually do.
+                    realPreset = Preset(name: "Defaults (settings unavailable)",
+                                        codec: .hevc, resolution: .keep)
                 }
                 out.append(Job(
                     id: r.jobID,

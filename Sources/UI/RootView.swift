@@ -810,6 +810,10 @@ struct RootView: View {
                     storageFallbackBanner
                         .padding(.horizontal)
                         .cardListRow()
+                } else if StorageFallback.storeReset {
+                    storeResetBanner
+                        .padding(.horizontal)
+                        .cardListRow()
                 }
 
                 let active = coordinator.activeJobs
@@ -920,6 +924,9 @@ struct RootView: View {
                     }
                     if StorageFallback.inMemoryOnly {
                         storageFallbackBanner
+                            .padding(.horizontal)
+                    } else if StorageFallback.storeReset {
+                        storeResetBanner
                             .padding(.horizontal)
                     }
                     EmptyState(photoItems: $photoItems,
@@ -1277,6 +1284,21 @@ struct RootView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
             Text("History may not survive this session — the app couldn't open its database and is running without it. Your videos are not affected.")
+                .font(.footnote)
+        }
+        .padding(12)
+        .background(Color.yellow.opacity(0.18),
+                    in: RoundedRectangle(cornerRadius: AppTheme.cardRadius))
+    }
+
+    /// P1: the on-disk store was UNOPENABLE and was quarantined (kept as a
+    /// backup file) with a fresh store created — this session's history
+    /// persists, and the user must know the old history is not simply gone.
+    private var storeResetBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .foregroundStyle(.yellow)
+            Text("The app's history database couldn't be opened, so it was reset — compression history starts empty. Your videos are not affected, and the old history was kept in a backup file inside the app's storage.")
                 .font(.footnote)
         }
         .padding(12)

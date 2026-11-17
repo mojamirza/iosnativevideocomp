@@ -505,7 +505,12 @@ enum CompressionEngine {
         // FORMAT HINT: only truthful when the output will actually look like
         // the source's compressed format. It is cleared when
         //  · the SDR composition re-renders 8-bit 709 (the source is 10-bit
-        //    HDR — the buffers appended are NOT the hinted format), or
+        //    HDR — the buffers appended are NOT the hinted format),
+        //  · the buffers are SCALED — the hint carries the SOURCE's
+        //    dimensions, while the pixel-transfer session appends
+        //    plan.outputSize buffers (P: same class of lie as the SDR path;
+        //    the odd-dimension evening at :449 also lands here since it
+        //    forces scaleNeeded), and
         //  · the preset's codec family differs from the source's — a hint
         //    describing HEVC while the writer encodes H.264 (compatibility
         //    presets) can misconfigure the encoder just the same.
@@ -515,7 +520,7 @@ enum CompressionEngine {
         let hintMatches = encodeCodec == .hevc ? sourceIsHEVC : sourceIsAVC
         let videoInput = AVAssetWriterInput(mediaType: .video,
                                             outputSettings: settings,
-                                            sourceFormatHint: (sdrConvert || !hintMatches) ? nil : hint)
+                                            sourceFormatHint: (sdrConvert || scaleNeeded || !hintMatches) ? nil : hint)
         videoInput.expectsMediaDataInRealTime = false
         // TRANSFORM: the source's own rotation is preserved on every path
         // EXCEPT the SDR composition path (there it is baked into the
