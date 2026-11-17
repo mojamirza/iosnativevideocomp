@@ -88,6 +88,14 @@ struct ColorTags: Hashable {
         // space (consumers must stay in step with what can be written).
         let pri: String
         if p.contains("2020") { pri = "ITU_R_2020" }
+        // DCI-P3 BEFORE the P3 catch-all: any "…dci…" tag used to resolve
+        // to P3_D65 and the verifier then compared want==got while the
+        // file's actual primaries were DCI. DCI_P3 is canonical here;
+        // ColorCanon maps it onto the nearest WRITABLE constant (P3_D65 —
+        // the SDK has no DCI primaries constant, same documented EBU
+        // situation), so the writer stays in step with what can be
+        // written and the verifier's compare honestly flags the drift.
+        else if p.contains("dci") { pri = "DCI_P3" }
         else if p.contains("p3") { pri = "P3_D65" }
         else if p.contains("smpte_c") || p.contains("smptec") { pri = "SMPTE_C" }
         else if isHDR && p.isEmpty { pri = "ITU_R_2020" }
@@ -148,6 +156,11 @@ struct ColorTags: Hashable {
     /// buffer path uses CoreVideo constants; the writer path uses the
     /// AVFoundation twins. Never a hand-typed literal value.
     enum ColorCanon {
+        // NOTE: "DCI_P3" resolves through the P3 branches below onto the
+        // P3_D65 constant — the SDK has no writable DCI primaries constant
+        // (same documented situation as EBU_3213). The verifier's compare
+        // judges the RESOLVED canonical want (DCI_P3) against what the
+        // output actually carries (P3_D65) and flags that drift honestly.
         static func cvPrimaries(_ c: String) -> CFString {
             if c.contains("2020") { return kCVImageBufferColorPrimaries_ITU_R_2020 }
             if c.contains("P3") { return kCVImageBufferColorPrimaries_P3_D65 }
@@ -209,6 +222,8 @@ struct ColorTags: Hashable {
         switch p {
         case let x where x.contains("2020"):
             return "Rec.2020 SDR"
+        case let x where x.contains("dci"):
+            return "DCI-P3"
         case let x where x.contains("p3"):
             return "Display P3"
         case let x where x.contains("601") || x.contains("170") || x.contains("smpte_c"):
@@ -294,10 +309,13 @@ struct ProbeResult: Hashable {
         // the sample description (bitDepthLumaMinus8), not the generic
         // 'depth' tag. The old depth>=30 rule misfired: 32 is 8-bit + alpha
         // (would force 10-bit), and real 10-bit files can't be relied on to
-        // report 30. Chain: hvcC parse → HDR transfer tags → 8.
+        // report 30. Chain: hvcC/avcC parse → ProRes fourCC / 'depth'
+        // extension (no atom exists for these) → HDR transfer tags → 8.
         let bitDepth: Int
         if let d = fmts.first.flatMap({ SampleDescription.depth(of: $0) }) {
             bitDepth = d
+        } else if let ten = fmts.first.flatMap({ SampleDescription.tenBitWithoutCodecAtom($0) }) {
+            bitDepth = ten ? 10 : 8
         } else if tags.isHDR {
             bitDepth = 10
         } else {
@@ -380,6 +398,36 @@ enum SampleDescription {
         if let avcC = atoms["avcC"] as? Data, avcC.count > 1 {
             let profile = Int(avcC[avcC.startIndex + 1])
             return [110, 122, 244].contains(profile) ? 10 : 8
+        }
+        return nil
+    }
+
+    /// 10-bit verdict for codecs WITHOUT an hvcC/avcC atom (ProRes and
+    /// friends): the fourCC itself identifies the profile — every shipping
+    /// ProRes flavor carries 10-bit samples — and the QuickTime "depth"
+    /// extension covers the rest (BITS PER PIXEL: 24, or 32 with alpha,
+    /// means 8 bpc; ≥ 30 means 10 bpc). nil when neither signals anything.
+    /// Without this branch a ProRes source (no atom, no HDR tags) fell
+    /// through to bitDepth 8.
+    static func tenBitWithoutCodecAtom(_ fmt: CMFormatDescription) -> Bool? {
+        let subType = CMFormatDescriptionGetMediaSubType(fmt)
+        var four = ""
+        for shift in [24, 16, 8, 0] {
+            let scalar = Unicode.Scalar(UInt8((subType >> shift) & 0xFF))
+            if scalar.value >= 32, scalar.value <= 126 {
+                four.append(Character(scalar))
+            }
+        }
+        // apcn 422 Standard · apch 422 HQ · apcs 422 LT · apco 422 Proxy ·
+        // apcl 4444 · ap4h 4444 · ap4x 4444 XQ · ap4m 4444 XQ (alpha).
+        if ["apcn", "apch", "apcs", "apco", "apcl", "ap4h", "ap4x", "ap4m"].contains(four) {
+            return true
+        }
+        if let depth = CMFormatDescriptionGetExtension(
+               fmt, extensionKey: "depth" as CFString) as? NSNumber {
+            let d = depth.intValue
+            if d >= 30 { return true }
+            if d == 24 || d == 32 { return false }
         }
         return nil
     }

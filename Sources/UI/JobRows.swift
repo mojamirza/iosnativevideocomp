@@ -128,11 +128,16 @@ struct JobRowView: View, Equatable {
         }
         // The machine STAMP the engine appends (`_custom-h264`,
         // `_high-quality-hevc`) is filename disambiguation, not a title the
-        // user chose — drop everything from the last "_…codec" chunk in
-        // DISPLAY only (the file on disk keeps its collision-proof name).
-        if let stampRange = base.range(of: "_[^_]*?-(?:h264|hevc)$",
-                                       options: .regularExpression) {
-            return String(base[..<stampRange.lowerBound])
+        // user chose — strip EXACTLY the stamp this job's preset would
+        // build. The old catch-all regex (`_[^_]*?-(?:h264|hevc)$`) also
+        // ate legitimate renames that merely ENDED in _…-hevc/_…-h264.
+        // Byte-clamped stamps (long custom names truncate the suffix before
+        // it lands in the filename) won't match and stay visible — a
+        // cosmetic miss, never a wrong strip.
+        let stamp = JobCoordinator.presetStamp(
+            job.preset, codec: job.plan?.effectiveCodec ?? job.preset.codec)
+        if base.lowercased().hasSuffix("_\(stamp)") {
+            return String(base.dropLast(stamp.count + 1))
         }
         return base
     }
@@ -511,9 +516,14 @@ struct JobRowView: View, Equatable {
             parts.append(String(format: "%.1f× realtime", speed))
         }
         if let eta, eta > 5 {
-            let min = Int(eta.rounded()) / 60
-            let sec = Int(eta.rounded()) % 60
-            parts.append(min > 0 ? "about \(min) min \(sec) s left" : "about \(sec) s left")
+            // Same phrasing family as RootView.queueRemainingLabel:
+            // "about 120 min left", not "120 min 0 s".
+            let total = Int(eta.rounded())
+            let min = total / 60
+            let sec = total % 60
+            parts.append(min > 0
+                ? (sec > 0 ? "about \(min) min \(sec) s left" : "about \(min) min left")
+                : "about \(sec) s left")
         }
         guard !parts.isEmpty else {
             return AnyView(HStack(spacing: 6) {
@@ -1230,6 +1240,7 @@ private struct OutputPlayerSheet: View {
     /// black surface — no wrong-orientation frame ever hits the screen.
     private func primeThenPlay(_ player: AVPlayer, at start: CMTime) {
         priming?.cancel()
+        priming = nil      // early-return path never leaves a stale task either
         guard let item = player.currentItem else { return }
         if item.status == .readyToPlay {
             player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
@@ -1237,6 +1248,14 @@ private struct OutputPlayerSheet: View {
             return
         }
         priming = Task { @MainActor in
+            // LIFECYCLE: the reference clears ITSELF on normal completion —
+            // the old code left the finished Task in `priming` forever, so
+            // `wasPlaying` (rate > 0 || priming != nil) read "playing" even
+            // on a paused player and a paused compare-swap auto-played. A
+            // CANCELLED exit skips the clear: teardown() and swapSide() nil
+            // the reference right after cancelling, and a newer task may
+            // already own the slot.
+            defer { if !Task.isCancelled { priming = nil } }
             // Bounded wait (50 ms cadence, 10 s cap): a slow container must
             // not leave the sheet on a black surface forever — past the cap,
             // play whatever the player has (the previous behavior).

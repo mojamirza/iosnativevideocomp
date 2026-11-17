@@ -33,8 +33,17 @@ final class BGExpiryFlag: @unchecked Sendable {
 @MainActor
 enum BackgroundCompress {
 
-    /// Must match BGTaskSchedulerPermittedIdentifiers in the Info.plist.
-    static let taskID = "com.example.vidcompress.compress"
+    /// Must match BGTaskSchedulerPermittedIdentifiers in the Info.plist
+    /// (project.yml) EXACTLY. DERIVED from the bundle identifier + the
+    /// same ".compress" suffix project.yml bakes into the plist, so the
+    /// code side can never drift from the bundle it ships in — a re-signed
+    /// build submits under its OWN id, and if a resigning tool didn't
+    /// rewrite the plist to match, register() simply returns false and the
+    /// session degrades to foreground-only compression (below), never a
+    /// crash or a stuck flag.
+    static var taskID: String {
+        (Bundle.main.bundleIdentifier ?? "com.example.vidcompress") + ".compress"
+    }
 
     private static weak var coordinator: JobCoordinator?
     private static var currentTask: BGContinuedProcessingTask?
@@ -51,6 +60,13 @@ enum BackgroundCompress {
     /// isRegistered now records the truth; JobCoordinator surfaces the
     /// same one-time "background unavailable" notice a refused submit
     /// would have produced.
+    ///
+    /// ISOLATION NOTE: the launch handler runs on an ARBITRARY queue; both
+    /// exits hop to the main actor via `Task { @MainActor }`. The system
+    /// invokes the handler at most once per task instance and hands it
+    /// over — that handoff is an OWNERSHIP TRANSFER of the BGContinued
+    /// Processing task, not shared mutable access, so no additional
+    /// locking is needed.
     static func register() {
         let ok = BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
             guard let continued = task as? BGContinuedProcessingTask else {

@@ -1256,8 +1256,9 @@ struct RootView: View {
 
     /// The setup sheet closed — Cancel, Compress, or a swipe down. Import
     /// copies that never became a job (cancelled setup, batch videos skipped
-    /// after a failed probe) would otherwise leak in Caches/Imports until
-    /// the NEXT launch's sweep — multi-GB on large batches. Delete the
+    /// after a failed probe) would otherwise leak in Application Support/
+    /// Imports until
+    /// the NEXT launch's sweep - multi-GB on large batches. Delete the
     /// leftovers now; enqueued jobs keep their copies (the queue needs them).
     /// GUARD: a shell swap mid-setup (dragging the Split View divider across
     /// the compact threshold) tears the two body branches — and the sheet

@@ -86,6 +86,36 @@ enum QualityCheck {
         return nil
     }
 
+    /// Box-average resample to an EXACT common grid. The two decoders
+    /// independently floor their window heights (640-wide, aspect-true),
+    /// so a 1–2 px mismatch made psnr/ssim return nil and the whole
+    /// quality score silently vanished into "unavailable → pass". Both
+    /// frames are brought onto the SMALLER grid before scoring; frames
+    /// already on the target grid return unchanged.
+    static func resample(_ f: LumaFrame, toW w: Int, toH h: Int) -> LumaFrame {
+        guard w >= 2, h >= 2, w != f.width || h != f.height else { return f }
+        var out = [UInt8](repeating: 0, count: w * h)
+        for oy in 0..<h {
+            let sy0 = oy * f.height / h
+            let sy1 = max(sy0 + 1, (oy + 1) * f.height / h)
+            for ox in 0..<w {
+                let sx0 = ox * f.width / w
+                let sx1 = max(sx0 + 1, (ox + 1) * f.width / w)
+                var acc = 0
+                var n = 0
+                for sy in sy0..<min(sy1, f.height) {
+                    let row = sy * f.width
+                    for sx in sx0..<min(sx1, f.width) {
+                        acc += Int(f.luma[row + sx])
+                        n += 1
+                    }
+                }
+                out[oy * w + ox] = UInt8(min(255, n > 0 ? acc / n : 0))
+            }
+        }
+        return LumaFrame(luma: out, width: w, height: h, time: f.time)
+    }
+
     /// PSNR over 8-bit luma (higher = closer; identical frames → 99.0 dB
     /// stand-in for infinity). nil when sizes differ (can't compare).
     static func psnr(_ a: LumaFrame, _ b: LumaFrame) -> Double? {

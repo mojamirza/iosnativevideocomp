@@ -410,7 +410,16 @@ enum IntegrityVerifier {
                     items.append(ReportItem("bitrate", "Output bitrate higher than planned",
                         String(format: "Planned %.1f Mbps, obtained %.1f Mbps (video part).",
                                Double(plan.videoBitrate) / 1e6, videoPart / 1e6), .warn))
-                } else {
+            } else if videoPart < Double(plan.videoBitrate) * 0.5 {
+                // FAR BELOW PLAN: the old two-branch split lumped every
+                // undershoot into "on target" — a fixed-bitrate request
+                // that settled at a fraction of the plan is NOT on target.
+                // Still .pass (the file is smaller than budgeted, not worse
+                // than a guarantee), but the number is stated honestly.
+                items.append(ReportItem("bitrate", "Bitrate far below the plan",
+                    String(format: "Planned %.1f Mbps, obtained %.1f Mbps (video part) — the encoder settled this low on the actual content; the output is smaller than budgeted.",
+                           Double(plan.videoBitrate) / 1e6, videoPart / 1e6), .pass))
+            } else {
                     items.append(ReportItem("bitrate", "Bitrate on target",
                         String(format: "Video ≈ %.1f Mbps of planned %.1f Mbps.",
                                videoPart / 1e6, Double(plan.videoBitrate) / 1e6), .pass))
@@ -495,8 +504,18 @@ enum IntegrityVerifier {
                 let tSrc = probe.startOffset + plan.trimStart + fb.time
                 guard let fa = await QualityCheck.lumaFrame(asset: srcAsset, at: tSrc) else { continue }
                 sampled += 1
-                if let p = QualityCheck.psnr(fa, fb) { psnrs.append(p) }
-                if let s = QualityCheck.ssim(fa, fb) { ssims.append(s) }
+                // GRID ALIGNMENT: the two decoders independently floor
+                // their window heights — a 1–2 px mismatch made psnr/ssim
+                // return nil and the score silently vanish into
+                // "unavailable → pass". Bring BOTH frames onto the common
+                // (smaller) grid before scoring; identical grids pass
+                // through resample unchanged.
+                let w = min(fa.width, fb.width) & ~1
+                let h = min(fa.height, fb.height) & ~1
+                let ga = w >= 2 && h >= 2 ? QualityCheck.resample(fa, toW: w, toH: h) : fa
+                let gb = w >= 2 && h >= 2 ? QualityCheck.resample(fb, toW: w, toH: h) : fb
+                if let p = QualityCheck.psnr(ga, gb) { psnrs.append(p) }
+                if let s = QualityCheck.ssim(ga, gb) { ssims.append(s) }
             }
             if sampled > 0 && !psnrs.isEmpty {
                 let avgP = psnrs.reduce(0, +) / Double(psnrs.count)
@@ -508,6 +527,13 @@ enum IntegrityVerifier {
                         + String(format: "Note: sampled at matched timestamps after a frame-rate cap (%.0f fps → %d fps).", probe.nominalFPS, plan.fpsCap!)
                 }
                 items.append(ReportItem("quality", g.label, detail, g.severity))
+            } else if sampled > 0 {
+                // VERIFIER SELF-FAIL: frames WERE decoded from both files,
+                // but no pair survived grid alignment (nil psnr/ssim).
+                // Reporting that as .pass would hide a known-blind spot
+                // behind "everything is fine" — an honest .warn instead.
+                items.append(ReportItem("quality", "Quality score unavailable",
+                    "Frames were sampled from both files, but their pixel grids could not be aligned onto a common geometry. The other checks still ran — treat quality here as UNMEASURED, not as a pass.", .warn))
             } else {
                 items.append(ReportItem("quality", "Quality score unavailable",
                     "The verifier's sampling window closed before decodable frames from both files could be compared (fast verify budget). The other checks still ran.", .pass))

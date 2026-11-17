@@ -92,6 +92,59 @@ struct FrameCapper {
     }
 }
 
+/// Lock-protected progress + silent-drop accounting for the video pipe.
+/// The pipe's closures run on a serial DispatchQueue — plain captured vars
+/// (`droppedFrames`, `lastReported`, …) would be shared mutable state
+/// across isolation domains (a Swift-6 data race). One box owns all of it;
+/// the reporting cadence is unchanged (every 0.2 % step, or any change
+/// after a full second).
+final class PipeProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private var droppedFrames = 0
+    private var lastReported = 0.0
+    private var lastReportAt = Date()
+    private let dropLimit: Int
+
+    init(dropLimit: Int) { self.dropLimit = dropLimit }
+
+    /// Count a silently lost frame. True when the budget is MET — the
+    /// caller aborts the encode (checked AT the drop site so a whole-file
+    /// failure can't drain the budget silently).
+    func noteDrop() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        droppedFrames += 1
+        return droppedFrames > dropLimit
+    }
+
+    var dropped: Int {
+        lock.lock(); defer { lock.unlock() }
+        return droppedFrames
+    }
+
+    func reportIfDue(_ p: Double, _ onProgress: @escaping @Sendable (Double) -> Void) {
+        lock.lock()
+        let due = p - lastReported >= 0.002
+            || (p != lastReported && Date().timeIntervalSince(lastReportAt) >= 1.0)
+        if due { lastReported = p; lastReportAt = Date() }
+        lock.unlock()
+        if due { onProgress(p) }
+    }
+}
+
+/// The mutating FrameCapper struct behind a lock so the serial-queue
+/// closure can call it without capturing a `var` (the same Swift-6
+/// hazard the progress box fixes). `shouldKeep` returns nil when no cap
+/// is configured (pass-through verdict).
+final class CapperBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var capper: FrameCapper?
+    init(_ capper: FrameCapper?) { self.capper = capper }
+    func shouldKeep(_ pts: CMTime) -> Bool? {
+        lock.lock(); defer { lock.unlock() }
+        return capper?.shouldKeep(pts)
+    }
+}
+
 enum CompressionError: LocalizedError {
     case noVideoTrack
     case readerFailed(String)
@@ -707,6 +760,12 @@ enum CompressionEngine {
             NSLog("VidCompress: no acceptable AAC config — shipping video without audio")
         }
 
+        // CANCEL GATE: a cancel landing between the probe/preflight above
+        // and the pipeline build must not still construct the reader +
+        // writer (pool allocations, encoder setup) just to unwind — bail
+        // here. The pipes re-check `flags` on every frame.
+        if flags.cancelled { throw CompressionError.cancelled }
+
         let reader = try AVAssetReader(asset: asset)
 
         // ------------------------------------------------------------------
@@ -918,6 +977,10 @@ enum CompressionEngine {
                     writer.error?.localizedDescription
                         ?? "startWriting failed while metadata was set")
             }
+            // Plain failure stops the reader TOO — only the metadata
+            // branch used to cancel it, so a plain failure left a reader
+            // draining a multi-GB file while the job had already unwound.
+            reader.cancelReading()
             throw writer.error ?? CompressionError.writerFailed("startWriting returned false")
         }
         // Session start via the SHARED SessionAnchor helper (the probe
@@ -953,10 +1016,12 @@ enum CompressionEngine {
         // wrong and the job must fail instead of shipping a stuttering file.
         // The video pipe also ABORTS EARLY at the limit — no point burning
         // minutes on frames the job will reject anyway.
-        var droppedFrames = 0
+        // Swift-6 data-race safe accounting: the pipe closures run on a
+        // serial DispatchQueue — plain captured vars (`droppedFrames`,
+        // `lastReported`, `lastReportAt`) would be shared mutable state
+        // across isolation domains. One lock-protected box owns it all.
         let dropLimit = max(1, expected / 1000)
-        var lastReported = 0.0
-        var lastReportAt = Date()
+        let progress = PipeProgress(dropLimit: dropLimit)
 
         // ------------------------------------------------------------------
         // VIDEO PIPE
@@ -965,8 +1030,10 @@ enum CompressionEngine {
             await withCheckedContinuation { cont in
                 let resume = ResumeBox(cont)
                 let queue = DispatchQueue(label: "vidcompress.video.pipe")
-                // Frame-rate cap state lives in FrameCapper (unit-tested).
-                var capper = preset.fpsCap.map { FrameCapper(cap: $0) }
+                // Frame-rate cap state lives in FrameCapper (unit-tested);
+                // the box makes the mutating struct safe to reach from the
+                // serial-queue closure (Swift-6 capture of a `var`).
+                let capper = CapperBox(preset.fpsCap.map { FrameCapper(cap: $0) })
 
                 // Count a silently lost frame and ABORT the encode the
                 // moment the budget is met. The check must live AT the drop
@@ -975,9 +1042,8 @@ enum CompressionEngine {
                 // entire video with no heartbeat, letting the 120 s stall
                 // watchdog fire a misleading error.
                 func noteDrop() -> Bool {
-                    droppedFrames += 1
-                    guard droppedFrames > dropLimit else { return false }
-                    flags.fail(CompressionError.framesDropped(droppedFrames))
+                    guard progress.noteDrop() else { return false }
+                    flags.fail(CompressionError.framesDropped(progress.dropped))
                     reader.cancelReading()
                     resume.resumeOnce()
                     return true
@@ -1024,7 +1090,7 @@ enum CompressionEngine {
                         // FrameCapper (unit-tested) — first accepted frame
                         // opens a slot, jitter tolerance inside it, VFR lag
                         // re-anchors.
-                        if let keep = capper?.shouldKeep(pts), !keep {
+                        if let keep = capper.shouldKeep(pts), !keep {
                             continue
                         }
 
@@ -1100,13 +1166,7 @@ enum CompressionEngine {
                         let p = min(0.99, secs.isFinite
                             ? max(0, anchored.isFinite ? anchored / plan.duration : 0)
                             : 0)
-                        if p - lastReported >= 0.002
-                            || (p != lastReported
-                                && Date().timeIntervalSince(lastReportAt) >= 1.0) {
-                            lastReported = p
-                            lastReportAt = Date()
-                            onProgress(p)
-                        }
+                        progress.reportIfDue(p, onProgress)
                     }
                 }
             }
@@ -1227,11 +1287,11 @@ enum CompressionEngine {
         // Silent-drop guard: report lost frames honestly instead of shipping
         // an output with gaps the verifier can't plainly catch. (Rare here —
         // the video pipe aborts early at this same limit.)
-        if droppedFrames > dropLimit {
+        if progress.dropped > dropLimit {
             if writer.status == .writing { writer.cancelWriting() }
             if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
             try? FileManager.default.removeItem(at: output)
-            throw CompressionError.framesDropped(droppedFrames)
+            throw CompressionError.framesDropped(progress.dropped)
         }
 
         // Finalize, capped: a wedged finishWriting (e.g. an input that never

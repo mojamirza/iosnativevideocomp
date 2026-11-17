@@ -25,19 +25,6 @@ import UIKit
 ///  · tile    dark #2C2C2E · light #F2F2F7 (was tertiarySystemGroupedBackground)
 enum AppTheme {
 
-    // Screen canvas
-    static let screenColor = UIColor { traits in
-        traits.userInterfaceStyle == .dark ? Self.black : Self.groupedGrayLight
-    }
-    // Card surface (inset cards, queue status bar, report items, preset rows)
-    static let cardColor = UIColor { traits in
-        traits.userInterfaceStyle == .dark ? Self.cardDark : Self.white
-    }
-    // Inner tile surface (probe grid cells)
-    static let tileColor = UIColor { traits in
-        traits.userInterfaceStyle == .dark ? Self.tileDark : Self.groupedGrayLight
-    }
-
     // Pinned components — no dynamic lookup, nothing left to re-resolve.
     static let black = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
     static let white = UIColor(red: 1, green: 1, blue: 1, alpha: 1)
@@ -47,6 +34,31 @@ enum AppTheme {
                                   blue: 30 / 255.0, alpha: 1)   // #1C1C1E
     static let tileDark = UIColor(red: 44 / 255.0, green: 44 / 255.0,
                                   blue: 46 / 255.0, alpha: 1)   // #2C2C2E
+    // Increase Contrast: dark surfaces step UP one shade (the system's own
+    // increased-contrast grays) so card/tile boundaries and text contrast
+    // sharpen without leaving the pinned palette. Light mode keeps its
+    // colors — light-on-white already clears the contrast bar.
+    static let cardDarkHigh = UIColor(red: 44 / 255.0, green: 44 / 255.0,
+                                      blue: 46 / 255.0, alpha: 1)   // #2C2C2E
+    static let tileDarkHigh = UIColor(red: 72 / 255.0, green: 72 / 255.0,
+                                      blue: 74 / 255.0, alpha: 1)   // #48484A
+
+    // Screen canvas
+    static let screenColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? Self.black : Self.groupedGrayLight
+    }
+    // Card surface (inset cards, queue status bar, report items, preset rows)
+    static let cardColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? (traits.accessibilityContrast == .high ? Self.cardDarkHigh : Self.cardDark)
+            : Self.white
+    }
+    // Inner tile surface (probe grid cells)
+    static let tileColor = UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? (traits.accessibilityContrast == .high ? Self.tileDarkHigh : Self.tileDark)
+            : Self.groupedGrayLight
+    }
 
     // HIG METRICS — the recurring radii of the design system, in one place
     // so rows, thumbnails and tiles can never drift apart again.

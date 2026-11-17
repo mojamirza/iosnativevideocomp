@@ -19,6 +19,16 @@ struct InsufficientSpaceError: LocalizedError {
     }
 }
 
+/// Lock-protected integer for Objective-C block callbacks that run outside
+/// Swift's isolation (Photos `performChanges` change blocks, …) — a captured
+/// `var` mutated there is a Swift-6 data race.
+fileprivate final class AtomicInt: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func increment() { lock.lock(); value += 1; lock.unlock() }
+    var read: Int { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 /// Lightweight published snapshot for the menu bar: only changes when the
 /// queue STRUCTURE changes — progress ticks never reach the menus (the old
 /// direct observation made the menu bar tick every progress update).
@@ -969,7 +979,8 @@ final class JobCoordinator: ObservableObject {
         if jobs[idx].state == .queued {
             // Never started — just drop it. The source import copy leaves
             // TOO: removing only the row leaked the multi-GB copy in
-            // Caches/Imports until the next sweep. NOT animated: an
+            // Application Support/Imports until the next sweep. NOT
+            // animated: an
             // animated removal lets List's diff recycle the removed cell's
             // layout onto the shifted sibling mid-flight (device bug: the
             // survivor card carried the cancelled job's progress bar until
@@ -1210,17 +1221,22 @@ final class JobCoordinator: ObservableObject {
             batchNotice = "Photos access was denied. Allow it in Settings → Privacy → Photos → Add Photos Only."
             return
         }
-        var saved = 0
+        // Lock-protected counter: the `performChanges` change block runs
+        // outside Swift's isolation — a captured `var saved` is a Swift-6
+        // data race (the same class of hazard the video pipe's accounting
+        // boxes fixed).
+        let savedBox = AtomicInt()
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 for job in targets {
                     if let url = job.outputURL,
                        FileManager.default.fileExists(atPath: url.path) {
                         PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-                        saved += 1
+                        savedBox.increment()
                     }
                 }
             }
+            let saved = savedBox.read
             batchNotice = "Saved \(saved) video\(saved == 1 ? "" : "s") to Photos."
         } catch {
             if !(error is CancellationError) {
@@ -1430,8 +1446,8 @@ final class JobCoordinator: ObservableObject {
     /// Bulk variant of deleteSourceImport for the SETUP FLOW: when the user
     /// cancels the sheet (or a batch video was skipped because its probe
     /// failed), the copies that never became jobs would leak in
-    /// Caches/Imports until the NEXT launch's sweep — multi-GB on large
-    /// batches. Deletes ONLY paths inside the Imports folder; anything the
+    /// Application Support/Imports until the NEXT launch's sweep —
+    /// multi-GB on large batches. Deletes ONLY paths inside the Imports folder; anything the
     /// picker handed us from elsewhere (system temp URLs) is left alone.
     static nonisolated func deleteImportCopies(_ urls: [URL]) {
         let imports = importsDirectory().standardizedFileURL.path
@@ -1453,8 +1469,9 @@ final class JobCoordinator: ObservableObject {
     /// batches still reference. An irreversible path — flagged and skipped.
     private var historyUnreliable = false
 
-    /// Storage sweep at launch: removes orphaned files in Caches/Imports/
-    /// (import copies no job needs) and Caches/Working/ (scratch files of
+    /// Storage sweep at launch: removes orphaned files in Application
+    /// Support/Imports/ (import copies no job needs) and Application
+    /// Support/Working/ (scratch files of
     /// crashed attempts). Outputs in Documents are NEVER swept — files there
     /// that we "don't know about" are the user's (renamed outputs, files
     /// they copied in) and were the data-loss bug.
@@ -1970,7 +1987,10 @@ final class JobCoordinator: ObservableObject {
             detail: error)
     }
 
-    private func presetStamp(_ preset: Preset, codec: VideoCodec? = nil) -> String {
+    /// INTERNAL (not private): the UI reads it too — JobRows.displayName
+    /// strips exactly this stamp from display names, so the two sites must
+    /// agree by construction instead of by regex.
+    static func presetStamp(_ preset: Preset, codec: VideoCodec? = nil) -> String {
         let raw = preset.name.lowercased()
         let words = raw.split(separator: " ", omittingEmptySubsequences: true)
             .prefix(2).joined(separator: "-")
@@ -2023,7 +2043,7 @@ final class JobCoordinator: ObservableObject {
         let fm = FileManager.default
         let outDir = Self.outputsDirectory()
         try? fm.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let stamp = presetStamp(preset, codec: codec)
+        let stamp = Self.presetStamp(preset, codec: codec)
         // NAME_MAX safety (255 BYTES per path component), counted in BYTES
         // not characters: the old character-count cap (prefix(100)) let a
         // 100-character CJK or Arabic base (~200–300 UTF-8 bytes) sail

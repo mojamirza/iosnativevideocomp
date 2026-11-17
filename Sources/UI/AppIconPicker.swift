@@ -57,16 +57,21 @@ struct AppIconPickerSection: View {
     /// system alert may have completed a swap after the last apply) and
     /// after every apply.
     @State private var current = AppIconCatalog.currentID
-    @State private var applyingID: String?
+    /// In-flight marker = the row INDEX (not the choice id): the primary
+    /// icon's id is nil, which ALSO meant "no apply running" in the old
+    /// applyingID mirror — picking a real icon then showed no busy state
+    /// and double taps slipped through. An index is non-nil whenever an
+    /// apply is running.
+    @State private var applyingIndex: Int?
 
     private let columns = [GridItem(.adaptive(minimum: 76), spacing: 14)]
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 14) {
-            ForEach(AppIconCatalog.choices) { choice in
+            ForEach(Array(AppIconCatalog.choices.enumerated()), id: \.element.id) { index, choice in
                 Button {
-                    guard applyingID == nil, choice.id != current else { return }
-                    applyingID = choice.id
+                    guard applyingIndex == nil, choice.id != current else { return }
+                    applyingIndex = index
                     Task {
                         do {
                             try await AppIconCatalog.apply(choice)
@@ -74,13 +79,13 @@ struct AppIconPickerSection: View {
                         } catch {
                             failureText = error.localizedDescription
                         }
-                        applyingID = nil
+                        applyingIndex = nil
                     }
                 } label: {
                     card(choice)
                 }
                 .buttonStyle(.plain)
-                .disabled(applyingID != nil)
+                .disabled(applyingIndex != nil)
             }
         }
         .padding(.vertical, 2)

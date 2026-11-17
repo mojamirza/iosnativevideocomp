@@ -23,11 +23,12 @@ enum AsyncTimeout {
         seconds: Double, _ op: @escaping @Sendable () async -> T) async -> T? {
         await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
             let once = OnceClaim()
-            Task.detached {
-                let v = await op()
-                if once.claim() { cont.resume(returning: v) }
-            }
-            Task.detached {
+            // WATCHDOG FIRST, OP SECOND — and the sleeper is CANCELLED when
+            // the op wins: the old op-first order raced an immediately-
+            // finishing op against a sleeper task that didn't exist yet, and
+            // every won race left a sleeping task parked on the clock until
+            // its deadline (one orphan per call).
+            let sleeper = Task.detached {
                 try? await Task.sleep(nanoseconds: UInt64(max(0.1, seconds) * 1_000_000_000))
                 // Grace: the app may have JUST resumed from suspension — the
                 // operation often finishes within seconds of resume. Without
@@ -35,6 +36,13 @@ enum AsyncTimeout {
                 // encode (the wall-clock deadline expired while suspended).
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if once.claim() { cont.resume(returning: nil) }
+            }
+            Task.detached {
+                let v = await op()
+                if once.claim() {
+                    sleeper.cancel()
+                    cont.resume(returning: v)
+                }
             }
         }
     }

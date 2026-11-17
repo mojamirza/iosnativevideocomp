@@ -65,6 +65,7 @@ enum PresetStore {
         if let data = try? JSONEncoder().encode(ids.map(\.uuidString)) {
             UserDefaults.standard.set(data, forKey: hiddenBuiltInsKey)
         }
+        Preset.invalidateLiveBuiltIn()
     }
 
     /// Overrides decode LENIENTLY (per element, like the customs): one bad
@@ -92,6 +93,7 @@ enum PresetStore {
         if let data = try? JSONEncoder().encode(list) {
             UserDefaults.standard.set(data, forKey: builtInOverridesKey)
         }
+        Preset.invalidateLiveBuiltIn()
     }
 
     /// The one-way door back: clears hides AND edits — the untouched seed
@@ -99,6 +101,7 @@ enum PresetStore {
     static func restoreBuiltIns() {
         UserDefaults.standard.removeObject(forKey: hiddenBuiltInsKey)
         UserDefaults.standard.removeObject(forKey: builtInOverridesKey)
+        Preset.invalidateLiveBuiltIn()
     }
 }
 
@@ -245,13 +248,55 @@ struct PresetEditorView: View {
     }
 
     /// Decimal normaliser for typed numbers: folds Latin, Eastern-Arabic and
-    /// Persian-Indic digits to ASCII and "٫"/"," to "." so Double() cannot
-    /// silently fail on an international keyboard.
+    /// Persian-Indic digits to ASCII and resolves the decimal separator
+    /// LOCALE-AWARELY — the old fold-to-dot turned "1,000" into 1.0 on an
+    /// English locale and silently shrank a saved 1 GB target to 1 MB.
+    ///  · ≥ 2 DISTINCT separators ("1,000.5" / "1.000,5"): the LAST one is
+    ///    the decimal point (typists put the decimal last); every other
+    ///    occurrence — of ANY separator — is a grouping mark and is dropped.
+    ///  · ONE separator repeated ("1,000"): grouping — dropped.
+    ///  · ONE separator once: "." and "," defer to the locale's own decimal
+    ///    / grouping separators; an unmatched "." stays decimal (the
+    ///    typed-number default everywhere Double() can't parse otherwise),
+    ///    and a lone "٫" (the Arabic decimal mark) is ALWAYS decimal.
     private func normalizedDecimal(_ s: String) -> String {
-        var out = ""
+        var units: [Character] = []          // folded digits + separator markers
+        var seps: [(at: Int, ch: Character)] = []
         for ch in s {
-            if let d = ch.wholeNumberValue { out.append(String(d)) }
-            else if ",٫.".contains(ch) { out.append(".") }
+            if let d = ch.wholeNumberValue {
+                units.append(Character(String(d)))
+            } else if ch == "," || ch == "." || ch == "٫" {
+                seps.append((units.count, ch))
+                units.append("\u{0}")        // marker, resolved below
+            }
+        }
+        guard !seps.isEmpty else { return String(units) }
+
+        let decimalAt: Int?
+        if Set(seps.map(\.ch)).count >= 2 {
+            decimalAt = seps.last!.at        // the LAST separator is the decimal
+        } else if seps.count > 1 {
+            decimalAt = nil                  // same char repeated = grouping
+        } else {
+            let c = seps[0].ch
+            if c == "٫" {
+                decimalAt = seps[0].at       // Arabic decimal mark, always
+            } else if let d = Locale.current.decimalSeparator, d.count == 1, c == Character(d) {
+                decimalAt = seps[0].at
+            } else if let g = Locale.current.groupingSeparator, g.count == 1, c == Character(g) {
+                decimalAt = nil              // "1,000" on en-US → 1000
+            } else {
+                decimalAt = c == "." ? seps[0].at : nil
+            }
+        }
+
+        var out = ""
+        for (i, u) in units.enumerated() {
+            if u == "\u{0}" {
+                if i == decimalAt { out.append(".") }
+            } else {
+                out.append(u)
+            }
         }
         return out
     }

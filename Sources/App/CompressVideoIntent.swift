@@ -220,6 +220,16 @@ enum VideoInbox {
                         coordinator.importNotice = "“\(url.lastPathComponent)” shared from Shortcuts couldn't be read as a video and was removed."
                         continue
                     }
+                    // DURATION VALIDITY: mirrors SetupFlow — the probe only
+                    // proves decodability; a NaN or zero duration (broken
+                    // container) would poison the plan's bitrate math and
+                    // the verifier's timeline. Removed honestly, with a
+                    // notice, like any other undecodable handoff.
+                    guard !(probe.duration.isNaN || probe.duration <= 0) else {
+                        try? fm.removeItem(at: url)
+                        coordinator.importNotice = "“\(url.lastPathComponent)” has no readable duration and was removed."
+                        continue
+                    }
                     // Respect the user's habitual choice: the last preset
                     // actually run from setup (SetupFlow persists it on every
                     // commit), falling back to the quality-tier default when

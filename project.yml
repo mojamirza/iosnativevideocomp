@@ -61,6 +61,12 @@ targets:
         # Background compression (BGContinuedProcessingTask, iOS 26+)
         BGTaskSchedulerPermittedIdentifiers:
           - com.example.vidcompress.compress
+        # UIBackgroundModes "processing" is REQUIRED by BGProcessingTask and
+        # kept for BGContinuedProcessingTask: its own requirement is not
+        # verifiable off-device (docs unreachable), the entry is harmless if
+        # redundant, and removing it risks killing the iOS 26 background
+        # path outright. Revisit only with a device test that submits a task
+        # WITHOUT the entry.
         UIBackgroundModes:
           - processing
         # Expose the app's folder in Files → "On My iPad" → VidCompress,

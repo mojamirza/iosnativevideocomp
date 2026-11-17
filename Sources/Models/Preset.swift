@@ -248,12 +248,30 @@ struct Preset: Identifiable, Codable, Hashable {
     /// consumer that shows or resolves presets reads THIS; `builtIn`
     /// stays the untouched seed that stableID keys and this fallback
     /// root derive from.
+    ///
+    /// CACHED: this is a hot path (every preset row render, the fallback
+    /// root, the Shortcuts enqueue) and used to decode the UserDefaults
+    /// JSON on EVERY access. Invalidated by every PresetStore mutator
+    /// (hideBuiltIn / setBuiltInOverride / restoreBuiltIns).
+    private static let liveLock = NSLock()
+    private static var liveBuiltInCache: [Preset]?
     static var liveBuiltIn: [Preset] {
+        liveLock.lock(); defer { liveLock.unlock() }
+        if let cached = liveBuiltInCache { return cached }
         let hidden = PresetStore.hiddenBuiltInIDs()
         let overrides = PresetStore.builtInOverrides()
-        return builtIn.compactMap { p in
+        let catalog = builtIn.compactMap { p in
             hidden.contains(p.id) ? nil : (overrides[p.id] ?? p)
         }
+        liveBuiltInCache = catalog
+        return catalog
+    }
+
+    /// Drops the decoded-catalog cache so the next `liveBuiltIn` access
+    /// re-reads the customization from disk. Called by every PresetStore
+    /// mutator.
+    static func invalidateLiveBuiltIn() {
+        liveLock.lock(); liveBuiltInCache = nil; liveLock.unlock()
     }
 
     private enum CodingKeys: String, CodingKey {

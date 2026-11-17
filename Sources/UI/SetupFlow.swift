@@ -1301,9 +1301,10 @@ struct SetupFlowView: View {
             trimEnd = p.duration
         }
         analysisDone = true
-        if let id = selectedPreset?.id {
-            PresetStore.setLastUsedPreset(id)
-        }
+        // "Last used" stays COMMIT-TIME truth: start(), the row taps and
+        // preset saves write it. Merely OPENING the sheet used to overwrite
+        // it with the resolved default — a user who closed without running
+        // lost their habitual choice.
         if !isBatch, let p = probes.compactMap({ $0 }).first {
             await loadFilmstrip(p, url: videos[0].url)
         }
