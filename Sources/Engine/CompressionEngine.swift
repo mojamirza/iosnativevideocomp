@@ -1212,12 +1212,28 @@ enum CompressionEngine {
         }
 
         // Finalize, capped: a wedged finishWriting (e.g. an input that never
-        // finished) must not hold the job forever.
+        // finished) must not hold the job forever. N3: the cap now SCALES
+        // with the output size — shouldOptimizeForNetworkUse makes
+        // finishWriting rewrite the whole file (web-optimized
+        // interleaving), and a flat 120 s deleted a finished multi-GB
+        // encode and failed the job AFTER the full encode. ~25 MB/s is a
+        // conservative sustained flash-write floor (older/thermal-limited
+        // iPads, concurrent IO); the +120 s base keeps small files at the
+        // old behavior exactly, and the 30 min cap still bounds a truly
+        // wedged writer.
         if writer.status == .writing {
-            let finalizeOK = await AsyncTimeout.run(seconds: 120) {
+            let outBytes = ((try? FileManager.default.attributesOfItem(atPath: output.path))?[.size] as? Int64) ?? 0
+            let finalizeSeconds = min(1800.0, 120.0 + Double(outBytes) / 25_000_000)
+            let finalizeOK = await AsyncTimeout.run(seconds: finalizeSeconds) {
                 await writer.finishWriting()
             }
             if finalizeOK == nil {
+                // N3: unwedge the writer FIRST — the abandoned
+                // finishWriting task keeps the writer in .writing (and the
+                // file busy) until it returns; cancelWriting() releases
+                // its resources at once. Deleting the file under a writer
+                // that is still writing is undefined.
+                if writer.status == .writing { writer.cancelWriting() }
                 if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
                 try? FileManager.default.removeItem(at: output)
                 throw CompressionError.writerFailed("Writer failed to finalize the file and was aborted.")

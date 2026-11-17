@@ -486,10 +486,14 @@ final class JobCoordinator: ObservableObject {
             // fills the disk for every other app). Target-size jobs budget
             // TWO outputs: the measured correction pass writes a second
             // scratch file while the first pass's file still exists.
+            // N3: the NON-target margin is 2.0× too, not 1.2× —
+            // shouldOptimizeForNetworkUse makes finishWriting rewrite the
+            // whole output (transient ≈ one more full file), and a job
+            // admitted at 1.2× could die at FINALIZE with ENOSPC — after
+            // the entire encode had already completed.
             if let free = Self.volumeFreeBytes(at: workDir) {
                 let base = plan.targetBytes ?? plan.estimatedBytes
-                let factor: Double = plan.targetBytes != nil ? 2.0 : 1.2
-                let needed = Int64((Double(base) * factor).rounded()) + 64_000_000
+                let needed = Int64((Double(base) * 2.0).rounded()) + 64_000_000
                 if free < needed {
                     throw InsufficientSpaceError(neededBytes: needed, freeBytes: free)
                 }
