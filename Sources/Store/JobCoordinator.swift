@@ -1374,7 +1374,11 @@ final class JobCoordinator: ObservableObject {
     /// Free space on the volume holding `url`, per the "important usage"
     /// policy (conservative about purgeable data). nil when unreadable —
     /// the preflight is best-effort and must never block a healthy disk.
-    static func volumeFreeBytes(at url: URL) -> Int64? {
+    /// N8: nonisolated — the import paths call it from OFF the main actor
+    /// (copyOffMain's detached task, the FileRepresentation importing
+    /// closure); it is a pure stat with no shared state, like
+    /// documentsDirectory below.
+    static nonisolated func volumeFreeBytes(at url: URL) -> Int64? {
         guard let values = try? url.resourceValues(
                   forKeys: [.volumeAvailableCapacityForImportantUsageKey]) else { return nil }
         return values.volumeAvailableCapacityForImportantUsage
