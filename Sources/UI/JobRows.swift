@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import AVKit
+import UIKit
 
 /// The "compressing row": source info, live progress with cancel, error states
 /// with retry, and the finished row with the output integrity report.
@@ -1046,13 +1047,33 @@ private struct OutputPlayerSheet: View {
     /// only after the item has loaded its tracks (rotation transform
     /// included), so the first presented frame is never the un-rotated one.
     @State private var priming: Task<Void, Never>?
+    /// N10: persisted wipe-compare frames (captured at success time, BEFORE
+    /// the source import was deleted) decoded for the Compare view. They
+    /// make the comparison work on done rows — after relaunch, with the
+    /// source file long gone — where the file-based Source/Output toggle
+    /// was unreachable.
+    @State private var beforeImage: UIImage?
+    @State private var afterImage: UIImage?
+    /// Video (player) vs Compare (wipe slider). The player stays the
+    /// default; the wipe is a mode the user switches into.
+    @State private var mode: Mode = .video
+
+    enum Mode: Hashable { case video, compare }
+
+    private var hasFrames: Bool {
+        beforeImage != nil && afterImage != nil
+    }
 
     enum Side: Hashable { case output, source }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                if !outputExists && !sourceExists {
+                // N10: the WIPE COMPARE mode — matched persisted frames,
+                // works on done rows after relaunch with the source gone.
+                if let beforeImage, let afterImage, mode == .compare {
+                    BeforeAfterWipe(before: beforeImage, after: afterImage)
+                } else if !outputExists && !sourceExists {
                     // Honest empty state instead of a dead black rectangle:
                     // done jobs delete the source import, and the output may
                     // have been removed in Files.
@@ -1085,9 +1106,23 @@ private struct OutputPlayerSheet: View {
                         .overlay { ProgressView().tint(.white) }
                 }
 
-                // Compare toggle ONLY when both the output and the source
-                // still exist (done jobs delete the source import).
-                if outputExists && sourceExists {
+                // N10: Video/Compare MODE switch when persisted frames
+                // exist. The player stays the default; rows with frames but
+                // no video file left run wipe-only (mode forced in load()).
+                if hasFrames && (outputExists || sourceExists) {
+                    Picker("View", selection: $mode) {
+                        Text("Video").tag(Mode.video)
+                        Text("Compare").tag(Mode.compare)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                }
+
+                // File-based Source/Output toggle ONLY when both files still
+                // exist AND the Video mode is showing — done jobs delete the
+                // source import, so this is now effectively the failed-rows
+                // path (the wipe above covers done rows).
+                if outputExists && sourceExists && mode == .video {
                     Picker("Compare", selection: $side) {
                         Text("Output").tag(Side.output)
                         Text("Source").tag(Side.source)
@@ -1097,7 +1132,7 @@ private struct OutputPlayerSheet: View {
                     Text("Switching keeps the same playback position.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else if !outputExists && sourceExists {
+                } else if !outputExists && sourceExists && mode == .video {
                     Text("The compressed file is gone — showing the source instead.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1137,6 +1172,17 @@ private struct OutputPlayerSheet: View {
         // The real existence check — Job.outputURL can outlive its file.
         outputExists = out.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
         sourceExists = FileManager.default.fileExists(atPath: job.sourceURL.path)
+        // N10: decode the persisted frames. UIImage(data:) only PARSES the
+        // container here — the bitmap decodes lazily at first render — so
+        // this stays cheap on the main actor. When no video file exists at
+        // all (done rows: the source import was deleted; Files may have
+        // taken the output too) the wipe is the only thing that can still
+        // be shown, so it becomes the default mode.
+        beforeImage = job.compareBefore.flatMap { UIImage(data: $0) }
+        afterImage = job.compareAfter.flatMap { UIImage(data: $0) }
+        if hasFrames && !outputExists && !sourceExists {
+            mode = .compare
+        }
         // Default to the output; fall back to the source if it's gone.
         side = outputExists ? .output : .source
         // Audio session: VideoPlayer does not configure one itself, and with
@@ -1238,8 +1284,14 @@ private struct OutputPlayerSheet: View {
     /// Output t=0 == source (startOffset + trimStart) on trimmed jobs — the
     /// same mapping the verifier uses. Without translating the playhead,
     /// the Source/Output toggle showed a DIFFERENT scene on trimmed clips.
+    /// N10: `plan` is NOT persisted — after a relaunch it is nil on restored
+    /// rows, and the old `?? 0` silently mapped every trimmed job to t=0.
+    /// Job.trimStart IS persisted (queue persistence), so it is the
+    /// fallback; source.startOffset is only non-zero on offset sources,
+    /// which the plan alone knows — it degrades to 0 exactly when the plan
+    /// is gone.
     private var compareOffset: Double {
-        (job.plan?.trimStart ?? 0) + (job.plan?.source.startOffset ?? 0)
+        (job.plan?.trimStart ?? job.trimStart) + (job.plan?.source.startOffset ?? 0)
     }
 
     /// Swapping to compare preserves the playback position and continues
@@ -1269,6 +1321,136 @@ private struct OutputPlayerSheet: View {
             player.seek(to: seekTarget, toleranceBefore: .zero, toleranceAfter: .zero)
         }
         measureAspect(for: next)
+    }
+}
+
+// MARK: - Wipe compare (N10)
+
+/// Native BEFORE/AFTER wipe slider — the beui.dev Before-After-Slider
+/// pattern reimplemented in SwiftUI (that library is React/React-Native and
+/// cannot run natively; only its interaction pattern was adopted: drag
+/// divider, corner labels, a one-sweep hint, adjustable a11y value).
+/// AFTER (the compressed output) fills the frame; BEFORE (the source) is
+/// masked in from the left up to the divider — drag anywhere to wipe.
+private struct BeforeAfterWipe: View {
+    let before: UIImage
+    let after: UIImage
+
+    /// 0 = the after image alone, 1 = before covers the whole frame.
+    @State private var position: CGFloat = 0.5
+    @State private var hintPlayed = false
+    @State private var hintTask: Task<Void, Never>?
+
+    /// THE FRAME IS THE AFTER IMAGE'S ASPECT: the pair was captured at the
+    /// matched scene, so both layers fill it identically.
+    private var aspect: CGFloat {
+        let s = after.size
+        guard s.width > 0, s.height > 0 else { return 16.0 / 9.0 }
+        return s.width / s.height
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            ZStack(alignment: .topLeading) {
+                layer(after)
+                layer(before)
+                    .mask(alignment: .leading) {
+                        Rectangle().frame(width: max(0, w * position))
+                    }
+                divider(width: w, height: h)
+                labels
+            }
+            .frame(width: w, height: h)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        hintTask?.cancel()
+                        position = min(max(0, value.location.x / max(w, 1)), 1)
+                    }
+            )
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: AppTheme.cardRadius))
+        .padding(.horizontal, 16)
+        .accessibilityElement()
+        .accessibilityLabel("Before and after comparison")
+        .accessibilityValue("\(Int((position * 100).rounded())) percent before, \(Int(((1 - position) * 100).rounded())) percent after")
+        .accessibilityAdjustableAction { direction in
+            hintTask?.cancel()
+            switch direction {
+            case .increment: position = min(1, position + 0.05)
+            case .decrement: position = max(0, position - 0.05)
+            @unknown default: break
+            }
+        }
+        .onAppear(perform: playHint)
+        .onDisappear { hintTask?.cancel() }
+    }
+
+    private func layer(_ image: UIImage) -> some View {
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFill()
+            .clipped()
+    }
+
+    private func divider(width w: CGFloat, height h: CGFloat) -> some View {
+        Rectangle()
+            .fill(.white.opacity(0.95))
+            .frame(width: 2, height: h)
+            .shadow(color: .black.opacity(0.4), radius: 2)
+            .overlay {
+                Circle()
+                    .fill(.white)
+                    .frame(width: 30, height: 30)
+                    .shadow(color: .black.opacity(0.35), radius: 4)
+                    .overlay {
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.black)
+                    }
+            }
+            .offset(x: w * position - 1)
+    }
+
+    private var labels: some View {
+        HStack(alignment: .top) {
+            tag("Before")
+            Spacer()
+            tag("After")
+        }
+        .padding(8)
+        .allowsHitTesting(false)
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.55), in: Capsule())
+    }
+
+    /// The beui sweep hint: the divider glides once on first appearance so
+    /// the control is discoverable. SKIPPED entirely under Reduce Motion
+    /// (it is pure decoration); a user drag cancels it mid-flight.
+    private func playHint() {
+        guard !hintPlayed else { return }
+        hintPlayed = true
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        hintTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.9)) { position = 0.75 }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.9)) { position = 0.5 }
+        }
     }
 }
 

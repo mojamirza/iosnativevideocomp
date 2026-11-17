@@ -27,13 +27,21 @@ final class JobRecord {
     /// Set when a queued/in-flight row was auto-resumed at launch — bounds
     /// the resume to ONE attempt so a crashing encode can't loop forever.
     var autoResumed: Bool = false
+    /// N10: matched source/output frames captured at success time (see
+    /// Engine/CompareFrames) — the player sheet's wipe-compare data. The
+    /// source import is deleted on success, so this pair is the only trace
+    /// of the original the compare can use. External storage like the
+    /// poster; nil on rows that predate the feature or failed capture.
+    @Attribute(.externalStorage) var compareBeforeData: Data?
+    @Attribute(.externalStorage) var compareAfterData: Data?
 
     init(jobID: UUID, createdAt: Date, sourceName: String, presetName: String,
          outputFileName: String?, inBytes: Int64, outBytes: Int64, duration: Double,
          stateRaw: String, errorMessage: String?, reportJSON: Data?,
          presetJSON: Data? = nil, codecLabel: String, resolutionLabel: String,
          posterData: Data? = nil, rotationDegrees: Int = 0, trimStart: Double = 0,
-         trimEnd: Double? = nil, autoResumed: Bool = false) {
+         trimEnd: Double? = nil, autoResumed: Bool = false,
+         compareBeforeData: Data? = nil, compareAfterData: Data? = nil) {
         self.jobID = jobID
         self.createdAt = createdAt
         self.sourceName = sourceName
@@ -53,5 +61,7 @@ final class JobRecord {
         self.trimStart = trimStart
         self.trimEnd = trimEnd
         self.autoResumed = autoResumed
+        self.compareBeforeData = compareBeforeData
+        self.compareAfterData = compareAfterData
     }
 }

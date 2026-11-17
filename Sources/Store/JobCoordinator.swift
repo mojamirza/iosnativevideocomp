@@ -64,6 +64,13 @@ final class JobCoordinator: ObservableObject {
         var rotationDegrees: Int = 0
         var trimStart: Double = 0
         var trimEnd: Double?
+        /// N10: matched BEFORE/AFTER frames captured at success time (see
+        /// CompareFrames) — the wipe-compare's data. They make the compare
+        /// work on done rows after the source import is deleted (and after
+        /// relaunch); nil on rows captured before this feature or when
+        /// frame extraction failed.
+        var compareBefore: Data?
+        var compareAfter: Data?
 
         /// EQUALITY FOR RENDER-SKIPPING: progress ticks republish the whole
         /// `jobs` array twice a second, which re-built EVERY card — including
@@ -86,6 +93,8 @@ final class JobCoordinator: ObservableObject {
                 && l.errorMessage == r.errorMessage
                 && l.outputURL == r.outputURL
                 && l.posterData == r.posterData
+                && l.compareBefore == r.compareBefore
+                && l.compareAfter == r.compareAfter
                 && l.rotationDegrees == r.rotationDegrees
                 && l.trimStart == r.trimStart
                 && l.trimEnd == r.trimEnd
@@ -796,6 +805,27 @@ final class JobCoordinator: ObservableObject {
                 }
                 saveRecord(jobID: jobID, outputName: promoted.lastPathComponent,
                            report: reportData, state: "done")
+                // N10: freeze the matched BEFORE/AFTER frames BEFORE the
+                // source import is deleted below — after that moment the
+                // original is gone and this pair is the only trace the
+                // wipe-compare can use (it outlives relaunches, on the
+                // record). Off the main actor: two frame decodes on
+                // multi-GB sources. Failure is silent — the compare UI
+                // just doesn't show; the encode result is unaffected.
+                let captured = await Task.detached {
+                    CompareFrames.capture(source: job.sourceURL,
+                                          output: promoted, plan: plan)
+                }.value
+                if let captured {
+                    setJob(jobID) {
+                        $0.compareBefore = captured.before
+                        $0.compareAfter = captured.after
+                    }
+                    // The record must carry the frames too — a terminal
+                    // save already happened above; persist the pair.
+                    saveRecord(jobID: jobID, outputName: promoted.lastPathComponent,
+                               report: reportData, state: "done")
+                }
                 // Storage management: a finished job doesn't need our copy of
                 // the source anymore — the original still lives in Photos/Files.
                 deleteSourceImport(job)
@@ -1729,7 +1759,12 @@ final class JobCoordinator: ObservableObject {
                     posterData: r.posterData,
                     rotationDegrees: r.rotationDegrees,
                     trimStart: r.trimStart,
-                    trimEnd: r.trimEnd
+                    trimEnd: r.trimEnd,
+                    // N10: the persisted wipe-compare frames ride the same
+                    // externalStorage the poster uses — they must survive a
+                    // relaunch like every other Job field.
+                    compareBefore: r.compareBeforeData,
+                    compareAfter: r.compareAfterData
                 ))
             }
             if purgedRecords { try? context.save() }
@@ -1828,7 +1863,9 @@ final class JobCoordinator: ObservableObject {
             rotationDegrees: job.rotationDegrees,
             trimStart: job.trimStart,
             trimEnd: job.trimEnd,
-            autoResumed: priorAutoResumed
+            autoResumed: priorAutoResumed,
+            compareBeforeData: job.compareBefore,
+            compareAfterData: job.compareAfter
         )
         context.insert(record)
         do {
