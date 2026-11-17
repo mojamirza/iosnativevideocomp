@@ -1773,7 +1773,17 @@ enum ImportHelpers {
             // The physical copy runs OFF the main actor — a multi-GB copy
             // inline on MainActor freezes the UI for its whole duration.
             if let copy = await copyOffMain(url) { return copy }
-            return url
+            // N2: the copy into Imports FAILED — do NOT return the raw
+            // temp URL. loadHistory rebuilds every source path as
+            // Imports/<sourceName> and purges records whose file is
+            // missing, so a queued job created on a temp export silently
+            // vanished at the next relaunch (and iOS purges tmp
+            // aggressively anyway — persisting the temp path would
+            // restore a dead row at best). Fall through to the
+            // FileRepresentation path instead: a second, system-mediated
+            // copy attempt whose result IS an Imports copy; if that
+            // fails too, the honest notImportable throw skips the item
+            // like any other unreadable provider.
         }
         // Fallback: FileRepresentation streaming — the system hands us a temp
         // file that we copy to disk. Never holds the whole video in RAM
