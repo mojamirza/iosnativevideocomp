@@ -305,7 +305,14 @@ enum CompressionEngine {
         // COMMON artwork identifier maps onto the container's own cover-art
         // representation (the QuickTime-scoped one was the on-device crash
         // suspect for the sibling creation-date key).
-        if allowPoster, let poster = plan.posterData {
+        // N4: strip-all removes EVERY metadata item — the poster IS one
+        // (QuickTime artwork). The engine never checked the flag and
+        // embedded the artwork anyway, while Settings promised "every
+        // metadata item is removed"; setup also keeps the picker
+        // disabled and stops writing posterData into the plan under
+        // strip-all, but this gate is the authoritative one (it covers
+        // resumed jobs whose plan was built before the toggle flipped).
+        if allowPoster, !plan.privacyStripAllMetadata, let poster = plan.posterData {
             let item = AVMutableMetadataItem()
             item.identifier = .commonIdentifierArtwork
             item.dataType = kCMMetadataBaseDataType_JPEG as String

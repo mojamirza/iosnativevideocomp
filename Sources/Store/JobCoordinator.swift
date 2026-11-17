@@ -736,10 +736,16 @@ final class JobCoordinator: ObservableObject {
             // record keeps showing outputFileName — so it marks the row
             // failed instead.
             if encodeOK {
+                // N5: the codec stamp comes from the LIVE plan, not the
+                // closure-captured `job` — on a RESUMED job job.plan is
+                // still nil (the plan is rebuilt below into the local),
+                // so the stamp fell back to the preset's codec: an H.264
+                // preset on a 10-bit/HDR source encoded as HEVC but got
+                // named "…-h264.mp4" while the history record said HEVC.
                 guard let promoted = promote(output,
                                              sourceName: job.sourceName,
                                              preset: job.preset,
-                                             codec: job.plan?.effectiveCodec) else {
+                                             codec: plan.effectiveCodec) else {
                     let msg = "Couldn't save the file to Files — free up storage and tap Retry."
                     setJob(jobID) {
                         $0.state = .failed

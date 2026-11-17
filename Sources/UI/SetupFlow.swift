@@ -142,6 +142,9 @@ struct SetupFlowView: View {
     @State private var showEditor = false
     @State private var editingPreset: Preset?
     @State private var posterItem: PhotosPickerItem?
+    // N4: strip-all's live toggle — the poster picker is meaningless
+    // while it is on (a metadata item is never written to the output).
+    @AppStorage(PrivacyScrub.stripAllKey) private var stripAllMetadata = false
     // INLINE TRIM PREVIEW: an AVPlayer over the ORIGINAL file that plays
     // exactly [trimStart, trimEnd). What you set is what you see.
     @State private var previewPlayer: AVPlayer?
@@ -577,6 +580,10 @@ struct SetupFlowView: View {
                             Text("Choose image…")
                                 .font(.caption.weight(.semibold))
                         }
+                        // N4: under strip-all the poster never reaches the
+                        // output (the engine gates it) — picking one here
+                        // would be a silent no-op.
+                        .disabled(stripAllMetadata)
                         if posterPreview != nil {
                             Button("Use automatic") {
                                 posterItem = nil
@@ -586,6 +593,11 @@ struct SetupFlowView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         }
+                    }
+                    if stripAllMetadata {
+                        Text("Strip all metadata is on — the output carries no metadata, so a custom poster can't be embedded.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -1165,7 +1177,11 @@ struct SetupFlowView: View {
                     plan.trimEnd = trimEnd
                 }
                 // Poster: the user-picked image (nil = automatic frame).
-                plan.posterData = posterData
+                // N4: strip-all drops it at the SOURCE too — a poster picked
+                // before the toggle flipped must not flow into the plan,
+                // the record or the row thumbnail as a phantom that the
+                // engine will (correctly) never embed.
+                plan.posterData = stripAllMetadata ? nil : posterData
             }
             coordinator.enqueue(source: videos[i].url, probe: probe, plan: plan,
                                 preset: preset, thumbnail: videos[i].thumbnail)
